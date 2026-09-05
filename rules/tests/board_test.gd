@@ -12,6 +12,7 @@ static func run() -> bool:
 	violations.append_array(_test_add_hex_rejects_invalid_coordinate())
 	violations.append_array(_test_add_hex_rejects_duplicate_coordinate())
 	violations.append_array(_test_all_hex_types_round_trip())
+	violations.append_array(_test_hex_type_absent_coordinate_returns_normal())
 	violations.append_array(_test_is_blocked_true_for_blocked_and_off_board())
 	violations.append_array(_test_place_occupant_into_empty_hex_succeeds())
 	violations.append_array(_test_place_occupant_refused_when_already_occupied())
@@ -109,6 +110,16 @@ static func _test_all_hex_types_round_trip() -> Array[String]:
 		)
 
 	return violations
+
+
+static func _test_hex_type_absent_coordinate_returns_normal() -> Array[String]:
+	var board := Board.new()
+	var absent_coord := Vector3i(0, 0, 0)
+
+	return _expect(
+		board.hex_type(absent_coord) == Board.HexType.NORMAL,
+		"hex_type() must return HexType.NORMAL for a coordinate with no hex on the board"
+	)
 
 
 static func _test_is_blocked_true_for_blocked_and_off_board() -> Array[String]:
