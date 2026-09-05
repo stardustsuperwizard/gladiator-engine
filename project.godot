@@ -1,5 +1,10 @@
 ; Engine configuration file.
-; It's best edited using the editor UI and not directly.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -12,9 +17,6 @@ config/features=PackedStringArray("4.7")
 
 [autoload]
 
-; Runs the test suites headlessly and makes the result the process exit code.
-; Deliberately carries no class_name: a global class sharing an autoload's
-; name is a parse error in Godot 4 ("hides an autoload singleton").
 TestBootstrap="*res://tests/test_bootstrap.gd"
 
 [editor_plugins]
