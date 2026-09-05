@@ -1,0 +1,690 @@
+name: GDScript Lint
+
+# A normal status-check gate: gdformat/gdlint against whatever GDScript
+# files a pull request actually changes. Deliberately diff-scoped, not
+# whole-repo -- see lint-gdscript/action.yml for why.
+#
+# This is the catch-all: agent-04-review.yml folds the same check into its
+# review comment for PRs it reviews, and agent-02-implement.yml auto-fixes
+# formatting before it ever opens a pull request -- but a human-authored
+# PR, or a cloud-agent PR nobody ran `agent:reviewer:copilot` on, would otherwise get
+# no lint signal at all. This workflow is what covers that gap.
+#
+# Unlike a plain gate, this one tries to self-heal before failing:
+#
+#   1. `gdformat` is mechanical and deterministic (same tool and mode
+#      agent-02-implement.yml already runs pre-PR). If it changes anything,
+#      commit and push that -- no model, no judgment call, nothing to gate
+#      behind a human. This alone should resolve the large majority of
+#      findings, the same way it does pre-PR.
+#   2. Whatever gdlint still finds after that has no deterministic fix --
+#      gdtoolkit ships no auto-fix for gdlint (see lint-gdscript/action.yml)
+#      -- so it takes a narrow, capped Copilot CLI session (Haiku by
+#      default) scoped to exactly the reported findings and the files they
+#      're in, nothing else. This is deliberately NOT routed through
+#      agent-05-fix.yml: that workflow's prompt is built from a PR's
+#      `<!-- agent-review-verdict -->` comment and full diff, which doesn't
+#      exist yet here and shouldn't be faked just to reuse it. It shares
+#      only the generic `run-agent-session` action, with its own prompt,
+#      its own (cheap, capped) model list, and its own validation gate.
+#
+# This is a deliberate, narrow exception to the rule elsewhere in this repo
+# that spending a Copilot session requires a human decision (see the note
+# in agent-05-fix.yml): a lint fix is bounded, single-file, mechanically
+# verifiable (`validate-godot.sh` + a re-run of gdlint itself), and cheap
+# enough that failing the PR and waiting for a human to notice, add
+# `agent:fixer:copilot`, and get a review verdict first is pure overhead for
+# something this small.
+
+on:
+  pull_request:
+    # Allow-listed, not denied, unlike godot-ci-validation.yml -- this job
+    # only ever touches `.gd` files, so most of the repo genuinely can't
+    # affect it. But it does pull in dependencies beyond `.gd` files
+    # themselves, and those need to be listed explicitly or a change to
+    # them goes untested here:
+    #   - lint-gdscript/: does the actual gdformat/gdlint work.
+    #   - setup-godot/: installs the engine `validate-godot.sh` needs below
+    #     -- same reasoning godot-ci-validation.yml gives for keeping it
+    #     out of *its* ignore list.
+    #   - run-agent-session/: runs the gdlint auto-fix session.
+    #   - validate-godot.sh: gates both auto-fix commits below.
+    #   - .gdlintrc: the rule set gdlint is checked against. Changing a
+    #     threshold here changes what passes, so it has to run the linter.
+    #     It was previously covered only by godot-ci-validation.yml's
+    #     fail-safe deny-list, which booted a Godot runner to answer a
+    #     question about lint style; that file now ignores it, so this is
+    #     where it has to be listed instead.
+    paths:
+      - '**.gd'
+      - '.gdlintrc'
+      - '.github/actions/lint-gdscript/**'
+      - '.github/actions/setup-godot/**'
+      - '.github/actions/run-agent-session/**'
+      - '.github/scripts/validate-godot.sh'
+      - '.github/workflows/gdscript-lint.yml'
+
+permissions:
+  contents: write
+  pull-requests: read
+  copilot-requests: write
+
+concurrency:
+  group: gdscript-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+  # Cheap tier by default: these are narrow, single-file, already-diagnosed
+  # findings, not open-ended judgment calls -- the same "Haiku first" shape
+  # as IMPLEMENTER_MODELS in agent-02-implement.yml. Overridable via the
+  # LINT_FIXER_MODELS repository variable (comma-separated).
+  LINT_FIXER_MODELS: >-
+    ${{ vars.LINT_FIXER_MODELS
+    || (vars.LINT_FIXER_VENDOR == 'claude'
+        && 'claude-haiku-4-5,claude-sonnet-5'
+        || 'claude-haiku-4.5,claude-sonnet-5') }}
+
+  # Which company answers. This job is not one of the four labelled roles --
+  # it has no `agent:{role}:{vendor}` label to read a vendor from, because it
+  # is a status check that fires on `**.gd`, not something a human labels. So
+  # the vendor is a repository variable instead.
+  #
+  # It is the best role in the repository to try a vendor against, which is
+  # why it is switchable at all: the task is narrow, the output is verified
+  # by `gdlint` rather than by anyone's judgment, and a bad answer costs one
+  # re-run rather than a wrong verdict on someone's pull request.
+  #
+  # NOTE the model ids differ per vendor and are NOT interchangeable. Copilot
+  # CLI spells Haiku 4.5 `claude-haiku-4.5`; Claude Code spells the same model
+  # `claude-haiku-4-5`. Setting LINT_FIXER_VENDOR without also setting
+  # LINT_FIXER_MODELS picks the right default list for you; setting both is
+  # your responsibility to keep matched.
+  LINT_FIXER_VENDOR: ${{ vars.LINT_FIXER_VENDOR || 'copilot' }}
+
+  # The Copilot CLI rejects anything below 30 -- a floor, not a tuning
+  # choice. A single-file lint fix doesn't need more. Ignored when the vendor
+  # is claude, which is bounded by turns rather than credits.
+  LINT_FIXER_MAX_AI_CREDITS: "30"
+
+  # Claude's equivalent bound. A single-file lint fix is a handful of edits;
+  # a session that needs more than this has misunderstood the task rather
+  # than found more work.
+  LINT_FIXER_MAX_TURNS: "20"
+
+  # gdlint rules that cannot be resolved by editing the file the finding is
+  # reported in. The fix session is bounded to exactly that file and
+  # forbidden from changing behavior (see the prompt below), so handing it
+  # one of these asks for something its own rules forbid: `max-file-lines`
+  # is fixable only by moving code elsewhere or by changing gdlint's
+  # configuration. That is how run 32890337600 came to push a commit
+  # preloading a file that has never existed in this repository. Findings on
+  # this list are kept away from the session entirely and fail the check for
+  # a human instead.
+  #
+  # Deliberately an explicit, reviewable list rather than something derived
+  # from gdlint's output: whether a rule has an in-file fix is a judgment
+  # about the prompt below, not a property gdlint reports. Add a rule id
+  # only when a run has actually shown it has no in-file fix.
+  LINT_NO_IN_FILE_FIX_RULES: max-file-lines
+
+jobs:
+  lint:
+    name: GDScript Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Both the gdformat-fix and gdlint-fix commit steps below gate on
+      # `validate-godot.sh`, which needs the engine on PATH.
+      - name: Setup Godot
+        uses: ./.github/actions/setup-godot
+        with:
+          godot-version: 4.7.1-stable
+
+      # A fork PR's branch cannot be pushed to with this token. Detected
+      # up front so every later step can gate on it, rather than
+      # discovering it as a failed `git push`.
+      - name: Resolve Pull Request
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh pr view "${{ github.event.pull_request.number }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json headRefName,isCrossRepository \
+            > pr-meta.json
+
+          echo "head_ref=$(jq -r '.headRefName' pr-meta.json)" >> "$GITHUB_OUTPUT"
+          echo "fork=$(jq -r '.isCrossRepository' pr-meta.json)" >> "$GITHUB_OUTPUT"
+
+      - name: List Changed GDScript Files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh pr view "${{ github.event.pull_request.number }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json files \
+            --jq '.files[].path' \
+            | grep -E '\.gd$' \
+            > changed-gd-files.txt || true
+
+          echo "Changed GDScript files:"
+          cat changed-gd-files.txt || echo "(none)"
+
+      - name: Check Out Pull Request Branch
+        if: steps.pr.outputs.fork != 'true'
+        shell: bash
+        run: gh pr checkout "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY"
+
+      - name: Configure Git Identity
+        if: steps.pr.outputs.fork != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Fork PRs can't be pushed to, so there's no point mutating files
+      # locally just to discard them -- check mode reports the same
+      # gdformat diff a human would need to apply by hand.
+      - name: Check Only (Fork Pull Requests)
+        if: steps.pr.outputs.fork == 'true'
+        id: lint-check
+        uses: ./.github/actions/lint-gdscript
+        with:
+          mode: check
+          files-list-file: changed-gd-files.txt
+
+      - name: Format and Lint
+        if: steps.pr.outputs.fork != 'true'
+        id: lint-fix
+        uses: ./.github/actions/lint-gdscript
+        with:
+          mode: fix
+          files-list-file: changed-gd-files.txt
+
+      - name: Combine Lint Outputs
+        id: lint
+        shell: bash
+        run: |
+          echo "clean=${{ steps.lint-check.outputs.clean || steps.lint-fix.outputs.clean }}" >> "$GITHUB_OUTPUT"
+          echo "formatted=${{ steps.lint-fix.outputs.formatted || 'false' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Show Report
+        shell: bash
+        run: |
+          cat gdscript-lint-report.md >> "$GITHUB_STEP_SUMMARY"
+          cat gdscript-lint-report.md
+
+      # Mechanical and deterministic -- no model call. Mirrors
+      # agent-02-implement.yml's pre-PR formatting pass: commit, validate,
+      # push, or revert and continue unformatted if validation somehow
+      # regressed (gdformat shouldn't change behavior, but this is a cheap
+      # safety net either way).
+      - name: Commit Formatting Fix
+        if: steps.pr.outputs.fork != 'true' && steps.lint.outputs.formatted == 'true'
+        id: commit-format
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git add -u -- '*.gd'
+          git commit -m "style: apply gdformat"
+
+          if ! .github/scripts/validate-godot.sh > format-validate-output.txt 2>&1; then
+            echo "::warning::Validation failed after applying gdformat." \
+                 "Reverting the formatting commit and continuing unformatted."
+            tail -c 4000 format-validate-output.txt
+            git reset --hard HEAD~1
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          else
+            git push origin "HEAD:${{ steps.pr.outputs.head_ref }}"
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Whatever gdlint still finds after formatting has no deterministic
+      # fix (gdtoolkit ships no auto-fix for gdlint findings). Scope this
+      # tightly: only the gdlint output and the files it names, not the PR
+      # diff or task context -- this is a mechanical correction, not a
+      # review-driven one.
+      #
+      # Findings are partitioned before any of that: anything whose rule is
+      # on LINT_NO_IN_FILE_FIX_RULES is withheld from the session entirely
+      # and reported for a human instead, and a file whose only findings are
+      # withheld is not handed over at all. What is left builds the prompt
+      # as before; if nothing is left, no session is started.
+      - name: Build Lint Fix Prompt
+        if: steps.pr.outputs.fork != 'true' && steps.lint.outputs.clean != 'true'
+        id: build-prompt
+        shell: python
+        run: |
+          import os
+          import pathlib
+          import re
+
+          # `path:line: Error: message (rule-name)`, as gdlint emits it. The
+          # rule group is optional on purpose: a finding whose shape this
+          # does not recognize stays fixable and reaches the session exactly
+          # as it does today. Only rules named explicitly are withheld.
+          FINDING = re.compile(
+              r"^(?P<path>.+?):(?P<line>\d+): Error: "
+              r"(?P<message>.*?)(?: \((?P<rule>[A-Za-z0-9_-]+)\))?$"
+          )
+
+          no_fix_rules = {
+              rule.strip()
+              for rule in os.environ["LINT_NO_IN_FILE_FIX_RULES"].split(",")
+              if rule.strip()
+          }
+
+
+          def set_output(name, value):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+                  if "\n" in value:
+                      handle.write(f"{name}<<GDLINT_PARTITION_EOF\n{value}\nGDLINT_PARTITION_EOF\n")
+                  else:
+                      handle.write(f"{name}={value}\n")
+
+
+          def add_summary(text):
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+                  handle.write(text + "\n")
+
+
+          gdlint_output = pathlib.Path("gdlint-output.txt")
+          raw = gdlint_output.read_text(errors="replace") if gdlint_output.exists() else ""
+
+          fixable = {}
+          unfixable = []
+
+          for raw_line in raw.splitlines():
+              line = raw_line.strip()
+              match = FINDING.match(line)
+
+              # Non-finding output (gdlint's own summary line, a parse-error
+              # dump) is not something a session can be pointed at, so it is
+              # not treated as a finding. It is still in the report printed
+              # by `Show Report`, and it still keeps the check red below.
+              if not match:
+                  continue
+
+              if match["rule"] in no_fix_rules:
+                  unfixable.append((match["path"], match["line"], match["rule"]))
+              else:
+                  fixable.setdefault(match["path"], []).append(line)
+
+          files_list = pathlib.Path("changed-gd-files.txt")
+          changed = [
+              line.strip()
+              for line in files_list.read_text().splitlines()
+              if line.strip()
+          ]
+
+          # Only files with a finding the session is allowed to fix. A file
+          # whose findings were all withheld must not appear here either:
+          # handing over its full contents with no finding named is the same
+          # invitation to restructure it that withholding exists to prevent.
+          paths = [path for path in changed if path in fixable]
+          paths += [path for path in fixable if path not in changed]
+          paths = [path for path in paths if pathlib.Path(path).exists()]
+
+          unfixable_report = "\n".join(
+              f"{path}:{line} ({rule})" for path, line, rule in unfixable
+          )
+
+          set_output("has-fixable", "true" if paths else "false")
+          set_output("has-unfixable", "true" if unfixable else "false")
+          set_output("unfixable", unfixable_report)
+
+          if unfixable:
+              add_summary(
+                  "### gdlint findings with no in-file fix\n\n"
+                  "Withheld from the auto-fix session: these rules cannot be"
+                  " resolved by editing the file the finding is reported in,"
+                  " only by moving code to another file or by changing gdlint"
+                  " configuration -- both of which the session's prompt"
+                  " forbids. They need a human, not another automated"
+                  " attempt.\n\n"
+                  + "\n".join(
+                      f"- `{path}:{line}` (`{rule}`)"
+                      for path, line, rule in unfixable
+                  )
+              )
+
+          print(f"Findings withheld as unfixable: {len(unfixable)}")
+
+          if not paths:
+              add_summary(
+                  "\nNo remaining gdlint finding can be fixed in the file it"
+                  " was reported in, so no lint-fix session was started."
+                  if unfixable
+                  else "\nNo gdlint finding could be read out of the output"
+                  " above, so there was nothing to point a lint-fix session"
+                  " at and none was started."
+              )
+              print("Nothing left for a lint-fix session to fix; skipping it.")
+              raise SystemExit(0)
+
+          sections = [
+              "Findings ({} file(s) targeted):\n\n```\n{}\n```".format(
+                  len(paths),
+                  "\n".join(
+                      finding for path in paths for finding in fixable[path]
+                  ),
+              )
+          ]
+
+          for path in paths:
+              file_path = pathlib.Path(path)
+
+              sections.append(
+                  f"## File: {path}\n\n```gdscript\n{file_path.read_text(errors='replace')}\n```"
+              )
+
+          prompt = f"""
+          You are a narrow, mechanical lint-fixing session for the Sword
+          and Planet Godot project. `gdformat` has already run and made
+          this code as clean as an automatic formatter can -- what remains
+          are `gdlint` findings, which gdtoolkit has no auto-fix for.
+
+          HARD RULES:
+
+          - Fix ONLY the exact findings listed below, in ONLY the files
+            listed below. Do not touch any other file.
+          - Do not change behavior. A finding like max-line-length should
+            be resolved by reflowing/wrapping, not by altering logic.
+          - Do not reformat beyond what fixing the finding requires --
+            gdformat already handled formatting.
+          - If a finding requires a judgment call you're not confident
+            about (e.g. renaming something used elsewhere, restructuring
+            control flow), leave it unfixed and say so in your final
+            message -- do not guess.
+          - Use your edit tool directly. Do NOT run `git commit` or
+            `git push` -- the workflow handles committing after verifying
+            your changes.
+
+          Your final message should be a short list of what you changed
+          per finding, or "unable to fix: <reason>" for anything you left.
+
+          {chr(10).join(sections)}
+          """
+
+          pathlib.Path("lint-fix-prompt.txt").write_text(prompt)
+          print(f"Prompt built: {len(prompt)} chars, {len(paths)} file(s)")
+
+      - name: Run Lint Fix Session
+        if: >-
+          steps.pr.outputs.fork != 'true' && steps.lint.outputs.clean != 'true' &&
+          steps.build-prompt.outputs.has-fixable == 'true'
+        id: fix-session
+        uses: ./.github/actions/run-agent-session
+        with:
+          # Not one of the four labelled roles, so the vendor comes from a
+          # repository variable rather than from a label. See the
+          # LINT_FIXER_VENDOR comment above for why this job is the one worth
+          # making switchable.
+          vendor: ${{ env.LINT_FIXER_VENDOR }}
+          # Was relying on the old action's "task,write_agent" default. That
+          # default is gone: capability is stated, not inherited.
+          capability: write
+          prompt-file: lint-fix-prompt.txt
+          models: ${{ env.LINT_FIXER_MODELS }}
+          max-ai-credits: ${{ env.LINT_FIXER_MAX_AI_CREDITS }}
+          max-turns: ${{ env.LINT_FIXER_MAX_TURNS }}
+          # Only read when LINT_FIXER_VENDOR is claude, and empty is fine
+          # otherwise. Passed unconditionally because a composite action
+          # cannot read `secrets` itself: a key set on the repository but not
+          # threaded through here never reaches the process, which is a
+          # failure mode with no symptom until the vendor is switched.
+          api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          step-label: "Auto-fixing lint"
+
+      # The session was told not to touch anything outside the targeted
+      # files. Enforce that instead of trusting it: anything else changed
+      # means the session went out of scope, and nothing here gets
+      # committed on that basis. Check both modified tracked files and any
+      # new untracked files created by the session.
+      - name: Verify Fix Stayed In Scope
+        if: >-
+          steps.pr.outputs.fork != 'true' && steps.lint.outputs.clean != 'true' &&
+          steps.build-prompt.outputs.has-fixable == 'true'
+        id: scope-check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Collect all modified tracked files
+          git diff --name-only > changed-after-fix.txt
+
+          # Collect any untracked files created by the session.
+          # --exclude-standard is what keeps this workflow's own scratch
+          # files (lint-fix-prompt.txt and the lists written right here) out
+          # of the comparison -- they live at repo root and are .gitignored
+          # for exactly that reason. A new scratch file added to this job
+          # must be added to .gitignore too, or every run reports itself
+          # out of scope.
+          git ls-files --others --exclude-standard > untracked-after-fix.txt || true
+
+          # Combine tracked and untracked changes
+          cat changed-after-fix.txt untracked-after-fix.txt | sort -u > all-changes-after-fix.txt || true
+
+          # Check if any changes are outside the targeted list
+          if [ -s all-changes-after-fix.txt ] && \
+             comm -23 <(sort all-changes-after-fix.txt) <(sort changed-gd-files.txt) | grep -q .; then
+            echo "::error::The lint-fix session changed files outside the" \
+                 "targeted list. Discarding all changes -- this needs a" \
+                 "human, not another automated attempt."
+            comm -23 <(sort all-changes-after-fix.txt) <(sort changed-gd-files.txt)
+
+            # Undo only the session's own changes -- the tracked files it
+            # modified and the untracked files it created -- not the whole
+            # work tree. Handled as two separate, exactly-typed pathspecs
+            # rather than one combined list: `git checkout --` only accepts
+            # tracked paths and `git clean -fd --` only acts on untracked
+            # ones, so mixing them makes the whole command fail closed
+            # instead of restoring anything.
+            if [ -s changed-after-fix.txt ]; then
+              mapfile -t TRACKED_CHANGES < changed-after-fix.txt
+              git checkout -- "${TRACKED_CHANGES[@]}"
+            fi
+            if [ -s untracked-after-fix.txt ]; then
+              mapfile -t UNTRACKED_CHANGES < untracked-after-fix.txt
+              git clean -fd -- "${UNTRACKED_CHANGES[@]}"
+            fi
+            echo "in_scope=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_scope=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Re-run gdformat/gdlint against whatever the session changed: it may
+      # have introduced its own formatting drift, and this is the only
+      # trustworthy way to know whether the findings are actually gone.
+      - name: Re-check After Fix
+        if: >-
+          steps.pr.outputs.fork != 'true' && steps.lint.outputs.clean != 'true' &&
+          steps.build-prompt.outputs.has-fixable == 'true' &&
+          steps.scope-check.outputs.in_scope == 'true'
+        id: recheck
+        uses: ./.github/actions/lint-gdscript
+        with:
+          mode: fix
+          files-list-file: changed-gd-files.txt
+
+      # The re-check reports every finding gdlint still sees, withheld ones
+      # included -- so its `clean` output is false for exactly the findings
+      # the session was never asked to fix, and gating the commit on it
+      # would let one withheld finding suppress a real fix in another file.
+      # Partition its output the same way, and ask the narrower question the
+      # commit actually depends on: is anything the session *was* asked to
+      # fix still outstanding? Anything unrecognized counts as outstanding.
+      - name: Partition Remaining Findings
+        if: >-
+          steps.pr.outputs.fork != 'true' && steps.lint.outputs.clean != 'true' &&
+          steps.build-prompt.outputs.has-fixable == 'true' &&
+          steps.scope-check.outputs.in_scope == 'true'
+        id: recheck-partition
+        shell: python
+        run: |
+          import os
+          import pathlib
+          import re
+
+          # Same shape as `Build Lint Fix Prompt` above; kept in step with it.
+          FINDING = re.compile(
+              r"^(?P<path>.+?):(?P<line>\d+): Error: "
+              r"(?P<message>.*?)(?: \((?P<rule>[A-Za-z0-9_-]+)\))?$"
+          )
+
+          no_fix_rules = {
+              rule.strip()
+              for rule in os.environ["LINT_NO_IN_FILE_FIX_RULES"].split(",")
+              if rule.strip()
+          }
+
+          gdlint_output = pathlib.Path("gdlint-output.txt")
+          raw = gdlint_output.read_text(errors="replace") if gdlint_output.exists() else ""
+
+          outstanding = []
+
+          for raw_line in raw.splitlines():
+              line = raw_line.strip()
+
+              # gdlint's own tallies say nothing about what is left.
+              if not line or line.startswith(("Success:", "Failure:")):
+                  continue
+
+              match = FINDING.match(line)
+
+              if match and match["rule"] in no_fix_rules:
+                  continue
+
+              outstanding.append(line)
+
+          for line in outstanding:
+              print(f"Still outstanding after the fix: {line}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"resolved={'false' if outstanding else 'true'}\n")
+
+      - name: Commit Lint Fix
+        if: >-
+          steps.pr.outputs.fork != 'true' && steps.lint.outputs.clean != 'true' &&
+          steps.build-prompt.outputs.has-fixable == 'true' &&
+          steps.scope-check.outputs.in_scope == 'true' &&
+          steps.recheck-partition.outputs.resolved == 'true'
+        id: commit-fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "::warning::Lint-fix session reported success but made no" \
+                 "changes. Nothing to commit."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Stage the targeted changes first, then validate that exact set.
+          # This ensures the tree that gets validated is the tree that gets
+          # committed -- nothing slips in or drops out between the two.
+          mapfile -t FILES < changed-gd-files.txt
+
+          # An empty pathspec would make `git add -u` stage the whole work
+          # tree -- the exact "committed more than was validated" failure
+          # this step exists to prevent. Unreachable today (the job only
+          # runs when gdlint reported findings in these files), so treat it
+          # as a broken precondition rather than something to work around.
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::changed-gd-files.txt is empty but the tree is" \
+                 "dirty. Refusing to stage an unbounded set."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git add -u -- "${FILES[@]}"
+
+          if ! .github/scripts/validate-godot.sh > lint-fix-validate-output.txt 2>&1; then
+            echo "::error::Validation failed after the lint-fix session." \
+                 "Discarding its changes."
+            tail -c 4000 lint-fix-validate-output.txt
+
+            # Undo only the targeted files just staged above -- the scope
+            # check already guarantees nothing else in the work tree was
+            # touched, so no `git reset --hard` / `git clean -fd` sweep of
+            # the whole tree is needed.
+            #
+            # `HEAD --`, not a bare `--`: without a tree-ish, `git checkout`
+            # restores the work tree *from the index*, and `git add -u` just
+            # put the session's changes there -- so it would discard nothing
+            # at all. Naming HEAD resets index and work tree together, and
+            # also handles a targeted file the session deleted, which a bare
+            # `--` cannot: that path is no longer in the index, so it fails
+            # with "did not match any file(s) known to git" and takes the
+            # whole step down under `set -e`.
+            git checkout HEAD -- "${FILES[@]}"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Commit the already-staged index directly. Do not call git add again
+          # after validation runs -- that would be the exact point at which the
+          # committed tree could silently diverge from what was validated.
+          git commit -m "style: auto-fix gdlint findings (${{ steps.fix-session.outputs.resolved-model }})"
+          git push origin "HEAD:${{ steps.pr.outputs.head_ref }}"
+
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # Only meaningful when a session ran: this re-prints the report as it
+      # stands after `Re-check After Fix`. With no session there is nothing
+      # to re-check, and this would just duplicate `Show Report` above.
+      - name: Show Final Report
+        if: >-
+          steps.pr.outputs.fork != 'true' && steps.lint.outputs.clean != 'true' &&
+          steps.build-prompt.outputs.has-fixable == 'true'
+        shell: bash
+        run: |
+          cat gdscript-lint-report.md >> "$GITHUB_STEP_SUMMARY"
+          cat gdscript-lint-report.md
+
+      # A withheld finding is never resolved by anything this job does, so
+      # it fails the check on its own terms -- independent of whether an
+      # auto-fix was pushed for the other findings alongside it. A pushed
+      # fix used to be treated as resolving everything `clean` was false
+      # for; that is exactly the green-on-unfixed outcome #198 traces.
+      - name: Fail on Remaining Findings
+        if: >-
+          steps.lint.outputs.clean != 'true' &&
+          (steps.build-prompt.outputs.has-unfixable == 'true' ||
+           !(steps.pr.outputs.fork != 'true' && steps.commit-fix.outputs.pushed == 'true'))
+        shell: bash
+        env:
+          UNFIXABLE: ${{ steps.build-prompt.outputs.unfixable }}
+          PUSHED: ${{ steps.commit-fix.outputs.pushed }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$UNFIXABLE" ]; then
+            echo "::error::gdlint reported finding(s) with no in-file fix." \
+                 "They were withheld from the auto-fix session -- resolving" \
+                 "them means moving code to another file or changing gdlint" \
+                 "configuration, both of which its prompt forbids -- so they" \
+                 "need a human, not another automated attempt:"
+            printf '%s\n' "$UNFIXABLE" | sed 's/^/  /'
+          fi
+
+          if [ "$PUSHED" != "true" ]; then
+            echo "::error::gdformat/gdlint found issues that could not be" \
+                 "resolved automatically. See the step summary for the" \
+                 "report and, if one ran, the lint-fix session's log above." \
+                 "Run \`gdformat\` and fix \`gdlint\` findings by hand."
+          fi
+
+          exit 1
