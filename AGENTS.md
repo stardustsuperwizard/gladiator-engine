@@ -111,6 +111,13 @@ The control plane is label-driven. **Every trigger is keyed on a label name,
 and a fresh clone has none of them** — run `.github/scripts/bootstrap-labels.sh`
 once before expecting any workflow to fire.
 
+Claude-vendor sessions bill to the `ANTHROPIC_API_KEY` secret, which is API
+credit and **not** covered by a Claude Pro or Max subscription. Whether a
+subscription could pay for them instead is an open question with a written-up
+answer — see *Open: paying for Claude sessions with a subscription instead of
+API credits* in `docs/AGENT_WORKFLOW.md`. The Copilot-vendor path
+(`agent:*:copilot`) needs no Anthropic billing at all.
+
 ## Path-scoped instructions
 
 Copilot picks these up automatically via `applyTo:` frontmatter; Claude Code

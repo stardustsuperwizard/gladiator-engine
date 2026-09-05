@@ -537,6 +537,65 @@ Trial them on one or two mechanical tasks and compare how much rework each
 needs before switching. Nothing records that for you — read the pull requests
 and their review verdicts.
 
+### Open: paying for Claude sessions with a subscription instead of API credits
+
+> **Written for this repository on 2026-09-04, not ported.** Unlike the rest of
+> this document, the issue numbers convention does not apply here — there is no
+> source-repo issue behind it. Status: **not adopted, revisit deliberately.**
+
+**The question.** Every Claude-vendor agent session bills to the
+`ANTHROPIC_API_KEY` repository secret, which draws on Anthropic API credits
+bought at console.anthropic.com. That is separate billing from a Claude Pro or
+Max subscription, which grants no API credits and no API key. The question is
+whether a subscription could pay for these sessions instead.
+
+**Why it currently cannot.** `run-agent-session/action.yml` invokes
+`claude --bare`, and `--bare` never reads OAuth credentials or the keychain.
+`CLAUDE_CODE_OAUTH_TOKEN` — the token `claude setup-token` mints for
+subscription holders, and what the official `claude-code-action` uses to
+support Pro/Max in CI — therefore does nothing here whatever it is set to. The
+classifier names this failure by name rather than reporting a generic auth
+error, which is the only reason it is legible at all.
+
+**What `--bare` buys, and what dropping it would cost.** Four things, in
+descending order of how much they actually matter:
+
+1. **One owner for model fallback.** `--bare` does not read
+   `.claude/settings.json`, so the `fallbackModel` chain committed there does
+   not apply. The action's `models` input is the fallback instead — per role
+   rather than per session, and the same mechanism the Copilot side uses. This
+   is the reason worth defending: two fallback systems agreeing by accident is
+   worse than one that obviously owns the job. **Mitigable** — delete
+   `fallbackModel` from `.claude/settings.json` and there is one owner again.
+2. **The prompt file is the whole task.** No hooks, plugins, MCP servers or
+   auto-memory, so what the agent was told is fully reconstructable from the
+   workflow run.
+3. **No coupling to checked-in agent config.** Without `--bare` a session picks
+   up `CLAUDE.md` and everything in `.claude/` — including the four subagents
+   and six slash commands, so an implementer session could invoke
+   `/implementer` recursively. Some of this is arguably desirable: `CLAUDE.md`
+   *is* the contract, and a session that has read it is better informed, not
+   worse. The cost is that editing `CLAUDE.md` silently changes how every agent
+   session behaves with no workflow change to point at.
+4. **Machine-independence** — the stated rationale in the action's own comment,
+   and the weakest of the four. These run on ephemeral `ubuntu-latest` runners
+   that are identical every time. The real variance source is checked-in
+   config, not the host. Only relevant if `run-agent-session` is ever driven
+   from a self-hosted runner or a developer machine.
+
+**How to test it** without committing to anything: add a boolean input on
+`run-agent-session` that decides whether `--bare` is passed, set it per role
+rather than repo-wide, and try the cheapest role first (implementer, Haiku
+4.5) with `CLAUDE_CODE_OAUTH_TOKEN` set and no API key. The existing classifier
+will say plainly whether it authenticated. Check Anthropic's current terms on
+subscription auth for automated workloads before adopting it broadly.
+
+**The other lever, which needs no decision here.** The control plane is
+dual-vendor and `ANTHROPIC_API_KEY` is the only secret referenced anywhere in
+the repository — the Copilot path runs on the built-in `GITHUB_TOKEN` plus a
+Copilot licence. Labelling Issues `agent:*:copilot` runs the entire pipeline
+with no Anthropic billing at all. See *One workflow per role, two vendors*.
+
 ## The workflow
 
 Seven workflows in `.github/workflows/`, `agent-00` through `agent-06`. The
