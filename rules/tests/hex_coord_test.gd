@@ -42,7 +42,8 @@ static func _test_is_valid() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			not HexCoord.is_valid(Vector3i(1, 1, 1)), "(1, 1, 1) must not be a valid cube coordinate"
+			not HexCoord.is_valid(Vector3i(1, 1, 1)),
+			"(1, 1, 1) must not be a valid cube coordinate"
 		)
 	)
 
@@ -54,12 +55,16 @@ static func _test_neighbours_are_six_distinct_valid_adjacent() -> Array[String]:
 	var origin := Vector3i(0, 0, 0)
 	var result := HexCoord.neighbours(origin)
 
-	violations.append_array(_expect(result.size() == 6, "neighbours() must return exactly six coordinates"))
+	violations.append_array(
+		_expect(result.size() == 6, "neighbours() must return exactly six coordinates")
+	)
 
 	var seen: Dictionary = {}
 	for coord in result:
 		violations.append_array(
-			_expect(HexCoord.is_valid(coord), "neighbour %s must be a valid cube coordinate" % coord)
+			_expect(
+				HexCoord.is_valid(coord), "neighbour %s must be a valid cube coordinate" % coord
+			)
 		)
 		violations.append_array(
 			_expect(
@@ -97,14 +102,15 @@ static func _test_distance_self_and_neighbours() -> Array[String]:
 	var origin := Vector3i(0, 0, 0)
 
 	violations.append_array(
-		_expect(HexCoord.distance(origin, origin) == 0, "distance from a coordinate to itself must be 0")
+		_expect(
+			HexCoord.distance(origin, origin) == 0, "distance from a coordinate to itself must be 0"
+		)
 	)
 
 	for coord in HexCoord.neighbours(origin):
 		violations.append_array(
 			_expect(
-				HexCoord.distance(origin, coord) == 1,
-				"distance to neighbour %s must be 1" % coord
+				HexCoord.distance(origin, coord) == 1, "distance to neighbour %s must be 1" % coord
 			)
 		)
 
@@ -147,11 +153,15 @@ static func _test_are_adjacent() -> Array[String]:
 
 	for coord in HexCoord.neighbours(origin):
 		violations.append_array(
-			_expect(HexCoord.are_adjacent(origin, coord), "%s must be adjacent to the origin" % coord)
+			_expect(
+				HexCoord.are_adjacent(origin, coord), "%s must be adjacent to the origin" % coord
+			)
 		)
 
 	violations.append_array(
-		_expect(not HexCoord.are_adjacent(origin, origin), "a coordinate must not be adjacent to itself")
+		_expect(
+			not HexCoord.are_adjacent(origin, origin), "a coordinate must not be adjacent to itself"
+		)
 	)
 
 	var two_away := Vector3i(2, -1, -1)
