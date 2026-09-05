@@ -21,3 +21,7 @@ mono_crash.*.json
 
 # Note: *.uid files next to scripts are Godot 4.4+ script identity and MUST be
 # committed. They are deliberately not ignored here.
+
+# Python bytecode from local syntax checks of .github/scripts/
+__pycache__/
+*.pyc
