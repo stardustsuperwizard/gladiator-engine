@@ -25,6 +25,7 @@ extends Node
 var _suites: Array[Dictionary] = [
 	{"name": "Extraction Contract Test", "run": ExtractionContractTest.run},
 	{"name": "Contract Scanner Test", "run": ContractScannerTest.run},
+	{"name": "Hex Coord Test", "run": HexCoordTest.run},
 ]
 
 var _passes: Array[String] = []
