@@ -192,10 +192,10 @@ practical payoff of §1 above.
   which is correct.
 - `*.import` sidecar files for assets are also committed — only the
   `.godot/imported/` cache they point at is disposable.
-- Godot rewrites `project.godot` on the import pass. It replaces the file
-  header with its own boilerplate and drops comments inside sections it
-  manages, such as `[autoload]`. Committing anything else there produces a
-  dirty tree on every validation run.
+- Godot rewrites `project.godot` when the editor opens the project. It
+  replaces the file header with its own boilerplate and drops comments inside
+  sections it manages, such as `[autoload]`. The headless validation passes do
+  not touch the file, so CI workflows and headless test runs leave no dirty tree.
 - So do not explain things in engine-managed files. Put the explanation next
   to the code it describes. The worked example is the note that
   `tests/test_bootstrap.gd` deliberately carries no `class_name` — a global
