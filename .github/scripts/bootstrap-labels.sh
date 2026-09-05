@@ -38,6 +38,14 @@ agent:reviewer:copilot|1D76DB|Route review to the Copilot reviewer
 agent:reviewer:claude|1D76DB|Route review to the Claude reviewer
 agent:fixer:copilot|1D76DB|Route the fix cycle to the Copilot fixer
 agent:fixer:claude|1D76DB|Route the fix cycle to the Claude fixer
+# Issue-type labels, declared in .github/ISSUE_TEMPLATE/*.md frontmatter.
+# GitHub silently drops a template label that does not exist in the repository,
+# so an Issue filed from the Task template would simply arrive without `task`
+# and nothing would say why. `bug` and `enhancement` ship with every new
+# repository; these three do not.
+task|0052CC|Small scoped change that is not a feature
+infrastructure|5319E7|Build, CI, tooling, or repository plumbing
+dependency|C2E0C6|Dependency addition, removal, or version change
 plan|0E8A16|Intake Issue awaiting decomposition into Implementation Tasks
 planned|0E8A16|Intake Issue that has been decomposed
 implementation|1D76DB|Implementation Task Issue, ready for an implementer
@@ -58,6 +66,13 @@ updated=0
 
 while IFS='|' read -r name color description; do
   [ -n "$name" ] || continue
+
+  # The block above is data read by `read`, not shell, so a comment line in it
+  # would otherwise be parsed as a label named "# ..." with no color -- which
+  # fails `gh label create`, then fails `gh label edit`, and aborts the whole
+  # run under `set -e` partway through. Skipping them here keeps the list
+  # self-documenting, which matters more as it grows.
+  case "$name" in \#*) continue ;; esac
 
   if gh label create "$name" \
        --repo "$repo" \
