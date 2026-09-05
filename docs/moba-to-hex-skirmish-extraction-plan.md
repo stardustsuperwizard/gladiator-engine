@@ -329,8 +329,10 @@ additive rather than exploratory.
   resolver thousands of times to evaluate candidate moves). Those pay off
   even if this never ships multiplayer.
 - **One hardcoded team/session shape:** 2 teams, 1 controlling player each,
-  fixed roster size (per the spec's 3–5 fighters). This validates the core
-  loop without solving N-players-per-team yet.
+  both human, fixed roster size (per the spec's 3–5 fighters). This validates
+  the core loop without solving N-players-per-team yet. "Single player" in the
+  MVP means hotseat — one person playing both sides — not an AI opponent; see
+  §5.3.
 - **A full 3-round match, playable start to finish**, using the spec's
   actual rules: board, core actions (Section 6), combat resolution
   (Section 7), flanking (Section 8), status/defeat (Section 9), end-of-round
@@ -354,6 +356,29 @@ additive rather than exploratory.
   a match the two ends disagree about (guide §9.3).
 - **Server-supplied balance data.** Serving `.tres` values from the authority
   so a balance change does not require a client release (§5.5).
+- **AI opponent.** A post-MVP feature release, not MVP work — the owner's
+  decision, 2026-09-05. Two human players is the shape being built. Listed
+  here because it was previously neither planned nor deferred: every mention
+  of AI in these documents (spec §12, `AGENTS.md`, §3.4, §5.2's "headless AI
+  search") is a *reason for the authority chokepoint*, never a thing to build,
+  so an implementer had no way to tell whether it was out of scope or merely
+  unwritten. It is out of scope. Three notes for whoever picks it up:
+  - **It is a controller, not a rules component.** The AI lives game-side in
+    `scripts/` and submits `TurnAction`s through the same authority object the
+    UI does. It reads `rules/` to evaluate candidates; `rules/` never calls it.
+    Putting it inside `rules/` breaks the one-way arrow and the contract test
+    should catch it.
+  - **It needs the per-recipient projection above.** An AI handed the full
+    `GameState` sees the human's hand and every face-down token — it cheats,
+    invisibly, and the game reads as unfairly clairvoyant with nothing to point
+    at. So the projection has a consumer that does not involve a network, and
+    plausibly arrives before one.
+  - **Dice make the search a distribution, not an outcome.** §5.2's "run the
+    resolver thousands of times" works because the RNG position lives in the
+    state and a search can copy it (guide §5). What no document has settled is
+    how candidate moves are *scored* under a stochastic resolver — expectation,
+    sampling, or something else. That is a real open design question, not an
+    implementation detail.
 - **N-players-split-M-teams, lobby UI, matchmaking, reconnection handling.**
   All real work; none of it blocks validating whether the core loop is fun.
 - ~~**The generalized authority-gate/verb-registration pattern** referenced in

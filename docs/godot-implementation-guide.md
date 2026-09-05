@@ -278,6 +278,12 @@ The same applies to `TurnResult`. A result carrying "the drawn card was X" is
 correct for the drawing player and a leak to the other one, so the projection
 belongs on results as well as on state snapshots.
 
+**This is not networking-only, despite living in the networking section.** An
+AI opponent (plan §5.3) is the projection's other consumer: an AI reading the
+full state sees the human's hand and plays as though it had not. Same filter,
+same reason, no wire involved — and if AI ships before networking, the
+projection ships with it.
+
 ### 9.3 Ruleset identity at connect
 
 "Every player is running the same rules" is enforced by the server refusing to

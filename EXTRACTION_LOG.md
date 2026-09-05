@@ -83,3 +83,9 @@ still all adopted, but `LISTEN_SERVER` is now ruled out for ranked play.
 | 35 | Ruleset identity handshake | **new** | "Everyone runs the same rules" is enforced by the server refusing an unrecognised client, not by the client being tamper-proof. A build-time hash over `rules/**/*.gd`, checked at connect. Guide §9.3. |
 | 36 | Server-supplied balance data | note | Falls out of plan §5.2's existing "balance values in data, not in the resolver" — if the authority serves the `.tres` values, a balance patch reaches a league without a client release. Recorded because the payoff is invisible from §5.2 alone. |
 | 37 | Spec §3 visibility rule | **new** | The spec described `GameState` without saying which parts each player may see, because at one table nobody has to ask. Stated explicitly: hand, undrawn deck order, face-down tokens. Discard and scored piles are treated as public — the tabletop convention, and the one assumption here worth confirming against the physical game. |
+
+## 2026-09-05 — AI opponent scope
+
+| # | Item | Verdict | Rationale |
+| --- | --- | --- | --- |
+| 38 | AI opponent | deferred (post-MVP feature) | Owner's decision: a feature release, not MVP; two human players is the shape being built. Recorded because AI was previously in neither list — every mention across the spec, `AGENTS.md` and the plan is a *justification for the authority chokepoint*, never a work item, so §5.3 could not answer "is this out of scope or just unwritten." Now it answers. Carries three notes for the eventual build: the AI is a game-side controller and not a `rules/` component; it consumes the same per-recipient projection as #34, which therefore has a non-network consumer that may arrive first; and scoring candidate moves under a dice-pool resolver is an unsettled design question, not an implementation detail. |
