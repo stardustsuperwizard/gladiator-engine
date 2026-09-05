@@ -14,9 +14,12 @@ between the two repos.
 ## 0. Ground Rules (read this before touching anything)
 
 - **This repo explicitly rejected being a reusable framework.** Issue #276
-  (2026-08-30) deleted `addons/` and reversed the earlier "portable engine
-  other games can host" goal after roughly two-thirds of that layer proved
-  unreachable. `AGENTS.md`: *"Do not add third-party dependencies or
+  (2026-08-30) reversed the earlier "portable engine other games can host"
+  goal after roughly two-thirds of that layer proved unreachable; the code
+  removal followed across #285–#289 (PRs #291/#295/#298/#299). *Verified
+  2026-09-04: `addons/` survives on disk as an empty husk with zero tracked
+  files. Nothing to resurrect.* Treat issue numbers in this plan as unreliable
+  citations generally — describe the mechanism, not the issue. `AGENTS.md`: *"Do not add third-party dependencies or
   addons... this project builds what it needs."* Do not resurrect that
   pattern here. Extraction means: read the source, understand the contract,
   write a new adapted version in the hex-skirmish repo. Do not add
@@ -43,15 +46,18 @@ between the two repos.
 
 ---
 
-## 1. Pre-Flight Audit (time-boxed — see Section 6 for when)
+## 1. Pre-Flight Audit — **DONE 2026-09-04**
 
-> **Re-sequenced.** This was originally "do this first." It no longer is.
-> Section 2 already rules out most of the source repo, and Section 3 finds
-> only two items with a real payoff: the session layer (3.2) and the workflow
-> docs (3.5). Reading another codebase for days before writing a line of this
-> one is how a project stalls before it starts. Do 3.5 immediately (zero
-> risk), build the Section 5.1 slice, and return here when you actually reach
-> networking. Time-box it to a single session when you do.
+> **Completed early, and it was worth it.** This was re-sequenced to run late
+> (build first, audit when networking arrives). It then ran immediately anyway,
+> because the source repo became available and a bounded pass was cheap. That
+> was the right call: the audit found the repo ~130 PRs past this plan's
+> premises, and two findings that change what gets built (see 3.1 and 3.5).
+>
+> **Findings are in `AUDIT_NOTES.md`; decisions are in `EXTRACTION_LOG.md`.**
+> Audited at `ef29ad3`, Godot 4.7. The questions below are answered there —
+> kept here for the record, not as outstanding work. What remains unaudited is
+> listed under *Deferred* in `AUDIT_NOTES.md`, and none of it blocks Slice 0.
 
 1. Read, in this order: `AGENTS.md`, `docs/GAME_MODES.md`,
    `docs/rules/README.md`, `docs/pulp_moba_rpg_ruleset.md`,
@@ -109,26 +115,49 @@ between the two repos.
 
 ---
 
-## 3. What to Adapt (pending Section 1 audit results)
+## 3. What to Adapt (audit complete — see `AUDIT_NOTES.md`)
 
-### 3.1 Authority gate (#277) — highest-leverage item, if it's general
-- If the audit confirms #277 landed as a general command taxonomy (not
-  hardcoded verbs): study its registration contract and build hex-skirmish's
-  own authority gate the same way — register `Move`, `Attack`, `Charge`,
-  `Guard`, `Focus`, and Power Step instant-card plays as verbs, each
-  validated server-side before resolution. Don't import the MOBA's actual
-  verb implementations; adapt the *registration mechanism*.
-- If #277 is still hardcoded or unmerged: don't wait on it. Build
-  hex-skirmish's authority gate using the same principle (generic verb
-  registration, not hardcoded action types) so hex-skirmish doesn't repeat
-  the mistake the MOBA repo is trying to avoid.
+### 3.1 Authority gate (#277) — **resolved: adapt, and it is tiny**
 
-### 3.2 Session layer / lobby (#278)
-- If host/join and single-player-vs-bots-as-a-session-mode are working:
-  study the session state machine (connecting → lobby → in-game) and the
-  single-player/LAN/dedicated-server mode handling — this is close to
-  exactly what hex-skirmish needs, since it has the same three deployment
-  targets.
+> **Revised 2026-09-04.** This section previously asked whether #277 was "a
+> general verb-registration system or still hardcoded," and planned to "adapt
+> the *registration mechanism*." That was a false dichotomy. There is no
+> registry, and there should not be one.
+
+The entire mechanism in the source repo is ~40 lines across four files:
+`Action` (a base class holding an actor and declaring `execute() -> ActionResult`),
+`ActionResult` (`success`, `reason`), `Authority.can_perform(action, requester_id)`
+(one ownership check), and `ActionRunner.run(action, requester_id)` (gate, then
+execute). Generality comes from subclassing, not registration —
+`command_taxonomy_contract_test.gd` asserts exactly that: a new command is one
+new `Action` subclass, requiring no edit to `ActionRunner` or `Authority`.
+
+- Build the same shape here: a `TurnAction` base with `resolve()`, a
+  `TurnResult`, an authority check, a runner. It is small enough to belong to
+  Slice 0 rather than a later phase.
+- The predicate changes. The source checks peer ownership (`owner_id == 0`, or
+  requester is the owning peer). Ours must also gate on turn order — "is it
+  this player's turn, and is this their fighter" — which the real-time original
+  has no equivalent of.
+- **Do not import the MOBA's `Action` subclasses.** The base contract is the
+  portable part; every concrete verb in that repo is real-time combat.
+
+### 3.2 Session layer / lobby (#278) — **confirmed working; adapt when networking starts**
+
+> **Revised 2026-09-04.** This section expected "a session state machine
+> (connecting → lobby → in-game)." There isn't one, and the thing that exists
+> instead is more useful — see below.
+
+- Host/join and single-player-vs-bots are working and genuinely first-class:
+  `session_manager.gd` is an autoload with an `OFFLINE`/`LISTEN_SERVER`/
+  `DEDICATED_SERVER` mode enum over ENet, with the dedicated path reachable at
+  boot from a CLI flag or environment variable. Close to exactly what we need,
+  and the same three deployment targets.
+- Not a state machine: a mode enum plus scene transitions driven by a
+  *replicated property whose setter emits a change signal*
+  (`LobbyManager.match_starting`), chosen over a one-shot RPC so late-joining
+  peers read state rather than miss an event. That idiom is the portable idea
+  here; adapt it rather than the state machine we went looking for.
 - Team/player assignment will need genuine changes either way: the MOBA
   model is almost certainly built around fixed teams of individual players.
   Hex-skirmish needs N-players-split-M-teams (spec brief: either one player
@@ -150,38 +179,81 @@ between the two repos.
   useful if you ever want AI-controlled or objective-token-holding entities
   that participate in combat resolution without being a full player unit.
 
-### 3.5 Dev/agent workflow
-- `docs/AGENT_WORKFLOW.md` (role definitions, model routing for
-  planning/implementation/review across separate sessions) and the
-  `AGENTS.md` working rules (read full issue, smallest change necessary,
-  don't refactor unrelated code, validate before declaring done) are
-  process, not code — copy directly and adapt file paths. This is
-  genuinely portable regardless of what happens with the game code.
+### 3.5 Dev/agent workflow — **DONE 2026-09-04**
+
+> **Revised 2026-09-04.** This section said these docs were "process, not code
+> — copy directly and adapt file paths." That holds for `AGENTS.md`. It does
+> not hold for `docs/AGENT_WORKFLOW.md`, which is 1,976 lines of GitHub Actions
+> control plane: label taxonomy (and label *colors*), model routing and pricing
+> tables, four workflow entry points, dependency automation driven by a
+> `blocker` label. This repo has no issues, no labels, no Actions, and one
+> contributor. Copying it would import an organisation, not a practice.
+
+- **Done:** `AGENTS.md` and `CLAUDE.md` written at this repo's root, adapting
+  the source's *Working Rules*, *Testing*, and *Completion* sections and its
+  "one source of truth, this file is a pointer" structure.
+- **Taken from `AGENT_WORKFLOW.md`:** one principle — planning, implementation,
+  and review work better as separate sessions. Revisit the rest if this repo
+  ever grows an issue tracker and a second contributor.
+- **Taken as a practice:** when a document is revised because it was *wrong*,
+  it says so, dated, with what it previously claimed. The callouts in this
+  section and in 3.1, 3.2, and Section 1 are that practice applied to this
+  plan.
 
 ---
 
-## 4. Suggested New Repo Structure
+## 4. Repo Structure — **BUILT 2026-09-04**
+
+> **Revised 2026-09-04.** This section previously listed `board/`, `combat/`,
+> `fighters/`, `cards/`, `net/` and `ui/` as *siblings* of `rules/`. That
+> would have emptied the rules module of everything it exists to hold: the hex
+> board, the dice resolver, the fighter model and the card system **are** the
+> rules. With them outside, `rules/` contains only its own contract test and
+> the one-way dependency arrow guards nothing. They are nested under `rules/`
+> below, matching how the source repo organises its own module.
 
 ```
 gladiator-engine/
+  project.godot           # Godot 4.7; TestBootstrap autoload
+  AGENTS.md               # working rules (3.5)
+  CLAUDE.md               # pointer to AGENTS.md
+  AUDIT_NOTES.md          # Section 1 findings
+  EXTRACTION_LOG.md       # every extract/adapt/rebuild/reject decision
   docs/
-    hex-skirmish-game-spec.md          # mechanics; engine-agnostic
+    hex-skirmish-game-spec.md            # mechanics; engine-agnostic
     moba-to-hex-skirmish-extraction-plan.md
-    godot-implementation-guide.md      # Godot 4 / GDScript specifics
-  rules/                 # new module, one-way-dependency pattern adapted from 3.3
+    godot-implementation-guide.md        # Godot 4 / GDScript specifics
+  rules/                  # pure simulation; no scene tree, no ambient RNG
+    README.md
+    board/                # hex coords, distance, LOS, occupancy (spec §2)
+    combat/               # dice-pool resolution, flanking (spec §7-8)
+    fighters/             # runtime fighter/weapon model (spec §3, §9)
+    cards/                # scoring/ability decks (spec §4, §10)
+    state/                # GameState, TurnAction, TurnResult, RNG (spec §3)
     tests/
-      extraction_contract_test.gd   # adapted, not copied
-  net/                    # authority gate (3.1) + session layer (3.2), adapted
-  board/                  # hex grid, LOS, distance — new (spec §2)
-  combat/                 # dice-pool resolution, flanking — new (spec §7-8)
-  fighters/               # roster/stats/weapons — new (spec §3), informed by 3.4
-  cards/                  # scoring/ability decks — new (spec §4-10)
-  ui/                     # lobby (informed by 3.2), in-game — new
-  AUDIT_NOTES.md
-  EXTRACTION_LOG.md
+      extraction_contract_test.gd   # adapted from source, string-literal bug fixed
+      contract_scanner_test.gd      # proves the scanner can actually fail
+  scripts/                # game side: Authority, runner, session (3.1, 3.2)
+  scenes/                 # views; main.tscn placeholder for now
+  resources/              # .tres templates: fighters, weapons, cards
+  tests/
+    test_bootstrap.gd     # headless suite runner; result becomes exit code
+  .github/
+    scripts/validate-godot.sh   # the one way to run validation
+    workflows/                  # CI + agent control plane
+    actions/                    # setup-godot, lint-gdscript, agent plumbing
+  .gdlintrc
 ```
 
----
+**Boundary rule.** `rules/` may not reference `res://scripts/`,
+`res://scenes/` or `res://resources/` — enforced on every build. It also does
+not use game-side types by global `class_name`, which is a hole the source
+repo leaves open (its contract test checks paths only, and its `rules/`
+depends on `Action`/`ActionResult` from `scripts/`). `TurnAction` and
+`TurnResult` therefore live in `rules/state/`, since they are the resolver's
+own signature; `Authority` stays in `scripts/`, since "who may act right now"
+is a turn-order and session question the rules have no opinion about. See
+`rules/README.md`.
 
 ## 5. MVP Scope and Build Discipline
 
@@ -270,9 +342,11 @@ additive rather than exploratory.
   premature before.
 - **N-players-split-M-teams, lobby UI, matchmaking, reconnection handling.**
   All real work; none of it blocks validating whether the core loop is fun.
-- **The generalized authority-gate/verb-registration pattern** referenced in
-  Section 3.1. Worth adopting once there are more verbs than the MVP's five
-  core actions justify designing a registration system for. Premature here.
+- ~~**The generalized authority-gate/verb-registration pattern** referenced in
+  Section 3.1.~~ **Struck 2026-09-04.** There is nothing to defer: the audit
+  found generality comes from subclassing, not a registry, and costs the same
+  as the hardcoded form. Building hardcoded-first and generalising later would
+  be strictly more work. Now part of Slice 0 — see the revised 3.1.
 - **Anything from Section 2** (real-time combat, Discipline/loadout system,
   cooldown HUD) — already ruled out, restated here so it isn't accidentally
   reconsidered "for the MVP."
@@ -295,25 +369,29 @@ gate moved with it. The original ordering put Section 3.1 third while 5.3
 listed it as explicitly deferred — a contradiction resolved here in favour of
 5.3.
 
-1. Section 3.5 (workflow docs) — zero-risk, do first, sets up how the rest of
-   this plan gets executed.
+1. ~~Section 3.5 (workflow docs)~~ — **done 2026-09-04.** `AGENTS.md` and
+   `CLAUDE.md` written; `AGENT_WORKFLOW.md` rejected with reasons.
 2. Section 3.3 (rules module discipline) plus the determinism and
    serialization requirements in 5.2 — establishes the architecture
    everything else is built against, and the contract test that keeps it
    honest.
 3. Section 5.1 (Slice 0) — board, one Attack, resolved through the single
-   authority object, with tests mirroring the tabletop math by hand. Nothing
-   below this line starts until those tests pass.
+   authority object, with tests mirroring the tabletop math by hand. Now also
+   carries the `TurnAction`/`TurnResult`/authority/runner shape from the
+   revised 3.1, which is small enough to belong here. **This is the next work.**
+   Nothing below this line starts until those tests pass.
 4. The rest of 5.2's MVP, following the spec's own build order (§12):
    remaining core actions → status effects → card system → scoring/end
    phase → win conditions. Reference Section 3.4's composition pattern when
    designing the `Fighter` data model.
-5. Section 1 audit — here, not earlier, and time-boxed. Confirm the real
-   status of #277/#278 when you are actually about to need networking.
-6. Section 3.2 (session layer) — adapt lobby/session flow; extend for
-   N-players-split-M-teams.
-7. Section 3.1 (generalized authority gate / verb registration) — only once
-   there are enough verbs to justify a registration system, per 5.3.
+5. ~~Section 1 audit~~ — **done 2026-09-04**, ahead of schedule and worth it.
+   See `AUDIT_NOTES.md`. What remains unaudited (lobby team assignment, the
+   `GAME_MODES.md` composition pattern, `sim/`) is listed there and blocks
+   nothing before networking.
+6. Section 3.2 (session layer) — adapt the mode enum and the replicated-
+   property idiom; extend for N-players-split-M-teams. Audit `lobby_manager.gd`
+   properly at this point, not before.
+7. ~~Section 3.1 (verb registration)~~ — **struck**; folded into step 3.
 
 ---
 

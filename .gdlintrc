@@ -1,0 +1,20 @@
+# gdlint configuration for gladiator-engine.
+#
+# Only the keys below are overridden; every other rule keeps gdtoolkit's
+# default, so this file does not freeze the rest of the ruleset in place.
+#
+# max-file-lines stays at gdtoolkit's default of 1000, deliberately.
+#
+# The repo this configuration came from ran at 1200, raised from the default
+# when one class crossed 1000 and then repeatedly landed back on the new
+# ceiling -- five tasks in five days, each one ending in an extraction done
+# purely to fit, and at one point a task with nowhere to put a three-line
+# member. That project inherited the problem; this one starts with no legacy
+# debt and no reason to buy runway it has not spent.
+#
+# The rule that history teaches: when a file approaches the limit, split it.
+# Raising the number trades a bounded refactor for a few more tasks of
+# runway and puts the same failure on someone else's pull request. Note that
+# max-file-lines cannot be auto-fixed, so it goes straight to red and waits
+# for a human -- which is the point.
+max-file-lines: 1000

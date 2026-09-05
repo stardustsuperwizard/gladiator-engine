@@ -1,0 +1,2211 @@
+name: Agent - AW01 Plan Tasks
+
+on:
+  issues:
+    types:
+      - labeled
+
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Intake Issue number to plan"
+        required: true
+        type: number
+
+      force:
+        description: >
+          Re-plan even if an automated plan already exists. Existing
+          sub-issues are NOT removed; close stale ones by hand first.
+        required: false
+        type: boolean
+        default: false
+
+      vendor:
+        description: >
+          Which company answers. A labelled run takes this from the label's
+          third segment instead; this input exists because workflow_dispatch
+          has no label to read.
+        required: false
+        type: choice
+        options:
+          - copilot
+          - claude
+        default: copilot
+
+permissions:
+  contents: read
+  issues: write
+  copilot-requests: write
+
+concurrency:
+  group: agent-plan-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Agent - AW01 Plan Tasks
+    runs-on: ubuntu-latest
+
+    # Two ways in: the label, or a manual dispatch. One role, one vendor,
+    # one label -- the vendor segment is the whole difference between them.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'agent:planner:copilot' ||
+      github.event.label.name == 'agent:planner:claude'
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+
+      ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
+
+      # The label that triggered this run, or empty on workflow_dispatch.
+      # Both the success and failure paths consume it, so it has to be
+      # readable from every step rather than resolved twice.
+      TRIGGER_LABEL: ${{ github.event.label.name }}
+
+
+      # Planning is where the decisions are made, so it gets the strong
+      # model. This is a *preference list*, not a single id: Copilot CLI
+      # resolves model availability per requesting identity, and the identity
+      # here is the Actions GITHUB_TOKEN, not your seat in the picker. A model
+      # the picker offers can still come back "not available" to this job, so
+      # the run step walks the list and uses the first one that starts.
+      #
+      # Keep every entry in the strong tier. Falling back to a cheap model
+      # would silently defeat the whole point of paying for planning.
+      #
+      # Overridable without a commit via the PLANNER_MODELS repository
+      # variable (comma-separated). The older single-valued PLANNER_MODEL is
+      # still honoured and, if set, is tried first.
+      # One list per vendor, selected by the label's vendor segment. They are
+      # NOT interchangeable: Copilot CLI spells Opus 4.8 `claude-opus-4.8`,
+      # Claude Code spells the same model `claude-opus-4-8`. Copying one list
+      # into the other variable produces a model-unavailable walk through
+      # every candidate and then a failure that blames availability.
+      # `PLANNER_MODELS` / `PLANNER_MODEL` are the pre-vendor names. Read
+      # as a copilot fallback rather than dropped: legacy labels were kept
+      # working through the migration, and an operator's pinned list going
+      # silently back to the default is a worse surprise than a stale name.
+      COPILOT_PLANNER_MODELS: >-
+        ${{ vars.COPILOT_PLANNER_MODELS
+        || vars.PLANNER_MODELS
+        || vars.PLANNER_MODEL
+        || 'claude-opus-5,claude-opus-4.8,claude-opus-4.7,claude-sonnet-5' }}
+
+      CLAUDE_PLANNER_MODELS: >-
+        ${{ vars.CLAUDE_PLANNER_MODELS
+        || 'claude-opus-5,claude-opus-4-8,claude-sonnet-5' }}
+
+      # Soft cap for this planning session (copilot).
+      PLANNER_MAX_AI_CREDITS: "75"
+
+      # The claude equivalent. Not a conversion of the above -- credits price
+      # what a session spent, turns count how many times it acted. Planning
+      # reads a lot and writes one JSON object, so it needs few turns and a
+      # lot of room inside them.
+      PLANNER_MAX_TURNS: "40"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Resolve Intake Issue
+        id: issue
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+
+          gh issue view "$ISSUE_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json number,title,body,milestone,url,labels \
+            > issue.json
+
+          # Comments carry clarifications and corrections that amend the
+          # original body. --paginate merges the pages into one array.
+          gh api \
+            --paginate \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            > comments.json
+
+          echo "Planning Issue #$ISSUE_NUMBER with $(jq 'length' comments.json) comment(s)"
+
+      - name: Stop if Already Planned
+        id: duplicate_check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ISSUE_NUMBER="${{ steps.issue.outputs.issue_number }}"
+
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "Force re-plan requested; skipping the duplicate guard."
+            echo "already_planned=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if gh api \
+              --paginate \
+              "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+              --jq '.[].body' |
+              grep -q '<!-- automated-planner-complete -->'
+          then
+            echo "Issue #$ISSUE_NUMBER already has an automated plan."
+            echo "already_planned=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_planned=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The planner runs with read tools against a full checkout, so the
+      # prompt does not need to *be* the repository -- it needs to be a map of
+      # one. What goes inline is only what the planner cannot work without and
+      # would not know to ask for: the Intake Issue, the output contract, and
+      # an index of what exists. Everything else is named, sized, and left for
+      # the planner to fetch, which keeps the prompt roughly an order of
+      # magnitude smaller and leaves the credit budget for reasoning instead
+      # of for re-reading files the model may never look at.
+      - name: Build Planner Request
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        shell: python
+        run: |
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+
+          # Budgets, in bytes unless named otherwise. These exist so the
+          # prompt cannot silently grow back: every inlined section is capped,
+          # and anything clipped is announced to the model rather than
+          # vanishing.
+          MAX_ISSUE_BODY = 20000
+          MAX_COMMENTS = 20
+          MAX_COMMENT = 4000
+          MAX_CONTRACT_FILE = 14000
+          MAX_INVENTORY_ENTRIES = 800
+
+          # Godot writes a .uid sidecar next to every script and resource.
+          # They are tracked, they are a quarter of the tree, and no plan ever
+          # targets one -- listing them is pure noise in the inventory.
+          INVENTORY_NOISE_SUFFIXES = (".uid",)
+
+          # Inlined in full: these define the shape of the answer. A planner
+          # that has to go and fetch its own output contract may simply not,
+          # and the failure mode is a plan that fails validation.
+          CONTRACT_FILES = [
+              ".github/agents/01-planner.agent.md",
+              ".github/ISSUE_TEMPLATE/99-execute_task.md",
+              "AGENTS.md",
+          ]
+
+          # Named but not inlined: architecture and process background. These
+          # are large, only partly relevant to any one Issue, and the
+          # planner can read the parts it needs.
+          BACKGROUND_FILES = [
+              "docs/AGENT_WORKFLOW.md",
+              ".github/copilot-instructions.md",
+              "CONTRIBUTING.md",
+          ]
+
+          root = pathlib.Path(".")
+          issue = json.loads(pathlib.Path("issue.json").read_text())
+
+          sections = []
+
+
+          def human_size(count):
+              if count < 1024:
+                  return f"{count} B"
+
+              return f"{count / 1024:.1f} KB"
+
+
+          def clip(text, limit):
+              if len(text) <= limit:
+                  return text
+
+              return (
+                  text[:limit]
+                  + f"\n\n[... clipped at {limit} bytes;"
+                  + " read the file directly for the rest ...]"
+              )
+
+
+          issue_body = issue.get("body") or ""
+
+          # The type label is how the planner tells a Bug Report from a
+          # Feature. All five intake templates carry an `Acceptance Criteria`
+          # section, but they carry different boilerplate in it and different
+          # sections around it, so the type decides how much the planner has
+          # to specialise. Without this the planner sees a body and has to
+          # infer its shape from prose.
+          #
+          # An allowlist, not a denylist: the prompt promises that this field
+          # names one of five known types, so an unrelated label a human
+          # added -- `documentation`, a priority, `good first issue` -- must
+          # not be presented as if it were the type.
+          #
+          # These five are also ensured in `Ensure Orchestration Labels
+          # Exist`, for the same reason `plan` is: a template silently drops
+          # a label the repository does not define. That guard cannot help
+          # THIS run -- an Issue filed without the label cannot be relabelled
+          # retroactively -- so `(none)` stays a reachable value and the
+          # prompt tells the planner what to do when it sees one.
+          INTAKE_TYPE_LABELS = (
+              "enhancement",
+              "task",
+              "bug",
+              "infrastructure",
+              "dependency",
+          )
+
+          present = {
+              (label or {}).get("name", "")
+              for label in (issue.get("labels") or [])
+          }
+
+          type_labels = [
+              name
+              for name in INTAKE_TYPE_LABELS
+              if name in present
+          ]
+
+          sections.append(
+              "# INTAKE ISSUE\n\n"
+              f"Number: #{issue['number']}\n"
+              f"Title: {issue['title']}\n"
+              f"Type labels: {', '.join(type_labels) or '(none)'}\n\n"
+              f"{clip(issue_body, MAX_ISSUE_BODY)}"
+          )
+
+          # Comments amend the Issue body. Skip this workflow's own output so
+          # a forced re-plan does not read back its previous plan as a
+          # requirement.
+          comments_path = pathlib.Path("comments.json")
+
+          if comments_path.exists():
+              comments = json.loads(comments_path.read_text())
+
+              human_comments = []
+
+              for comment in comments:
+                  body = comment.get("body") or ""
+
+                  if "<!-- automated-planner-complete -->" in body:
+                      continue
+
+                  if "<!-- agent-execute-blocked -->" in body:
+                      continue
+
+                  if "<!-- agent-review-verdict -->" in body:
+                      continue
+
+                  if "<!-- agent-planner-failed -->" in body:
+                      continue
+
+                  author = (comment.get("user") or {}).get("login", "unknown")
+
+                  human_comments.append(
+                      f"## Comment by {author} "
+                      f"({comment.get('created_at', 'unknown date')})\n\n"
+                      f"{clip(body, MAX_COMMENT)}"
+                  )
+
+              # The most recent comments are the ones that amend the rest, so
+              # when there are more than the cap allows, keep the tail.
+              if len(human_comments) > MAX_COMMENTS:
+                  human_comments = human_comments[-MAX_COMMENTS:]
+
+              if human_comments:
+                  sections.append(
+                      "# INTAKE ISSUE COMMENTS\n\n"
+                      "These are clarifications and corrections added after "
+                      "the Issue was filed. Where a comment conflicts with "
+                      "the original body, the later comment wins.\n\n"
+                      + "\n\n".join(human_comments)
+                  )
+
+          for filename in CONTRACT_FILES:
+              path = root / filename
+
+              if not path.is_file():
+                  continue
+
+              text = clip(path.read_text(errors="replace"), MAX_CONTRACT_FILE)
+
+              sections.append(f"# PLANNING CONTRACT: {filename}\n\n{text}")
+
+          # The inventory is built from `git ls-files` rather than from a
+          # filesystem walk. A walk on a runner also picks up Godot's .godot/
+          # cache, egg-info, and __pycache__ -- hundreds of paths that are not
+          # part of the codebase and that pushed the real files past the old
+          # entry cap. Tracked files are exactly the ones a plan may target.
+          def tracked_files():
+              try:
+                  result = subprocess.run(
+                      ["git", "ls-files", "-z"],
+                      capture_output=True,
+                      check=True,
+                  )
+              except (OSError, subprocess.CalledProcessError) as error:
+                  print(f"git ls-files unavailable ({error}); walking instead")
+
+                  skip = {".git", ".godot", "__pycache__", "node_modules"}
+
+                  walked = []
+
+                  for path in root.rglob("*"):
+                      if not path.is_file():
+                          continue
+
+                      if skip.intersection(path.parts):
+                          continue
+
+                      walked.append(path.as_posix())
+
+                  return sorted(walked)
+
+              return sorted(
+                  name
+                  for name in result.stdout.decode(
+                      "utf-8", errors="replace"
+                  ).split("\0")
+                  if name
+              )
+
+
+          all_tracked = tracked_files()
+
+          inventory = [
+              name
+              for name in all_tracked
+              if not name.endswith(INVENTORY_NOISE_SUFFIXES)
+          ]
+
+          hidden = len(all_tracked) - len(inventory)
+
+          truncated = len(inventory) > MAX_INVENTORY_ENTRIES
+          shown = inventory[:MAX_INVENTORY_ENTRIES]
+
+          # Grouped by directory with sizes: the grouping is what makes the
+          # subsystem boundaries legible at a glance, and the sizes are what
+          # let the planner decide which files are worth spending a read on.
+          grouped = {}
+
+          for name in shown:
+              directory = str(pathlib.PurePosixPath(name).parent)
+              grouped.setdefault(directory, []).append(name)
+
+          lines = []
+
+          for directory in sorted(grouped):
+              label = "." if directory == "." else f"{directory}/"
+
+              count = len(grouped[directory])
+
+              lines.append(
+                  f"{label}  ({count} file{'' if count == 1 else 's'})"
+              )
+
+              for name in grouped[directory]:
+                  try:
+                      size = human_size((root / name).stat().st_size)
+                  except OSError:
+                      size = "unknown size"
+
+                  lines.append(
+                      f"  {pathlib.PurePosixPath(name).name}  ({size})"
+                  )
+
+          inventory_note = f"{len(inventory)} tracked files"
+
+          if truncated:
+              inventory_note += (
+                  f"; the first {MAX_INVENTORY_ENTRIES} are listed"
+              )
+
+          if hidden:
+              inventory_note += f" ({hidden} Godot .uid sidecars omitted)"
+
+          inventory_note += "."
+
+          sections.append(
+              "# REPOSITORY FILE INVENTORY\n\n"
+              f"{inventory_note} Paths are relative to the repository root,"
+              " which is your working directory. Read any of these with your"
+              " file tools; do not assume a file's contents from its name.\n\n"
+              + "\n".join(lines)
+          )
+
+          # Pointers, not contents. Background documents plus whatever the
+          # Issue itself pointed at in backticks: the Issue author naming a
+          # path is a strong signal the planner should look there, and a much
+          # weaker signal that the whole file belongs in the prompt.
+          pointers = []
+          seen = set(CONTRACT_FILES)
+
+          for filename in BACKGROUND_FILES:
+              path = root / filename
+
+              if not path.is_file() or filename in seen:
+                  continue
+
+              pointers.append(
+                  f"- `{filename}` ({human_size(path.stat().st_size)})"
+                  " -- architecture and process background"
+              )
+
+              seen.add(filename)
+
+          for candidate in re.findall(r"`([^`\n]+)`", issue_body):
+              candidate = candidate.strip()
+
+              if candidate in seen or "/" not in candidate:
+                  continue
+
+              path = root / candidate.rstrip("/")
+
+              if path.is_dir():
+                  contained = [
+                      name
+                      for name in inventory
+                      if name.startswith(candidate.rstrip("/") + "/")
+                  ]
+
+                  if not contained:
+                      continue
+
+                  pointers.append(
+                      f"- `{candidate.rstrip('/')}/` ({len(contained)} tracked"
+                      " files) -- subsystem named by the Intake Issue"
+                  )
+
+                  seen.add(candidate)
+
+                  continue
+
+              if not path.is_file():
+                  continue
+
+              pointers.append(
+                  f"- `{candidate}` ({human_size(path.stat().st_size)})"
+                  " -- named by the Intake Issue"
+              )
+
+              seen.add(candidate)
+
+          if pointers:
+              sections.append(
+                  "# READ THESE BEFORE PLANNING\n\n"
+                  "These files are NOT included below. Open them with your"
+                  " read tools. The ones named by the Intake Issue are the"
+                  " code the plan will touch; read them before deciding how"
+                  " to split the work.\n\n"
+                  + "\n".join(pointers)
+              )
+
+          context = "\n\n---\n\n".join(sections)
+
+          prompt = f"""
+          You are the technical planning agent for Gladiator Engine.
+
+          You are NOT an implementation agent.
+
+          Your sole responsibility in this invocation is to decompose the
+          supplied Intake Issue into bounded Implementation Tasks.
+
+          WHAT AN INTAKE ISSUE IS:
+
+          Every Issue that reaches you was filed from one of five intake
+          templates. All five are titled `[plan]` and carry the `plan` label
+          plus one type label, reported to you as `Type labels:` in the
+          INTAKE ISSUE section below.
+
+          - `enhancement`    a Feature. A user-visible capability.
+          - `task`           a chore. Bounded work with no feature story.
+          - `bug`            a defect report. Something built is wrong.
+          - `infrastructure` repository mechanics: workflows, scripts, CI.
+          - `dependency`     integrating an external plugin, pack, or model.
+
+          If `Type labels:` reads `(none)`, the label was dropped at filing
+          time rather than the Issue being typeless. Infer the type from the
+          body's section headings -- `Reproduction Steps` means a defect,
+          `Primary Criteria`/`Goal` a Feature -- and carry on. Do not stop,
+          and do not ask for the Issue to be relabelled.
+
+          All five decompose the same way and produce the same
+          Implementation Tasks. What differs is which sections the body
+          carries, and therefore what you must derive rather than copy.
+
+          Do not treat a non-Feature Issue as out of scope for planning, and
+          do not ask for it to be refiled as a Feature. Plan what you were
+          given.
+
+          HOW TO USE YOUR TOOLS:
+
+          You are running inside a full checkout of the repository. Your
+          working directory is the repository root. You have read and search
+          tools; every write tool and shell execution is disabled.
+
+          The context below is a map, not the territory. It gives you the
+          Intake Issue, your output contract, and an inventory of every
+          tracked file. It does NOT give you the source. Retrieve what you
+          need:
+
+          - Read every file listed under READ THESE BEFORE PLANNING.
+          - Read the existing code your tasks will modify, before you decide
+            how to split them. A task's expected_files must name real paths.
+          - Search rather than guess. Do not infer a file's contents, its
+            API, or its conventions from its name or its size.
+          - Stop reading once you can write the plan. Reading is not free,
+            and this session has a credit budget.
+
+          HARD RULES:
+
+          - Do not implement the work yourself.
+          - Do not edit repository files.
+          - Do not create GitHub Issues.
+          - Do not execute shell commands.
+          - Do not redesign established architecture.
+          - Prefer a small number of coherent implementation tasks.
+          - Do not make an Issue merely because multiple files change.
+          - Every task must stand alone for a separate implementation agent.
+          - Tasks must not overlap in implementation responsibility.
+          - Acceptance criteria must be observable or mechanically testable.
+          - Dependencies must reference task IDs in this same response.
+          - Preserve architecture already established in the Intake Issue,
+            AGENTS.md, or repository instructions.
+          - Never plan a task whose acceptance criteria you cannot state as
+            an observation. See ACCEPTANCE CRITERIA below.
+
+          ACCEPTANCE CRITERIA:
+
+          All five templates carry an `Acceptance Criteria` section, but
+          what they carry differs, and most of it is boilerplate that says
+          nothing about this particular Issue:
+
+          - Feature ships three generic lines plus commented examples.
+          - Task ships the heading with every line commented out, so in
+            practice it arrives empty.
+          - Bug, Infrastructure and Dependency ship generic boilerplate
+            only -- "Expected behavior is restored", "Failure path has been
+            verified", and the like.
+
+          So your job is almost never to copy. SPECIALISE the boilerplate
+          into observations specific to this Issue, and derive outright
+          whatever the template left empty. Passing a generic line through
+          unchanged is the failure mode to avoid: "Expected behavior is
+          restored" is no more checkable than "the bug is fixed", and both
+          count as a planning failure.
+
+          Where the Issue's author replaced the boilerplate with real,
+          specific criteria, those are authoritative -- carry them through
+          and do not water them down.
+
+          For a defect, specialise against the body you were given.
+          `Expected Behavior` is the observable statement to assert.
+          `Actual Behavior` is what must stop being true. Each entry under
+          `Reproduction Steps` is a check that the reproduction no longer
+          reproduces.
+
+          Two criteria are appended to every task automatically -- existing
+          tests passing, and `.github/scripts/validate-godot.sh` passing.
+          Do not emit either one yourself. The templates list them too, so
+          this is a line you will often see in the Issue and must still
+          leave out.
+
+          SCOPE FOR A DEFECT:
+
+          A bug is a correction, not a feature. Scope it to the fix and the
+          test that pins it. The refactor the defect hints at, the
+          neighbouring defects you notice while reading, and the rewrite
+          that would prevent the whole class of problem are all
+          `out_of_scope` entries, not tasks -- unless the Issue itself asks
+          for them.
+
+          A one-task plan is a legitimate answer, and for most defects it is
+          the right one. `Produce between 1 and 12 tasks` has a lower bound
+          of one for exactly this reason. Do not split a single correction
+          into a task that fixes it and a task that tests it: that leaves an
+          intermediate state nobody can ship.
+
+          MODEL TIER:
+
+          Each task carries a `model_tier` -- your recommendation for how
+          much model the execution session needs. You are the only role that
+          sees the whole feature at once and reads the code before it is
+          written, so you are the only one positioned to call this. The
+          implementer consumes it as the FIRST candidate in its preference
+          list, not as a fixed choice: an unavailable model still escalates.
+
+          - "haiku" -- mechanical work against a contract you have made
+            explicit. Adding a field and its accessor, a test that mirrors
+            an existing one, a rename, a data file, wiring an existing
+            signal to an existing handler. The task is fully determined by
+            what you wrote in `scope` and `acceptance_criteria`.
+          - "sonnet" -- the default, and the right answer when you are
+            unsure. Ordinary implementation: a new class following an
+            established pattern, a state machine with a handful of
+            transitions, a validator with real branching.
+          - "opus" -- work where a wrong choice is expensive to undo.
+            Anything touching authority, replication, prediction or rewind;
+            anything that changes a shared type in `scripts/`; anything
+            whose correctness argument is subtler than its code.
+
+          Judge the IMPLEMENTATION, not the subject matter. A one-line
+          change in the networking layer is still a one-line change. And
+          judge your own writing honestly: a task you scoped loosely needs
+          a stronger model than the same task scoped tightly. If you find
+          yourself reaching for "opus" because the task is vague, tighten
+          the task instead.
+
+          Under-calling costs more than over-calling. A model that cannot
+          finish burns its session, comes back through review, and spends a
+          fix cycle -- so when a task sits between two tiers, take the
+          higher one.
+
+          Return ONLY one valid JSON object.
+
+          Do not wrap it in Markdown fences.
+          Do not include prose before or after it.
+
+          The JSON MUST have exactly this structure:
+
+          {{
+            "plan_summary": "string",
+            "architecture_notes": [
+              "string"
+            ],
+            "tasks": [
+              {{
+                "id": "T1",
+                "title": "short implementation task title",
+                "objective": "engineering outcome",
+                "scope": "authoritative bounded implementation scope",
+                "model_tier": "haiku | sonnet | opus",
+                "expected_files": [
+                  "path or subsystem"
+                ],
+                "architecture_constraints": [
+                  "constraint"
+                ],
+                "acceptance_criteria": [
+                  "observable requirement"
+                ],
+                "out_of_scope": [
+                  "explicit exclusion"
+                ],
+                "depends_on": [
+                  "T0"
+                ]
+              }}
+            ]
+          }}
+
+          Use empty arrays when a field has no entries.
+
+          Produce between 1 and 12 tasks.
+
+          Write the JSON object as your final message. Write it in one piece,
+          and do not narrate it first: a session that spends its budget
+          describing the plan before emitting it ends with no plan at all.
+
+          REPOSITORY AND ISSUE CONTEXT FOLLOWS.
+
+          {context}
+          """
+
+          prompt_path = pathlib.Path("planner-prompt.txt")
+          prompt_path.write_text(prompt)
+
+          # Size is worth surfacing: the prompt grows with the Issue body, its
+          # comments, and the inventory, so it is the number that silently
+          # drifts upward run over run. The per-section breakdown is what
+          # tells you which one drifted.
+          size = prompt_path.stat().st_size
+
+          print(f"Planner prompt: {size} bytes across {len(sections)} sections")
+
+          for section in sections:
+              print(f"  {len(section.encode()):>8} B  {section.splitlines()[0]}")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(
+                  f"\nPlanner prompt: {human_size(size)} across"
+                  f" {len(sections)} sections,"
+                  f" {len(inventory)} tracked files inventoried.\n"
+              )
+
+      # The vendor comes from the label. `agent:planner:copilot` and
+      # `agent:planner:claude` name the same role and differ only in which
+      # company answers, so the routing below is the whole difference between
+      # them -- everything downstream reads one outcome file and one text file
+      # and never learns which CLI produced them.
+      - name: Route Vendor
+        id: route
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        shell: bash
+        env:
+          LABEL: ${{ github.event.label.name }}
+          DISPATCH_VENDOR: ${{ inputs.vendor }}
+        run: |
+          set -euo pipefail
+
+          # workflow_dispatch has no label, so it takes the input.
+          case "$LABEL" in
+            agent:planner:claude)  VENDOR=claude ;;
+            agent:planner:copilot) VENDOR=copilot ;;
+            *)                     VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
+          esac
+
+          case "$VENDOR" in
+            copilot) MODELS="$COPILOT_PLANNER_MODELS" ;;
+            claude)  MODELS="$CLAUDE_PLANNER_MODELS" ;;
+            *)
+              echo "::error::Unknown vendor '$VENDOR'."
+              exit 1
+              ;;
+          esac
+
+          echo "vendor=$VENDOR" >> "$GITHUB_OUTPUT"
+          echo "models=$MODELS" >> "$GITHUB_OUTPUT"
+          echo "Planning with $VENDOR; candidates: $MODELS"
+
+      - name: Generate Implementation Plan
+        id: session
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        uses: ./.github/actions/run-agent-session
+        with:
+          vendor: ${{ steps.route.outputs.vendor }}
+          prompt-file: planner-prompt.txt
+          models: ${{ steps.route.outputs.models }}
+          max-ai-credits: ${{ env.PLANNER_MAX_AI_CREDITS }}
+          max-turns: ${{ env.PLANNER_MAX_TURNS }}
+          # The planner reads the checkout and writes GitHub Issues. It holds
+          # no tool that can change a file, which is the same posture it had
+          # when this workflow ran the CLI itself.
+          capability: read-only
+          api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          step-label: "Planning"
+
+
+      # Every way this step can fail is a different message to the human, and
+      # the differences matter more than the failure. "Copilot ran out of
+      # credits while writing the plan" means raise the cap; "the model
+      # returned prose instead of JSON" means fix the prompt; "the JSON is
+      # valid but the schema is wrong" means the contract drifted. All three
+      # arrive here as `plan.json is missing`, so this step names which one it
+      # was, records it in planner-failure.json, and lets the failure reporter
+      # say it on the Issue.
+      # `run-agent-session` writes agent-session-failure.json when no model
+      # produced usable output. The reporter below reads planner-failure.json,
+      # which the extraction step writes for parse and schema failures -- but
+      # a session that never returned text never reaches that step. Without
+      # this bridge, that whole class of failure reaches the reporter with no
+      # evidence and it says nothing useful on the Issue.
+      - name: Record Session Failure
+        if: failure() && steps.duplicate_check.outputs.already_planned != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f agent-session-failure.json ] && [ ! -f planner-failure.json ]; then
+            cp agent-session-failure.json planner-failure.json
+            echo "Bridged agent-session-failure.json to planner-failure.json."
+          fi
+
+      - name: Extract and Validate Planner JSON
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        shell: python
+        run: |
+          import json
+          import pathlib
+          import sys
+
+          # How much model output to quote back when the parse fails. Enough
+          # to see what went wrong, not so much that the Issue comment becomes
+          # the transcript.
+          EVIDENCE_CHARS = 1500
+
+          # The session's answer, whichever vendor produced it.
+          # run-agent-session has already joined the assistant messages (or
+          # lifted `.result`, for claude) into this file, so this step no
+          # longer walks an event stream and no longer knows what a Copilot
+          # JSONL event looks like.
+          answer = pathlib.Path("agent-assistant-text.txt")
+
+          outcome_path = pathlib.Path("agent-outcome.json")
+
+          outcome = (
+              json.loads(outcome_path.read_text())
+              if outcome_path.exists()
+              else {}
+          )
+
+
+          def fail(kind, headline, guidance, evidence=""):
+              """Record a classified failure and stop the job."""
+
+              pathlib.Path("planner-failure.json").write_text(
+                  json.dumps(
+                      {
+                          "reason": kind,
+                          "headline": headline,
+                          "guidance": guidance,
+                          "evidence": evidence[:EVIDENCE_CHARS],
+                          "session_reason": outcome.get("reason"),
+                          "assistant_text_chars": outcome.get(
+                              "assistant_text_chars"
+                          ),
+                          "unfinished_turn": outcome.get("unfinished_turn"),
+                          "credit_limit": outcome.get("credit_limit"),
+                      },
+                      indent=2,
+                  )
+                  + "\n"
+              )
+
+              print(f"::error::{headline}")
+              print(guidance)
+
+              if evidence:
+                  print("--- model output ---")
+                  print(evidence[:EVIDENCE_CHARS])
+
+              sys.exit(1)
+
+
+          def find_object_end(candidate, start):
+              """Index of the brace closing the object opened at `start`.
+
+              None when it is never closed -- which is the signature of a
+              writer that stopped mid-sentence rather than of bad JSON.
+
+              Counting braces outside string literals beats text.rfind("}"):
+              a model that appends a sentence containing a brace after its
+              plan would otherwise drag that prose inside the parsed slice and
+              be reported as invalid JSON, when the plan itself was fine.
+              """
+
+              depth = 0
+              in_string = False
+              escaped = False
+
+              for index in range(start, len(candidate)):
+                  character = candidate[index]
+
+                  if in_string:
+                      if escaped:
+                          escaped = False
+                      elif character == "\\":
+                          escaped = True
+                      elif character == '"':
+                          in_string = False
+
+                      continue
+
+                  if character == '"':
+                      in_string = True
+                  elif character in "{[":
+                      depth += 1
+                  elif character in "}]":
+                      depth -= 1
+
+                      if depth == 0:
+                          return index
+
+              return None
+
+
+          if not answer.exists():
+              fail(
+                  "no_output",
+                  "The session produced no output file",
+                  "run-agent-session did not write agent-assistant-text.txt at"
+                  " all. That step writes it even on a failed run, so this is"
+                  " a harness fault rather than a model or budget failure.",
+              )
+
+          text = answer.read_text(errors="replace").strip()
+          assistant_parts = [text] if text else []
+
+          print(f"Session reason: {outcome.get('reason')}")
+          print(f"Assistant text: {len(text)} chars")
+
+          # The credit cap is a soft one: Copilot lets an in-flight response
+          # finish, so a run can hit its budget and still hand back a complete
+          # plan. Claude's turn cap behaves the same way. The session verdict
+          # therefore never vetoes output that arrived intact -- it only
+          # explains output that did not.
+          stopped_short = outcome.get("reason") == "budget_exhausted" or (
+              outcome.get("unfinished_turn")
+              and outcome.get("reason")
+              in ("no_assistant_output", "session_error")
+          )
+
+          if not assistant_parts:
+              if stopped_short:
+                  fail(
+                      "budget_exhausted",
+                      outcome.get(
+                          "headline",
+                          "The session stopped on its budget before saying"
+                          " anything",
+                      ),
+                      outcome.get("guidance", ""),
+                  )
+
+              fail(
+                  "no_assistant_output",
+                  "The session returned no assistant message",
+                  outcome.get("guidance")
+                  or "The session ended without the model saying anything."
+                  " Check the outcome file in the job log.",
+              )
+
+          # Be tolerant if the model ignored the no-fence instruction.
+          if text.startswith("```"):
+              lines = text.splitlines()
+
+              if lines:
+                  lines = lines[1:]
+
+              if lines and lines[-1].strip() == "```":
+                  lines = lines[:-1]
+
+              text = "\n".join(lines).strip()
+
+          # Also tolerate small leading/trailing chatter by extracting the
+          # outermost JSON object.
+          start = text.find("{")
+
+          if start == -1:
+              if stopped_short:
+                  fail(
+                      "budget_exhausted",
+                      "Copilot stopped on its AI credit limit before it began"
+                      " the plan",
+                      outcome.get("guidance", ""),
+                      text,
+                  )
+
+              fail(
+                  "malformed_json",
+                  "The model returned no JSON object at all",
+                  "The response contains no opening brace, and the session"
+                  " ran to completion within budget -- so this is a"
+                  " prompt-following failure, not a truncated or"
+                  " budget-stopped one. The model's full response is below.",
+                  text,
+              )
+
+          end = find_object_end(text, start)
+
+          # An object that opens and never closes is the signature of a
+          # session that stopped mid-answer. Paired with an unfinished turn or
+          # a budget verdict, that is a budget stop, not malformed output --
+          # and saying "malformed JSON" here would send the reader to rewrite
+          # a prompt that was working fine.
+          if end is None:
+              candidate = text[start:]
+
+              if stopped_short or outcome.get("unfinished_turn"):
+                  fail(
+                      "budget_exhausted",
+                      "Copilot stopped mid-answer, most likely on its AI"
+                      f" credit limit ({outcome.get('credit_limit', '?')}"
+                      " credits)",
+                      "The model was writing a well-formed plan and was cut"
+                      " off before closing it: the JSON is incomplete, not"
+                      " wrong, and the session never finished its turn. Raise"
+                      " the credit cap for this workflow or narrow the"
+                      " Issue, then retry. Do not change the prompt.",
+                      candidate,
+                  )
+
+              fail(
+                  "truncated_output",
+                  "The model's JSON object is incomplete",
+                  "The response opens a JSON object and never closes it, but"
+                  " the session itself ended cleanly and within budget. That"
+                  " points at the model stopping early rather than at the"
+                  " harness. Retry; if it repeats, shorten the requested"
+                  " plan.",
+                  candidate,
+              )
+
+          candidate = text[start:end + 1]
+
+          try:
+              plan = json.loads(candidate)
+          except json.JSONDecodeError as error:
+              fail(
+                  "malformed_json",
+                  f"The model returned invalid JSON: {error}",
+                  "The response is complete -- it opens and closes -- but is"
+                  " not valid JSON. This is a model output failure, not a"
+                  " budget failure. The offending text is below.",
+                  candidate,
+              )
+
+
+          def schema_fail(message):
+              fail(
+                  "schema_violation",
+                  f"The plan is valid JSON but does not match the contract:"
+                  f" {message}",
+                  "The model answered in full and stayed within budget; it"
+                  " simply returned the wrong shape. Fix the contract in the"
+                  " prompt, or the validation here if the contract moved.",
+                  json.dumps(plan, indent=2),
+              )
+
+
+          required_top = {
+              "plan_summary",
+              "architecture_notes",
+              "tasks",
+          }
+
+          if set(plan.keys()) != required_top:
+              schema_fail(
+                  "unexpected top-level fields: " + repr(set(plan.keys()))
+              )
+
+          if not isinstance(plan["plan_summary"], str):
+              schema_fail("plan_summary must be a string")
+
+          if not isinstance(plan["architecture_notes"], list):
+              schema_fail("architecture_notes must be an array")
+
+          tasks = plan["tasks"]
+
+          if not isinstance(tasks, list):
+              schema_fail("tasks must be an array")
+
+          if not 1 <= len(tasks) <= 12:
+              schema_fail(
+                  f"planner produced {len(tasks)} tasks; expected 1-12"
+              )
+
+          required_task = {
+              "id",
+              "title",
+              "objective",
+              "scope",
+              "expected_files",
+              "architecture_constraints",
+              "acceptance_criteria",
+              "out_of_scope",
+              "depends_on",
+          }
+
+          # Optional, unlike every field above. A planner that omits it
+          # produces a plan with no tier recommendation, and the implementer
+          # falls back to its configured default -- which is exactly the
+          # behaviour before this field existed. Making it required would
+          # mean one forgotten key fails an otherwise good plan, and a
+          # routing hint is not worth a planning failure.
+          MODEL_TIERS = ("haiku", "sonnet", "opus")
+
+          task_ids = []
+
+          for task in tasks:
+              if not isinstance(task, dict):
+                  schema_fail(f"task is not an object: {task!r}")
+
+              if set(task.keys()) - {"model_tier"} != required_task:
+                  schema_fail(f"task has unexpected fields: {task}")
+
+              tier = task.get("model_tier")
+
+              if tier is not None and tier not in MODEL_TIERS:
+                  schema_fail(
+                      f"{task['id']}.model_tier is {tier!r}; expected one of "
+                      + ", ".join(MODEL_TIERS)
+                  )
+
+              for field in (
+                  "id",
+                  "title",
+                  "objective",
+                  "scope",
+              ):
+                  if not isinstance(task[field], str):
+                      schema_fail(f"{field} must be a string")
+
+              for field in (
+                  "expected_files",
+                  "architecture_constraints",
+                  "acceptance_criteria",
+                  "out_of_scope",
+                  "depends_on",
+              ):
+                  if not isinstance(task[field], list):
+                      schema_fail(f"{task['id']}.{field} must be an array")
+
+                  if not all(
+                      isinstance(value, str)
+                      for value in task[field]
+                  ):
+                      schema_fail(
+                          f"{task['id']}.{field} must contain strings"
+                      )
+
+              if not task["acceptance_criteria"]:
+                  schema_fail(f"{task['id']} has no acceptance criteria")
+
+              task_ids.append(task["id"])
+
+          if len(task_ids) != len(set(task_ids)):
+              schema_fail("planner returned duplicate task IDs")
+
+          known_ids = set(task_ids)
+
+          for task in tasks:
+              for dependency in task["depends_on"]:
+                  if dependency not in known_ids:
+                      schema_fail(
+                          f"{task['id']} depends on unknown task {dependency}"
+                      )
+
+                  if dependency == task["id"]:
+                      schema_fail(f"{task['id']} depends on itself")
+
+          pathlib.Path("plan.json").write_text(
+              json.dumps(plan, indent=2) + "\n"
+          )
+
+          print(f"Validated {len(tasks)} Implementation Task(s)")
+
+          # A plan that arrived complete *and* tripped the cap is a warning,
+          # not a failure -- the cap is soft, so the in-flight response
+          # finished. It is still the last run that will get away with it.
+          if outcome.get("budget_signals"):
+              print(
+                  "::warning::This plan is complete, but the session reached"
+                  f" its AI credit limit ({outcome.get('credit_limit')}"
+                  " credits) on the way. Raise PLANNER_MAX_AI_CREDITS before"
+                  " the next Issue of this size."
+              )
+
+      - name: Ensure Orchestration Labels Exist
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ensure_label () {
+            NAME="$1"
+            COLOR="$2"
+            DESCRIPTION="$3"
+
+            if ! gh label list \
+                --repo "$GITHUB_REPOSITORY" \
+                --limit 200 \
+                --json name \
+                --jq '.[].name' |
+                grep -Fxq "$NAME"
+            then
+              gh label create "$NAME" \
+                --repo "$GITHUB_REPOSITORY" \
+                --color "$COLOR" \
+                --description "$DESCRIPTION"
+            fi
+          }
+
+          ensure_label \
+            "implementation" \
+            "1D76DB" \
+            "Bounded implementation task"
+
+          ensure_label \
+            "machine" \
+            "70A8BD" \
+            "Intended for AI agent execution"
+
+          ensure_label \
+            "planned" \
+            "0E8A16" \
+            "Intake Issue has been decomposed into implementation tasks"
+
+          # Applied instead of nothing when a task's expected files land in
+          # `.github/workflows/**` or `.github/actions/**`. GITHUB_TOKEN
+          # cannot push those paths, so `agent-02-implement.yml` refuses such a
+          # task outright -- this label is the same fact stated in advance,
+          # where an issue view can query it, rather than only on refusal.
+          #
+          # A positive label rather than a missing `machine` one: these tasks
+          # are still meant for an agent to action, just not for a
+          # workflow-token one, and an absence is not something you can build
+          # a view from.
+          ensure_label \
+            "human-credentials" \
+            "D4C5F9" \
+            "Touches paths GITHUB_TOKEN cannot push; needs a human-credentialed session"
+
+          # Applied by `sync-issue-dependencies.py` to whichever end of an
+          # edge does the blocking, and the trigger `issue-dependencies.yml`
+          # listens for. Bootstrapped here as well as there because a label
+          # that does not exist cannot be added, and this workflow is the one
+          # that runs first on a fresh repository -- the sync would otherwise
+          # spend its first run creating the label instead of using it.
+          ensure_label \
+            "blocker" \
+            "B23F00" \
+            "Blocks at least one other Issue; wires the dependency chain"
+
+          # `plan` is applied by the Issue templates, but a template silently
+          # drops a label the repository does not define — so an intake Issue
+          # would arrive unlabelled and never appear in the awaiting-planning
+          # view. Defining it here makes the vocabulary self-healing.
+          ensure_label \
+            "plan" \
+            "0E8A16" \
+            "Intake ticket awaiting planning"
+
+          # The five intake type labels, for exactly the reason above: each is
+          # applied by a template, and a template silently drops a label the
+          # repository does not define. `Build Planner Request` reports the
+          # type to the planner, so a dropped one costs the planner the single
+          # fact that tells it which sections the body carries.
+          #
+          # This heals the vocabulary for the NEXT Issue, not this one -- an
+          # Issue already filed without the label cannot be relabelled from
+          # here, which is why the prompt also handles `(none)`. Colors match
+          # the live repository as of 2026-08-24; `ensure_label` only checks
+          # that the name exists, so these never overwrite an existing label.
+          ensure_label "enhancement"    "a2eeef" "New feature or request"
+          ensure_label "task"           "e7fbdb" "General task that is not necessarily a feature request."
+          ensure_label "bug"            "d73a4a" "Something isn't working"
+          ensure_label "infrastructure" "1f3e3a" "Work related to the repository infrastructure"
+          ensure_label "dependency"     "646fda" "External dependency or asset integration"
+
+      - name: Create Implementation Task Sub-Issues
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        shell: python
+        env:
+          ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+          import tempfile
+
+          # The same module `agent-02-implement.yml`'s guard and
+          # render-dashboard.py read, so the planner's promise and the
+          # implementer's refusal cannot disagree about which paths are
+          # restricted. Imported rather than reimplemented for that reason;
+          # the checkout is at the workspace root.
+          sys.path.insert(
+              0,
+              os.path.join(
+                  os.environ.get("GITHUB_WORKSPACE", "."),
+                  ".github",
+                  "scripts",
+              ),
+          )
+
+          import task_scope
+
+          # The dependency-table grammar, shared with
+          # `sync-issue-dependencies.py` and `issue-dependencies.yml`. Imported
+          # for `render_table` specifically: the planner writing the table by
+          # hand is how the writer and the reader drift apart, and the reader
+          # failing silently is the whole failure mode being fixed here.
+          import issue_dependencies
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          parent = os.environ["ISSUE_NUMBER"]
+
+          plan = json.loads(
+              pathlib.Path("plan.json").read_text()
+          )
+
+          issue = json.loads(
+              pathlib.Path("issue.json").read_text()
+          )
+
+          milestone = None
+
+          if issue.get("milestone"):
+              milestone = issue["milestone"].get("title")
+
+          created = {}
+          bodies = {}
+          scopes = {}
+
+          def bullets(items, empty="None"):
+              if not items:
+                  return f"- {empty}"
+
+              return "\n".join(
+                  f"- {item}"
+                  for item in items
+              )
+
+          # Every task body ends with these two, hardcoded below. A planner
+          # that also emits them -- which happens whenever the Intake Issue's
+          # own acceptance criteria named them -- would render each twice.
+          # Drop the planner's copy rather than the standing one so the
+          # wording stays identical across every task.
+          #
+          # Matched conservatively, on the two canonical phrasings only. A
+          # looser match risks silently discarding a real criterion, which is
+          # a far worse failure than a duplicate line.
+          #
+          # A task whose criteria were ALL standing ones filters down to
+          # nothing here, and renders with just the two appended lines. That
+          # is left alone deliberately: the body is then exactly what it
+          # would have been anyway, and a plan that proposed no substantive
+          # criterion is a planning failure for the reviewer to call, not
+          # something to paper over at render time. `Extract and Validate
+          # Planner JSON` still rejects a genuinely empty list.
+          STANDING_CRITERIA = {
+              "existing tests pass",
+              ".github/scripts/validate-godot.sh passes",
+              "godot headless validation passes",
+          }
+
+
+          def is_standing(item):
+              normalized = (
+                  item.strip()
+                  .rstrip(".")
+                  .replace("`", "")
+                  .casefold()
+              )
+
+              return normalized in STANDING_CRITERIA
+
+
+          def checks(items):
+              return "\n".join(
+                  f"- [ ] {item}"
+                  for item in items
+                  if not is_standing(item)
+              )
+
+          # Prose next to the label, because the label is what the workflows
+          # read and prose is what tells a human whether the call was sane.
+          # A tier that looks wrong is worth relabelling by hand; that only
+          # happens if the reasoning is visible on the Issue.
+          def tier_note(tier):
+              if tier is None:
+                  return (
+                      "The planner did not record a tier. The implementer uses "
+                      "its configured default; nothing is blocked by this."
+                  )
+
+              return (
+                  f"The planner judged this task `{tier}` work. That is the "
+                  "implementer session's starting model, not a pin -- an "
+                  "unavailable model escalates rather than failing the run, "
+                  "and an operator who sets the `IMPLEMENTER_MODELS` repository "
+                  "variable outranks it. Relabel this Issue "
+                  "`model:haiku|sonnet|opus` to overrule it."
+              )
+
+          # First pass: create every task so all dependency
+          # task IDs can be translated to actual Issue numbers.
+          for task in plan["tasks"]:
+              body = f"""\
+          <!--
+          Generated by the automated planning workflow.
+          planner-parent: #{parent}
+          planner-task-id: {task["id"]}
+          -->
+
+          ## Provenance
+
+          - Parent Feature: #{parent}
+          - Planner Task: {task["id"]}
+
+          ## Model Tier
+
+          - Recommended: `{task.get("model_tier") or "unset"}`
+
+          {tier_note(task.get("model_tier"))}
+
+          ## Objective
+
+          {task["objective"]}
+
+          ## Scope
+
+          {task["scope"]}
+
+          ## Files or Subsystems Expected to Change
+
+          {bullets(
+              task["expected_files"],
+              "Planner did not identify specific files"
+          )}
+
+          ## Architecture Constraints
+
+          {bullets(task["architecture_constraints"])}
+
+          ## Acceptance Criteria
+
+          {checks(task["acceptance_criteria"])}
+
+          - [ ] Existing tests pass
+          - [ ] `.github/scripts/validate-godot.sh` passes
+
+          ## Out of Scope
+
+          {bullets(task["out_of_scope"])}
+          """
+              # No `## Dependencies` section yet, deliberately. It has to name
+              # Issue *numbers*, and none of the siblings exist until this
+              # loop finishes -- `depends_on` at this point holds planner task
+              # IDs, which mean nothing to anyone reading the Issue and
+              # nothing to `issue_dependencies.py`. The third pass appends the
+              # real table once every number is known.
+
+              # Evaluated against the rendered body rather than against
+              # `task["expected_files"]` directly, because the body is what
+              # agent-02-implement.yml's guard will read back. Judging the two
+              # from different inputs is how a task gets promised as
+              # runnable and then refused.
+              scope = task_scope.evaluate(body)
+              scopes[task["id"]] = scope
+
+              if not scope["implementer_eligible"]:
+                  print(
+                      f"{task['id']} expects "
+                      + ", ".join(scope["restricted_paths"])
+                      + " -- not implementer-eligible."
+                  )
+
+              with tempfile.NamedTemporaryFile(
+                  mode="w",
+                  suffix=".md",
+                  delete=False
+              ) as body_file:
+                  body_file.write(body)
+                  body_path = body_file.name
+
+              # The "[{parent}]" tag duplicates the native --parent
+              # relationship set below, in a form that is actually visible
+              # in the Issues list -- GitHub does not surface sub-issue
+              # relationships there.
+              command = [
+                  "gh",
+                  "issue",
+                  "create",
+                  "--repo",
+                  repo,
+                  "--title",
+                  f"[impl] [{parent}] {task['title']}",
+                  "--body-file",
+                  body_path,
+                  "--label",
+                  "implementation",
+                  "--label",
+                  "machine",
+                  "--parent",
+                  parent,
+              ]
+
+              # `machine` stays: this is still work meant for an agent. What
+              # the extra label records is *which* agent -- one pushing with
+              # a human's credentials, because GITHUB_TOKEN cannot write the
+              # paths this task expects to change.
+              if not scope["implementer_eligible"]:
+                  command.extend([
+                      "--label",
+                      "human-credentials",
+                  ])
+
+              if milestone:
+                  command.extend([
+                      "--milestone",
+                      milestone,
+                  ])
+
+              result = subprocess.run(
+                  command,
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              )
+
+              url = result.stdout.strip().splitlines()[-1]
+              number = int(
+                  url.rstrip("/").split("/")[-1]
+              )
+
+              created[task["id"]] = {
+                  "number": number,
+                  "url": url,
+                  "title": task["title"],
+              }
+
+              # Deliberately not a `--label` on the create command above.
+              # `gh issue create` fails outright on a label that does not
+              # exist in the repository, which would turn "the three
+              # `model:*` labels were never created" into "planning is
+              # broken" -- and take the whole plan down, not just the hint.
+              # As a follow-up edit the worst case is an Issue without a
+              # tier label, which the implementer already handles.
+              tier = task.get("model_tier")
+
+              if tier:
+                  label_result = subprocess.run(
+                      [
+                          "gh",
+                          "issue",
+                          "edit",
+                          str(number),
+                          "--repo",
+                          repo,
+                          "--add-label",
+                          f"model:{tier}",
+                      ],
+                      check=False,
+                      capture_output=True,
+                      text=True,
+                  )
+
+                  if label_result.returncode != 0:
+                      print(
+                          f"  could not apply model:{tier} to #{number} -- "
+                          f"{label_result.stderr.strip()}"
+                      )
+
+              bodies[task["id"]] = body
+
+              print(
+                  f"Created {task['id']} as "
+                  f"#{number}: {task['title']}"
+              )
+
+          # Second pass: work out each task's dependency table.
+          #
+          # This used to be where `gh issue edit --add-blocked-by` ran, and it
+          # is where the dependency chain was being lost. That flag needs
+          # GitHub CLI 2.94.0 and is an unknown-flag error on an older runner
+          # image -- but the deeper problem is structural, and would bite
+          # whatever the immediate cause: this step has *already created the
+          # Issues* by the time it gets here, so a failure leaves a plan that
+          # exists and a chain that does not, and the only retry available is
+          # one that duplicates every Issue. Nothing recorded the intent, so
+          # there was nothing cheaper to replay from.
+          #
+          # So the intent is written into the Issue body instead, in the
+          # standard table every template carries, and
+          # `.github/scripts/sync-issue-dependencies.py` realizes it in a
+          # later step. That script goes straight to the REST endpoint, which
+          # has no version floor, and it is re-runnable: if it fails, the
+          # tables are still on the Issues and the `blocker` label or a manual
+          # sweep rebuilds the chain from them.
+          blocks = {task["id"]: [] for task in plan["tasks"]}
+
+          for task in plan["tasks"]:
+              for dependency in task["depends_on"]:
+                  blocks[dependency].append(task["id"])
+
+
+          def dependency_section(task_id):
+              """The task's `## Dependencies` table, in Issue numbers.
+
+              Both directions are written, from the one `depends_on` graph the
+              planner produced. A task that only listed what it waits on still
+              gets `Blocks` rows on the other end of each edge, which is what
+              earns those Issues the `blocker` label and makes the chain
+              readable from either Issue rather than only the downstream one.
+
+              The `Why` column takes the other task's title. The planner emits
+              no per-edge rationale, and a title is a truthful answer to "why
+              does this edge exist" -- considerably more use than an em dash.
+              """
+              blocked_by = [
+                  created[dependency]["number"]
+                  for dependency in plan_by_id[task_id]["depends_on"]
+              ]
+              blocking = [
+                  created[dependent]["number"]
+                  for dependent in blocks[task_id]
+              ]
+
+              reasons = {
+                  entry["number"]: entry["title"]
+                  for entry in created.values()
+              }
+
+              return (
+                  "## Dependencies\n\n"
+                  + issue_dependencies.render_table(
+                      blocked_by=blocked_by,
+                      blocks=blocking,
+                      reasons=reasons,
+                  )
+                  + "\n"
+              )
+
+
+          plan_by_id = {
+              task["id"]: task
+              for task in plan["tasks"]
+          }
+
+          # Third pass: prepend the task description and the contract, and
+          # append the dependency table.
+          #
+          # A pasted task description is the one channel that survives every
+          # picker GitHub takes away. The desktop agents panel offers a model
+          # AND a custom agent; GitHub Mobile offers one or the other; the
+          # assignee screen offers only a model. All three accept -- or in
+          # the assign case, inherit -- what is written here, so this block
+          # carries the Issue's own number, a pointer to the contract, and
+          # the contract's short form.
+          #
+          # The contract leads the body rather than trailing it because an
+          # execution session starts cold and reads top-down; burying it
+          # under Dependencies put it ~120 lines in.
+          #
+          # Neither can be written in the first pass: the Issue number does
+          # not exist until the Issue is created.
+          for task_id, entry in created.items():
+              number = entry["number"]
+
+              restricted = scopes[task_id]["restricted_paths"]
+
+              if restricted:
+                  # The whole point of this branch is that the block it
+                  # replaces is *wrong* for this task. "Start a Copilot
+                  # agent session and paste this" is an instruction that
+                  # cannot work here: neither the cloud agent nor the
+                  # scripted implementer can push these paths, and following it
+                  # costs a full session to find that out at the push.
+                  run_block = (
+                      "## Run This Task\n\n"
+                      "**Not runnable by the Copilot implementer.** This task "
+                      "expects to change "
+                      + ", ".join(f"`{path}`" for path in restricted)
+                      + ", and `GITHUB_TOKEN` cannot write files under "
+                      "`.github/workflows/` or `.github/actions/`.\n\n"
+                      "No `permissions:` key grants it. GitHub reserves "
+                      "workflow edits for credentials carrying the "
+                      "`workflow` OAuth scope, so that a compromised "
+                      "workflow cannot rewrite its own CI. The restriction "
+                      "is deliberate; this repository respects it rather "
+                      "than working around it. Both automated paths hit it: "
+                      "the scripted implementer is rejected at its push, and a "
+                      "Copilot cloud session is rejected at its own.\n\n"
+                      "Adding `agent:implementer:copilot` to this Issue is refused up "
+                      "front by `agent-02-implement.yml`, before any session "
+                      "is paid for.\n\n"
+                      "**Run it from a human-credentialed session "
+                      "instead.** Claude Code -- terminal, desktop, web, or "
+                      "Remote Control -- pushes with your own credentials "
+                      "and can write these paths. It reads the same "
+                      "contract this Issue encodes; see *Claude Code as an "
+                      "additional environment* in `docs/AGENT_WORKFLOW.md`, "
+                      "and `CLAUDE.md` at the repository root. Point it at "
+                      "this Issue:\n\n"
+                      "````text\n"
+                      f"Work GitHub issue #{number} in this repository.\n"
+                      "````\n\n"
+                      f"Open the pull request with `Closes #{number}`, "
+                      f"titled starting with `[{number}]`, and add "
+                      "`agent:reviewer:copilot` to it by hand -- the automated "
+                      "reviewer only auto-triggers on `copilot/*` branches, "
+                      "so that label is what puts this work through the "
+                      "same review gate as everything else.\n\n"
+                      "---\n\n"
+                  )
+              else:
+                  run_block = (
+                      "## Run This Task\n\n"
+                      "Start a Copilot agent session -- mobile or desktop -- and "
+                      "paste this as the task description:\n\n"
+                      "````text\n"
+                      f"Work GitHub issue #{number} in this repository.\n"
+                      "\n"
+                      "Read that issue first, then read the \"Executing an\n"
+                      "Implementation Task\" section of\n"
+                      ".github/copilot-instructions.md -- that is your contract.\n"
+                      "\n"
+                      "The issue's Objective, Scope, Architecture Constraints,\n"
+                      "Acceptance Criteria and Out of Scope sections are\n"
+                      "authoritative. Implement only what they require. Do not\n"
+                      "create issues. Do not close the parent Feature. Report\n"
+                      "discovered out-of-scope work instead of doing it.\n"
+                      "\n"
+                      "Run .github/scripts/validate-godot.sh and report the\n"
+                      "command and its result.\n"
+                      "\n"
+                      f"Title the pull request starting with [{number}], for\n"
+                      f"example \"[{number}] <what it does>\", and include in its\n"
+                      f"description: Closes #{number}\n"
+                      "````\n\n"
+                      "**Pick the model, not the agent.** The `implementer` profile "
+                      "adds nothing a cloud session can use: its `tools:` and "
+                      "`model:` keys are both ignored there, and its prose is "
+                      "already in `.github/copilot-instructions.md`, which every "
+                      "cloud session reads. On GitHub Mobile, selecting a custom "
+                      "agent costs you the model picker -- and no picker means "
+                      "Auto.\n\n"
+                      "Assigning this Issue to Copilot works too: same model "
+                      "choice, no paste, no agent.\n\n"
+                      "---\n\n"
+                      "## Implementation Agent Contract\n\n"
+                      "The full contract is *Executing an Implementation Task* "
+                      "in `.github/copilot-instructions.md`, which you are "
+                      "already reading whether you loaded a profile or not. "
+                      "This is its short form.\n\n"
+                      "Implement only the Scope and Acceptance Criteria below. "
+                      "The parent Feature provides context only; it does not "
+                      "expand this task's scope, and neither do sibling "
+                      "tasks.\n\n"
+                      "Do not:\n\n"
+                      "- broaden this task;\n"
+                      "- redesign architecture;\n"
+                      "- implement sibling tasks;\n"
+                      "- make speculative improvements;\n"
+                      "- create additional GitHub Issues;\n"
+                      "- close the parent Feature.\n\n"
+                      "If additional work is discovered, report it under "
+                      "`Discovered out-of-scope work` rather than implementing "
+                      "it.\n\n"
+                      "Run `.github/scripts/validate-godot.sh` before reporting "
+                      "completion. The implementation pull request must be "
+                      f"titled starting with `[{number}]` and must close "
+                      f"this Issue -- `Closes #{number}` -- and must not close "
+                      "the parent Feature.\n\n"
+                      "---\n\n"
+                  )
+
+              with tempfile.NamedTemporaryFile(
+                  mode="w",
+                  suffix=".md",
+                  delete=False,
+              ) as patched:
+                  patched.write(
+                      run_block
+                      + bodies[task_id]
+                      + "\n"
+                      + dependency_section(task_id)
+                  )
+                  patched_path = patched.name
+
+              subprocess.run(
+                  [
+                      "gh",
+                      "issue",
+                      "edit",
+                      str(number),
+                      "--repo",
+                      repo,
+                      "--body-file",
+                      patched_path,
+                  ],
+                  check=True,
+              )
+
+              print(f"Added run block to #{number}")
+
+          pathlib.Path(
+              "created-issues.json"
+          ).write_text(
+              json.dumps(
+                  created,
+                  indent=2
+              ) + "\n"
+          )
+
+      # Realize the tables the step above wrote. Separate from issue creation
+      # on purpose: creation is the expensive, unrepeatable half -- an Issue
+      # created twice is a duplicate somebody has to close by hand -- while
+      # this half reads bodies and POSTs relationships, and is safe to run
+      # again as many times as it takes. Splitting them means a dependency
+      # failure never puts the created Issues at risk, and the retry is
+      # re-running one cheap step rather than re-planning.
+      #
+      # `--issue` per created task rather than `--sweep`: these are the Issues
+      # whose tables just changed, and the whole repository does not need
+      # re-reading to wire one plan.
+      - name: Wire the Dependency Chain
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARGS=()
+
+          while read -r NUMBER; do
+            [ -n "$NUMBER" ] || continue
+            ARGS+=(--issue "$NUMBER")
+          done < <(jq -r '.[].number' created-issues.json)
+
+          if [ ${#ARGS[@]} -eq 0 ]; then
+            echo "No Issues were created; nothing to wire."
+            exit 0
+          fi
+
+          .github/scripts/sync-issue-dependencies.py \
+            --repo "$GITHUB_REPOSITORY" \
+            "${ARGS[@]}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish Plan to Parent Issue
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        shell: python
+        env:
+          ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import tempfile
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          parent = os.environ["ISSUE_NUMBER"]
+
+          plan = json.loads(
+              pathlib.Path("plan.json").read_text()
+          )
+
+          created = json.loads(
+              pathlib.Path(
+                  "created-issues.json"
+              ).read_text()
+          )
+
+          lines = [
+              "<!-- automated-planner-complete -->",
+              "",
+              "## Automated Implementation Plan",
+              "",
+              plan["plan_summary"],
+              "",
+          ]
+
+          if plan["architecture_notes"]:
+              lines.extend([
+                  "### Architecture Notes",
+                  "",
+              ])
+
+              for note in plan["architecture_notes"]:
+                  lines.append(f"- {note}")
+
+              lines.append("")
+
+          lines.extend([
+              "### Implementation Tasks",
+              "",
+          ])
+
+          for task in plan["tasks"]:
+              child = created[task["id"]]
+
+              dependencies = [
+                  created[dependency]["number"]
+                  for dependency
+                  in task["depends_on"]
+              ]
+
+              dependency_text = (
+                  ", ".join(
+                      f"#{number}"
+                      for number in dependencies
+                  )
+                  if dependencies
+                  else "none"
+              )
+
+              lines.append(
+                  f"- **{task['id']} — "
+                  f"[#{child['number']}]"
+                  f"({child['url']}) "
+                  f"{task['title']}** "
+                  f"— blocked by: "
+                  f"{dependency_text}"
+              )
+
+          lines.extend([
+              "",
+              "The parent Feature remains open until all "
+              "required Implementation Tasks are completed "
+              "and reviewed.",
+              "",
+              "To run one, open an unblocked Implementation Task, copy "
+              "its **Run This Task** block, and paste it into a new Copilot "
+              "agent session on the model you chose -- from mobile or "
+              "desktop. Assigning Copilot from the Issue also works and "
+              "still lets you pick the model.",
+              "",
+              "The **Agent Control Plane** Issue lists every task that is "
+              "ready to dispatch right now, in dependency order. It renders "
+              "on demand, so add `dashboard:update` to any Issue to refresh "
+              "it -- these new tasks are not on it yet.",
+          ])
+
+          body = "\n".join(lines)
+
+          with tempfile.NamedTemporaryFile(
+              mode="w",
+              suffix=".md",
+              delete=False
+          ) as comment_file:
+              comment_file.write(body)
+              comment_path = comment_file.name
+
+          subprocess.run(
+              [
+                  "gh",
+                  "issue",
+                  "comment",
+                  parent,
+                  "--repo",
+                  repo,
+                  "--body-file",
+                  comment_path,
+              ],
+              check=True,
+          )
+
+      - name: Mark Intake Issue Planned
+        if: steps.duplicate_check.outputs.already_planned != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ISSUE_NUMBER="${{ steps.issue.outputs.issue_number }}"
+
+          gh issue edit "$ISSUE_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --add-label "planned"
+
+          # Consume whichever label triggered this run, not a hardcoded one.
+          # A label is a button: leaving `agent:planner:claude` on the Issue
+          # after a claude run would leave the button pressed, and re-adding
+          # it -- the documented way to retry -- would then be a no-op.
+          # Empty on workflow_dispatch, which pressed no button.
+          if [ -n "$TRIGGER_LABEL" ]; then
+            gh issue edit "$ISSUE_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --remove-label "$TRIGGER_LABEL" || true
+          fi
+
+          # `plan` is the intake marker every Issue template applies. It means
+          # "filed, not yet decomposed", which is what the awaiting-planning
+          # issue view queries for. Decomposition is exactly what just
+          # happened, so the Issue leaves that view here and only here — a
+          # failed run keeps `plan`, so nothing is ever silently dropped from
+          # the queue.
+          gh issue edit "$ISSUE_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --remove-label "plan" || true
+
+          echo "Issue #$ISSUE_NUMBER planned successfully."
+      # Nothing records a failed plan as *status*, because status is a label
+      # query and there is no field to write it to. What matters is that the
+      # Issue must not sit in the planning view forever: `agent:planner:copilot` is
+      # what puts it there, so a failed run gives the label back. `plan` was
+      # never removed -- that only happens on success -- so the Issue is
+      # back in the awaiting-planning view, which is true, and re-adding
+      # `agent:planner:copilot` is the same clean retry it always was.
+      #
+      # The comment is the part that notifies you, so it carries the reason
+      # rather than a link to go and find one. Whichever step failed leaves a
+      # classified planner-failure.json behind; this reads it and says what
+      # happened and what to do about it. When there is no such file the
+      # failure happened somewhere other than the Copilot session -- label
+      # creation, sub-issue creation -- and the generic message is the honest
+      # one.
+      - name: Report Planning Failure
+        if: failure()
+        shell: python
+        env:
+          RUN_URL: >-
+            ${{ github.server_url }}/${{ github.repository
+            }}/actions/runs/${{ github.run_id }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          issue_number = os.environ["ISSUE_NUMBER"]
+          run_url = os.environ["RUN_URL"]
+
+          failure_path = pathlib.Path("planner-failure.json")
+
+          failure = {}
+
+          if failure_path.exists():
+              try:
+                  failure = json.loads(failure_path.read_text())
+              except json.JSONDecodeError:
+                  failure = {}
+
+          reason = failure.get("reason", "unknown")
+
+          # What the human should actually do next, per reason. The guidance
+          # the classifier wrote is about the session; this is about the
+          # workflow.
+          NEXT_STEPS = {
+              "budget_exhausted": (
+                  "Raise `PLANNER_MAX_AI_CREDITS` in"
+                  " `.github/workflows/agent-01-planner.yml` (currently"
+                  " `{credit_limit}`), or split this Issue into smaller"
+                  " ones, then re-add the same label. Re-running unchanged will"
+                  " stop at the same place."
+              ),
+              "rate_limited": (
+                  "Nothing is misconfigured. Re-add the same label in a few"
+                  " minutes."
+              ),
+              "truncated_output": (
+                  "Re-add the same label to retry. If it truncates again at the"
+                  " same point, the Issue is too large for one plan."
+              ),
+              "malformed_json": (
+                  "The model did not follow the output contract. Retry once;"
+                  " if it repeats, the prompt in the Build Planner Request"
+                  " step needs tightening, not a bigger budget."
+              ),
+              "schema_violation": (
+                  "The plan's shape does not match what the workflow"
+                  " validates. Either the model drifted or the contract"
+                  " changed on one side only -- compare the prompt's JSON"
+                  " skeleton against the validation in the Extract and"
+                  " Validate Planner JSON step."
+              ),
+              "model_unavailable": (
+                  "No candidate model was available to the Actions"
+                  " `GITHUB_TOKEN` identity. Check"
+                  " https://github.com/settings/copilot/features, then set"
+                  " the `COPILOT_PLANNER_MODELS` or `CLAUDE_PLANNER_MODELS`"
+                  " repository variable, whichever vendor this run used."
+              ),
+              "harness_error": (
+                  "This is a workflow fault, not a model or budget fault."
+                  " Retrying without changing anything will fail the same"
+                  " way."
+              ),
+              "no_assistant_output": (
+                  "The session produced nothing at all. Check the run log for"
+                  " the event counts before retrying."
+              ),
+              "no_output": (
+                  "Copilot CLI wrote no output file. Check that the CLI"
+                  " installed on the runner."
+              ),
+          }
+
+          lines = [
+              "<!-- agent-planner-failed -->",
+              "",
+              "## Planning failed",
+              "",
+          ]
+
+          if failure:
+              lines += [
+                  f"**{failure.get('headline', 'The planning run failed')}**",
+                  "",
+                  f"Reason: `{reason}`",
+                  "",
+              ]
+
+              guidance = failure.get("guidance")
+
+              if guidance:
+                  lines += [guidance, ""]
+
+              next_step = NEXT_STEPS.get(reason)
+
+              if next_step:
+                  lines += [
+                      "### What to do",
+                      "",
+                      next_step.format(
+                          credit_limit=failure.get("credit_limit", "unset")
+                      ),
+                      "",
+                  ]
+
+              evidence = failure.get("evidence")
+
+              if evidence:
+                  lines += [
+                      "<details><summary>What the model returned</summary>",
+                      "",
+                      "```",
+                      evidence,
+                      "```",
+                      "",
+                      "</details>",
+                      "",
+                  ]
+          else:
+              lines += [
+                  "The planning run did not complete, and it did not fail"
+                  " inside the Copilot session -- so this is a failure in the"
+                  " GitHub steps around it (labels, sub-issues, or the plan"
+                  " comment) rather than a model or budget problem.",
+                  "",
+                  "No Implementation Tasks were created, or only some were —"
+                  " check the Issue's sub-issues before retrying, and close"
+                  " any partial ones.",
+                  "",
+              ]
+
+          lines += [
+              f"Full run log: {run_url}",
+              "",
+              "Any trigger label has been released and `plan` was left in place, so"
+              " this Issue is back in the awaiting-planning view. Re-add"
+              " it to retry.",
+          ]
+
+          body = "\n".join(lines)
+
+          # Same reasoning as the success path: the label that triggered
+          # this run is the one to give back, so a retry re-runs the vendor
+          # the human asked for rather than silently falling back to copilot.
+          trigger_label = os.environ.get("TRIGGER_LABEL") or ""
+
+          if trigger_label:
+              subprocess.run(
+                  [
+                      "gh",
+                      "issue",
+                      "edit",
+                      issue_number,
+                      "--repo",
+                      repo,
+                      "--remove-label",
+                      trigger_label,
+                  ],
+                  check=False,
+              )
+
+          subprocess.run(
+              [
+                  "gh",
+                  "issue",
+                  "comment",
+                  issue_number,
+                  "--repo",
+                  repo,
+                  "--body",
+                  body,
+              ],
+              check=True,
+          )
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("\n" + body + "\n")

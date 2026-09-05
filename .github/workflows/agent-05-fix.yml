@@ -1,0 +1,914 @@
+name: Agent - PR Fix
+
+# Applies a bounded correction to a pull request in response to its most
+# recent `VERDICT: FIX` review comment, on the same branch.
+#
+# This is the automated counterpart of running `/fixer <pr-number>`
+# locally, or commenting `@copilot` on a `review:fix` pull request.
+#
+# The gathering and prompt-building work is shared with
+# agent-02-implement.yml's pre-PR review-and-fix gate via the
+# `build-fix-request` and `run-agent-session` composite actions. This
+# workflow's own job is everything specific to fixing an *existing* pull
+# request: checking out its branch, pushing the correction, and posting the
+# result as a comment on it.
+#
+# No AWNN number, unlike Plan/Execute/Rollup: those three are the flow a
+# human walks through step by step (01 -> 02 -> 03), coupled by that
+# numbering on purpose. Fix (like Review) is a reactive support agent
+# instead -- it runs on demand (the `agent:fixer:copilot` label) or as part of
+# Execute's own pre-PR pass, not as a sequential step in that flow.
+#
+# Unlike `agent-04-review.yml`, this workflow writes to the repository: it
+# edits files, runs validation, and pushes a commit. That is a bigger blast
+# radius than posting a comment, so — deliberately, unlike the reviewer's
+# automatic trigger on `ready_for_review` — it never fires on its own just
+# because a PR picked up `review:fix`. A human decides when to spend it, by
+# adding `agent:fixer:copilot` (works from GitHub Mobile) or running it manually.
+#
+# `build-fix-request` re-reads the latest verdict even though `agent:fixer:copilot`
+# implies a human already believes it says FIX: labels can be applied to
+# the wrong PR, and a stale `review:fix` label can survive a later review
+# that changed the verdict. Re-reading the latest verdict comment costs
+# nothing (no model call, just `gh`/`jq`) and a wasted Copilot session for a
+# mislabeled PR is not free.
+
+on:
+  pull_request:
+    types:
+      - labeled
+
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to fix"
+        required: true
+        type: number
+
+      vendor:
+        description: >
+          Which company answers. A labelled run takes this from the label's
+          third segment instead; this input exists because workflow_dispatch
+          has no label to read.
+        required: false
+        type: choice
+        options:
+          - copilot
+          - claude
+        default: copilot
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  copilot-requests: write
+
+concurrency:
+  group: agent-fix-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  fix:
+    name: Agent - PR Fix
+    runs-on: ubuntu-latest
+
+    # Consumed only by `validate-pushed-commit` below. Every value is read
+    # back out of a step that already computed it -- `Resolve Pull Request`
+    # and `Push Commit If One Was Made` -- so no step's behaviour, gating or
+    # own outputs change to produce them.
+    outputs:
+      head-ref: ${{ steps.pr.outputs.head_ref }}
+      pushed: ${{ steps.push.outputs.pushed }}
+      pushed-sha: ${{ steps.push.outputs.sha }}
+      pr-number: ${{ env.PR_NUMBER }}
+
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' &&
+       (github.event.label.name == 'agent:fixer:copilot' ||
+        github.event.label.name == 'agent:fixer:claude'))
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+
+      PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
+
+      # The fix cycle turns a review's specific findings into a code change
+      # with nobody checking it before it goes back through review, so a
+      # cheap model that "fixes" a finding without preserving the invariant
+      # behind it is worse than no automated fixer -- the same reasoning
+      # `agent-04-review.yml` applies to the reviewer. Unlike that job this
+      # one is not blind analysis, it works from a bounded worklist, so it
+      # does not need the top tier by default; it must still never fall back
+      # to a cheap tier automatically. Preference list, per-identity
+      # availability -- see the long note in agent-01-planner.yml.
+      #
+      # Overridable via the FIXER_MODELS repository variable
+      # (comma-separated).
+      # One list per vendor, selected by the label's vendor segment. The ids
+      # are NOT interchangeable between vendors -- see the note in
+      # agent-01-planner.yml.
+      # The original default is preserved exactly, including
+      # `claude-sonnet-4.5` -- the intermediate id the comment on the tier
+      # step says is deliberately kept, because a tier list does not contain
+      # it and dropping it would narrow the fallback walk for no reason.
+      # `FIXER_MODELS` is the pre-vendor name, read as a copilot fallback for
+      # the reason given in agent-01-planner.yml.
+      COPILOT_FIXER_MODELS: >-
+        ${{ vars.COPILOT_FIXER_MODELS
+        || vars.FIXER_MODELS
+        || 'claude-sonnet-5,claude-sonnet-4.5,claude-opus-5' }}
+
+      CLAUDE_FIXER_MODELS: >-
+        ${{ vars.CLAUDE_FIXER_MODELS
+        || 'claude-sonnet-5,claude-opus-5,claude-opus-4-8' }}
+
+      # Captured per vendor, before the `||` collapses "unset" and "set to
+      # the default" into the same value.
+      COPILOT_FIXER_PINNED: ${{ vars.COPILOT_FIXER_MODELS != '' }}
+      CLAUDE_FIXER_PINNED: ${{ vars.CLAUDE_FIXER_MODELS != '' }}
+
+      # The label that triggered this run, or empty. Consumed at the end, so
+      # it must be readable from every step.
+      TRIGGER_LABEL: ${{ github.event.label.name }}
+
+      FIXER_MAX_TURNS: "60"
+
+
+      # "Resolve Fixer Model Tier" below buys a stronger model when a pull
+      # request keeps coming back. A task the planner called cheap and the
+      # reviewer keeps rejecting was mis-called, and repeating the same
+      # session at the same tier is how a cheap task becomes an expensive
+      # one -- four sessions instead of one.
+      #
+      # Counted in *completed* fix rounds, so the default of 1 means: the
+      # first fix runs at the base tier, and every round after that climbs
+      # one tier, to a ceiling of opus. Set to 0 to escalate immediately,
+      # or to a large number to switch escalation off.
+      FIXER_ESCALATE_AFTER: ${{ vars.FIXER_ESCALATE_AFTER || '1' }}
+
+      # Where the climb starts. Kept as a tier name rather than read out of
+      # FIXER_MODELS, because inferring a tier from the first id in a list
+      # would silently change meaning the next time that list is retuned.
+      FIXER_BASE_TIER: ${{ vars.FIXER_BASE_TIER || 'sonnet' }}
+
+      # Soft cap for this fix session. Higher than the reviewer's, because
+      # this session also edits files and re-runs validation, not just
+      # reads. The Copilot CLI rejects any value below 30 before it starts
+      # work, so 30 is the floor, not a tuning choice.
+      #
+      # Raised from 100 after the pre-PR fix pass on #165 stopped mid-task
+      # with `budget_exhausted` at that cap. A fix session that runs out
+      # of budget is the expensive failure here: it has already paid for
+      # the review that found the problem, and it leaves a partial edit
+      # for a human to finish. Kept in lockstep with the same variable in
+      # agent-02-implement.yml's pre-PR pass.
+      FIXER_MAX_AI_CREDITS: "150"
+
+      # Context only -- the checked-out repository is the source of truth
+      # for editing. Past this the diff shown to the model is truncated.
+      MAX_DIFF_CHARS: "150000"
+
+    steps:
+      # The vendor comes from the label's third segment. Everything after
+      # this step reads one outcome file and one text file and never learns
+      # which company answered.
+      - name: Route Vendor
+        id: route
+        shell: bash
+        env:
+          LABEL: ${{ github.event.label.name }}
+          DISPATCH_VENDOR: ${{ inputs.vendor }}
+        run: |
+          set -euo pipefail
+
+          # workflow_dispatch has no label, and the legacy label has no vendor
+          # segment. Both mean copilot, which is what they have always meant.
+          case "$LABEL" in
+            agent:fixer:claude)  VENDOR=claude ;;
+            agent:fixer:copilot) VENDOR=copilot ;;
+            *)                  VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
+          esac
+
+          echo "vendor=$VENDOR" >> "$GITHUB_OUTPUT"
+          echo "Running as $VENDOR"
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Resolve Pull Request
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json number,url,headRefName,isCrossRepository \
+            > pr-meta.json
+
+          echo "head_ref=$(jq -r '.headRefName' pr-meta.json)" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$(jq -r '.url' pr-meta.json)" >> "$GITHUB_OUTPUT"
+
+          # Both checks below are about *this workflow's credentials*, not
+          # about whether the pull request deserves a fix. Both are cheap,
+          # both are certain, and both are answered before "Build Fix
+          # Request" so a refusal costs no Copilot session -- which is the
+          # whole point: this workflow's push is the last thing it does, so
+          # anything it cannot push is discovered after the session is paid
+          # for unless it is caught here.
+          #
+          # Neither is a red run. A refusal is not a malfunction, and
+          # "Report Refusal" below says which one applies -- the same
+          # comment-and-drop-the-label shape "Require a FIX Verdict" already
+          # uses, and that agent-02-implement.yml's "Report Guard Failure"
+          # uses for the identical restriction on the Issue side.
+
+          # A fork PR's branch cannot be pushed to with this token.
+          if [ "$(jq -r '.isCrossRepository' pr-meta.json)" = "true" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=fork" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # GITHUB_TOKEN cannot write `.github/workflows/**` or
+          # `.github/actions/**`. There is no `permissions:` key that grants
+          # it -- GitHub reserves workflow edits for credentials carrying the
+          # `workflow` OAuth scope, deliberately, so that a compromised
+          # workflow cannot rewrite its own CI.
+          #
+          # Read from the pull request's *changed files*, not from the
+          # originating Issue's expected files. An Issue declares intent and
+          # can be wrong or absent; the diff is exactly what the push will
+          # carry, and by this point it exists. (agent-02-implement.yml asks
+          # the same question of an Issue because it runs before any diff
+          # does.)
+          #
+          # Uncertain means eligible: if the file list cannot be read, this
+          # dispatches exactly as it did before the check existed. A false
+          # positive blocks a real fix cycle; a false negative costs one
+          # session and comments why.
+          #
+          # Read from the paginated REST endpoint, not from
+          # `gh pr view --json files`. That one is GraphQL and returns only
+          # the first 100 files, so on a large pull request a restricted
+          # path past the boundary would read as absent -- costing exactly
+          # the session this check exists to save, silently. `--paginate`
+          # has no such ceiling.
+          #
+          # The REST key is `filename`; GraphQL's is `path`. Using the wrong
+          # one yields an empty list rather than an error, which this guard
+          # would read as "nothing restricted" -- the failure that hides.
+          if ! gh api --paginate \
+                 "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+                 --jq '.[].filename' > pr-files.txt \
+              || ! python3 .github/scripts/task_scope.py \
+                   --paths-file pr-files.txt > pr-scope.json
+          then
+            echo "::warning::Could not read this pull request's changed" \
+              "files; treating it as pushable."
+            echo '{"pushable": true, "restricted_paths": []}' > pr-scope.json
+          fi
+
+          if [ "$(jq -r '.pushable' pr-scope.json)" = "false" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=workflow_scope" >> "$GITHUB_OUTPUT"
+            echo "restricted_paths=$(
+              jq -r '[.restricted_paths[] | "`\(.)`"] | join(", ")' \
+                pr-scope.json
+            )" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Report Refusal
+        if: steps.pr.outputs.ok != 'true'
+        shell: bash
+        # Both values reach the script through the environment rather than
+        # `${{ }}`. For `restricted_paths` that is load-bearing: it is quoted
+        # out of a pull request's file list and carries backticks by
+        # construction, and `${{ }}` would paste those into a double-quoted
+        # bash string, where a backtick is command substitution. A variable
+        # expansion is not re-evaluated. `reason` is workflow-authored from a
+        # fixed set and safe either way -- it is here so the step has one
+        # rule rather than two, and so it stays safe if it ever stops being
+        # workflow-authored.
+        env:
+          REASON: ${{ steps.pr.outputs.reason }}
+          RESTRICTED_PATHS: ${{ steps.pr.outputs.restricted_paths }}
+        run: |
+          set -euo pipefail
+
+          case "$REASON" in
+            fork)
+              MSG="This pull request is from a fork. This workflow pushes to the head branch directly and cannot do that across repositories. Fix it by hand, or from a branch in this repository."
+              ;;
+            workflow_scope)
+              MSG="This pull request changes $RESTRICTED_PATHS, and this workflow cannot push a correction to it."
+              MSG="$MSG"$'\n\n'"\`GITHUB_TOKEN\` is not allowed to create or update files under \`.github/workflows/\` or \`.github/actions/\`. No \`permissions:\` key grants it: GitHub reserves workflow edits for credentials carrying the \`workflow\` OAuth scope, so that a compromised workflow cannot rewrite its own CI. The restriction is deliberate and this workflow respects it rather than working around it."
+              MSG="$MSG"$'\n\n'"Refused before the fixer session starts, because pushing is the *last* thing this workflow does. Without this check the session runs, produces a correction, and loses it at the push -- leaving this pull request untouched and the reason visible only in the run log."
+              MSG="$MSG"$'\n\n'"**Apply the fix from a human-credentialed session instead.** Whoever authored this branch can already write these paths; Claude Code -- terminal, desktop, web, or Remote Control -- pushes with your own credentials. Read the review verdict comment above, apply the correction it asks for, and push to this branch. Re-running the reviewer afterwards works normally: \`agent:reviewer:copilot\` has nothing to push and is not affected by this."
+              ;;
+            *)
+              MSG="Refused for an unrecognised reason: \`$REASON\`."
+              ;;
+          esac
+
+          {
+            echo "<!-- agent-fix-skipped -->"
+            echo ""
+            echo "## Fix cycle not started"
+            echo ""
+            echo "$MSG"
+          } > skip-comment.md
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file skip-comment.md
+
+          # Release the button that was pressed. Empty on a
+          # workflow_dispatch run, which pressed none.
+          if [ -n "$TRIGGER_LABEL" ]; then
+            gh pr edit "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --remove-label "$TRIGGER_LABEL" || true
+          fi
+
+          cat skip-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # No model call -- pure gh/jq/python -- so it is cheap to run
+      # unconditionally just to learn the current verdict, before deciding
+      # whether a Copilot session is warranted at all.
+      #
+      # "Unconditionally" now means "whenever this workflow could actually
+      # push the result". Cheap or not, running it after a refusal would
+      # leave a verdict output behind for "Require a FIX Verdict" to comment
+      # on a second time, under the wrong reason.
+      - name: Build Fix Request
+        id: build
+        if: steps.pr.outputs.ok == 'true'
+        uses: ./.github/actions/build-fix-request
+        with:
+          mode: pr
+          pr-number: ${{ env.PR_NUMBER }}
+          max-diff-chars: ${{ env.MAX_DIFF_CHARS }}
+
+      # Only VERDICT: FIX is a bounded correction this agent should attempt.
+      # Every other outcome -- including "no verdict comment at all" -- gets
+      # a comment explaining why nothing happened, not a Copilot session.
+      - name: Require a FIX Verdict
+        if: >-
+          steps.pr.outputs.ok == 'true' &&
+          steps.build.outputs.verdict != 'FIX'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERDICT="${{ steps.build.outputs.verdict }}"
+
+          case "$VERDICT" in
+            none)
+              MSG="No \`<!-- agent-review-verdict -->\` comment was found on this pull request. Run the reviewer first (the \`agent:reviewer:copilot\` label, or \`agent-04-review.yml\`) before requesting a fix."
+              ;;
+            unrecognized)
+              MSG="The most recent review comment did not contain a recognisable \`VERDICT:\` line. Nothing was fixed."
+              ;;
+            PASS)
+              MSG="The most recent review verdict is \`PASS\`. There is nothing to fix."
+              ;;
+            PLANNING*)
+              MSG="The most recent review verdict is \`PLANNING FAILURE\`. This is not a bounded implementation defect -- it needs to go back through planning (re-run \`/planner\` on the parent Feature), not an automated fix."
+              ;;
+            DESIGN*)
+              MSG="The most recent review verdict is \`DESIGN AMBIGUITY\`. Only a human can resolve this -- the fixer does not guess at design intent."
+              ;;
+            *)
+              MSG="The most recent review verdict is \`$VERDICT\`, which this workflow does not act on."
+              ;;
+          esac
+
+          {
+            echo "<!-- agent-fix-skipped -->"
+            echo ""
+            echo "## Fix cycle not started"
+            echo ""
+            echo "$MSG"
+          } > skip-comment.md
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file skip-comment.md
+
+          # Release the button that was pressed. Empty on a
+          # workflow_dispatch run, which pressed none.
+          if [ -n "$TRIGGER_LABEL" ]; then
+            gh pr edit "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --remove-label "$TRIGGER_LABEL" || true
+          fi
+
+          cat skip-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Two inputs decide the fixer's model: how much model the planner
+      # thought this task needed, and how many times fixing it has already
+      # been attempted. The first is the same `model:*` label
+      # agent-02-implement.yml reads, resolved through the Issue this pull
+      # request closes; the second is counted from the fixer's own
+      # `<!-- agent-fix-applied -->` comments on the pull request.
+      #
+      # The tier only ever raises the fixer, never lowers it. A cheap
+      # implementer is a cost decision made before the code existed; the fixer
+      # is a correction responding to a reviewer who has read the code, and
+      # spending less on it than this repository already does would be a
+      # regression wearing a feature's clothes. So the base tier is a floor,
+      # the Issue's tier applies only when it is higher, and escalation
+      # climbs from whichever of the two won.
+      - name: Resolve Fixer Model Tier
+        id: tier
+        if: steps.build.outputs.verdict == 'FIX'
+        env:
+          VENDOR: ${{ steps.route.outputs.vendor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Resolved first, because the pinned branch below reads both. The
+          # operator's list is per-vendor: pinning the Copilot list says
+          # nothing about what Claude should run.
+          case "$VENDOR" in
+            copilot)
+              FIXER_MODELS="$COPILOT_FIXER_MODELS"
+              FIXER_MODELS_PINNED="$COPILOT_FIXER_PINNED"
+              ;;
+            claude)
+              FIXER_MODELS="$CLAUDE_FIXER_MODELS"
+              FIXER_MODELS_PINNED="$CLAUDE_FIXER_PINNED"
+              ;;
+            *)
+              echo "::error::Unknown vendor '$VENDOR'."
+              exit 1
+              ;;
+          esac
+
+          rank() {
+            case "$1" in
+              haiku) echo 1 ;;
+              sonnet) echo 2 ;;
+              opus) echo 3 ;;
+              *) echo 0 ;;
+            esac
+          }
+
+          name_for() {
+            case "$1" in
+              1) echo haiku ;;
+              2) echo sonnet ;;
+              3) echo opus ;;
+            esac
+          }
+
+          if [ "$FIXER_MODELS_PINNED" = "true" ]; then
+            echo "models=$FIXER_MODELS" >> "$GITHUB_OUTPUT"
+            echo "The $VENDOR fixer list is set for this repository; using it as-is." \
+                 "Per-task tier and escalation are both skipped."
+            echo "Fixer model preference list: $FIXER_MODELS"
+            exit 0
+          fi
+
+          # Completed fix rounds already spent on this pull request. The
+          # marker is the one "Publish Fix" posts, so a round that failed
+          # before pushing anything does not count against the budget --
+          # escalating on a crashed session would spend more model on a
+          # problem that was never diagnosed.
+          PRIOR="$(
+            gh pr view "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json comments \
+              --jq '[.comments[]
+                     | select(.body | contains("<!-- agent-fix-applied -->"))]
+                    | length'
+          )"
+
+          # The Issue this pull request closes, for its tier label. The
+          # structured field first; the body is the fallback, and this
+          # repository requires `Closes #<n>` in every pull request body.
+          gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json body,closingIssuesReferences \
+            > fixer-pr-meta.json
+
+          ISSUE="$(
+            jq -r '.closingIssuesReferences[0].number // empty' \
+              fixer-pr-meta.json
+          )"
+
+          if [ -z "$ISSUE" ]; then
+            ISSUE="$(
+              jq -r '.body // ""' fixer-pr-meta.json \
+                | grep -oiE 'closes[[:space:]]+#[0-9]+' \
+                | head -1 \
+                | grep -oE '[0-9]+' \
+              || true
+            )"
+          fi
+
+          ISSUE_RANK=0
+
+          if [ -n "$ISSUE" ]; then
+            while read -r label; do
+              case "$label" in
+                model:*) CANDIDATE_RANK="$(rank "${label#model:}")" ;;
+                *) continue ;;
+              esac
+
+              if [ "$CANDIDATE_RANK" -gt "$ISSUE_RANK" ]; then
+                ISSUE_RANK="$CANDIDATE_RANK"
+              fi
+            done < <(
+              gh issue view "$ISSUE" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json labels \
+                --jq '.labels[].name' 2>/dev/null || true
+            )
+          fi
+
+          # A typo in a repository variable should warn, not fail the run.
+          # The tier names are already tolerated this way; an unquoted
+          # non-integer here would abort the step inside $(( )) under set -e.
+          case "$FIXER_ESCALATE_AFTER" in
+            ''|*[!0-9]*)
+              echo "::warning::FIXER_ESCALATE_AFTER is" \
+                   "'$FIXER_ESCALATE_AFTER', which is not a whole number." \
+                   "Falling back to 1."
+              FIXER_ESCALATE_AFTER=1
+              ;;
+          esac
+
+          BASE_RANK="$(rank "$FIXER_BASE_TIER")"
+
+          if [ "$BASE_RANK" -eq 0 ]; then
+            echo "::warning::FIXER_BASE_TIER is '$FIXER_BASE_TIER', which" \
+                 "is not a tier. Falling back to sonnet."
+            BASE_RANK=2
+          fi
+
+          START_RANK="$BASE_RANK"
+
+          if [ "$ISSUE_RANK" -gt "$START_RANK" ]; then
+            START_RANK="$ISSUE_RANK"
+          fi
+
+          STEPS_UP=$(( PRIOR - FIXER_ESCALATE_AFTER + 1 ))
+
+          if [ "$STEPS_UP" -lt 0 ]; then
+            STEPS_UP=0
+          fi
+
+          EFFECTIVE=$(( START_RANK + STEPS_UP ))
+
+          if [ "$EFFECTIVE" -gt 3 ]; then
+            EFFECTIVE=3
+          fi
+
+          TIER="$(name_for "$EFFECTIVE")"
+
+          # Nothing raised the fixer above where it already runs, so use the
+          # configured list untouched -- it carries intermediate ids (such as
+          # claude-sonnet-4.5) that a tier list does not, and dropping them
+          # here would narrow the fallback walk for no reason.
+          # A tier names a capability level; each vendor spells it its own
+          # way. Copilot CLI: `claude-haiku-4.5`. Claude Code: the same model
+          # is `claude-haiku-4-5`. Resolving the spelling here keeps the
+          # escalation logic above vendor-blind, and keeps a `:claude` run
+          # from walking a list of Copilot ids and then reporting that every
+          # model was unavailable.
+          tier_models() {
+            case "$1:$VENDOR" in
+              haiku:copilot)  echo "claude-haiku-4.5,claude-sonnet-5,claude-opus-5" ;;
+              haiku:claude)   echo "claude-haiku-4-5,claude-sonnet-5,claude-opus-5" ;;
+              sonnet:copilot) echo "claude-sonnet-5,claude-opus-5" ;;
+              sonnet:claude)  echo "claude-sonnet-5,claude-opus-5" ;;
+              opus:copilot)   echo "claude-opus-5,claude-opus-4.8,claude-opus-4.7,claude-sonnet-5" ;;
+              opus:claude)    echo "claude-opus-5,claude-opus-4-8,claude-sonnet-5" ;;
+              *)              echo "" ;;
+            esac
+          }
+
+          if [ "$EFFECTIVE" -le "$BASE_RANK" ]; then
+            MODELS="$FIXER_MODELS"
+          else
+            MODELS="$(tier_models "$TIER")"
+          fi
+
+          echo "models=$MODELS" >> "$GITHUB_OUTPUT"
+          echo "tier=$TIER" >> "$GITHUB_OUTPUT"
+
+          echo "Fix round $(( PRIOR + 1 )) on this pull request" \
+               "($PRIOR completed already)."
+          echo "Base tier $FIXER_BASE_TIER; Issue tier rank $ISSUE_RANK" \
+               "(from ${ISSUE:-no closing Issue found});" \
+               "escalating after $FIXER_ESCALATE_AFTER round(s)."
+
+          if [ "$STEPS_UP" -gt 0 ] && [ "$EFFECTIVE" -eq 3 ] \
+             && [ "$(( START_RANK + STEPS_UP ))" -gt 3 ]; then
+            echo "Already at the top tier; further rounds cannot escalate." \
+                 "If this pull request keeps coming back, the finding is" \
+                 "probably not a model problem."
+          fi
+
+          echo "Resolved tier: $TIER"
+          echo "Fixer model preference list: $MODELS"
+
+      - name: Configure Git Identity
+        if: steps.build.outputs.verdict == 'FIX'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Check Out Pull Request Branch
+        if: steps.build.outputs.verdict == 'FIX'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh pr checkout "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"
+
+          echo "BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Run Fixer Session
+        if: steps.build.outputs.verdict == 'FIX'
+        id: session
+        uses: ./.github/actions/run-agent-session
+        with:
+          vendor: ${{ steps.route.outputs.vendor }}
+          api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          max-turns: ${{ env.FIXER_MAX_TURNS }}
+          prompt-file: ${{ steps.build.outputs.prompt-file }}
+          models: ${{ steps.tier.outputs.models }}
+          max-ai-credits: ${{ env.FIXER_MAX_AI_CREDITS }}
+          # Same tool set as the implementer: this session needs to edit,
+          # run shell commands, and commit. Only sub-agent spawning stays
+          # excluded.
+          capability: write
+          step-label: "Fixing"
+
+      # The prompt tells the model to commit but never push. This is the
+      # single place that decides whether anything reaches the branch: a
+      # session that edited files but never committed, or committed nothing
+      # at all, does not get pushed just because it talked as if it had.
+      - name: Push Commit If One Was Made
+        if: steps.build.outputs.verdict == 'FIX'
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::The fixer left uncommitted changes. Nothing was" \
+                 "pushed -- committing is part of its contract."
+            git status --porcelain
+
+            echo '{"reason":"uncommitted_changes",' \
+                 '"headline":"The fixer left uncommitted changes instead of committing or making no changes",' \
+                 '"guidance":"This is a session-behavior fault, not a budget or availability one. Re-adding the same label retries from a clean branch."}' \
+              > fixer-failure.json
+
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=uncommitted_changes" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          NEW_SHA=$(git rev-parse HEAD)
+
+          if [ "$NEW_SHA" = "$BASE_SHA" ]; then
+            echo "::warning::No commit was made. The fixer made no changes" \
+                 "to the branch."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no_commit" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git push origin "HEAD:${{ steps.pr.outputs.head_ref }}"
+
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$NEW_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Fix
+        if: >-
+          steps.build.outputs.verdict == 'FIX' &&
+          steps.push.outputs.pushed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPORT="${{ steps.session.outputs.final-text-file }}"
+
+          {
+            echo "<!-- agent-fix-applied -->"
+            echo ""
+            echo "## Automated Fix Applied"
+            echo ""
+            if [ -s "$REPORT" ]; then
+              cat "$REPORT"
+            else
+              echo "The fixer pushed a commit but produced no final report." \
+                   "Inspect the diff directly."
+            fi
+            echo ""
+            echo "---"
+            echo ""
+            echo "Commit \`${{ steps.push.outputs.sha }}\` pushed to" \
+                 "\`${{ steps.pr.outputs.head_ref }}\` by" \
+                 "\`.github/agents/05-fixer.agent.md\` via" \
+                 "\`agent-05-fix.yml\` on \`${{ steps.session.outputs.resolved-model }}\`."
+            echo ""
+            echo "This does not change the \`review:fix\` label. Re-review" \
+                 "with the \`agent:reviewer:copilot\` label when ready."
+          } > fix-comment.md
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file fix-comment.md
+
+          # Release the button that was pressed. Empty on a
+          # workflow_dispatch run, which pressed none.
+          if [ -n "$TRIGGER_LABEL" ]; then
+            gh pr edit "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --remove-label "$TRIGGER_LABEL" || true
+          fi
+
+          cat fix-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report No Commit Pushed
+        if: >-
+          steps.build.outputs.verdict == 'FIX' &&
+          steps.push.outputs.pushed == 'false' &&
+          steps.push.outputs.reason == 'no_commit'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            echo "<!-- agent-fix-no-commit -->"
+            echo ""
+            echo "## Automated fix produced no change"
+            echo ""
+            echo "The fixer session completed without committing anything."
+            echo "It may have found nothing it was able to fix within its"
+            echo "guardrails, or it may have deliberately left a finding for"
+            echo "a human to decide. Check the session log:"
+            echo ""
+            echo "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > no-commit-comment.md
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file no-commit-comment.md
+
+          # Release the button that was pressed. Empty on a
+          # workflow_dispatch run, which pressed none.
+          if [ -n "$TRIGGER_LABEL" ]; then
+            gh pr edit "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --remove-label "$TRIGGER_LABEL" || true
+          fi
+
+      # Deliberately just `failure()`, not also gated on the verdict check
+      # having passed: a hard crash in "Resolve Pull Request" itself (bad
+      # PR number, a `gh` API blip) exits nonzero before a verdict is ever
+      # known, and that must still produce a comment rather than a silent
+      # red run with no trace anywhere.
+      - name: Report Fix Failure
+        if: failure()
+        shell: python
+        env:
+          RUN_URL: >-
+            ${{ github.server_url }}/${{ github.repository
+            }}/actions/runs/${{ github.run_id }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          pr_number = os.environ["PR_NUMBER"]
+          run_url = os.environ["RUN_URL"]
+
+          failure = {}
+
+          for candidate in ("fixer-failure.json", "agent-session-failure.json"):
+              path = pathlib.Path(candidate)
+
+              if path.exists():
+                  try:
+                      failure = json.loads(path.read_text())
+                  except json.JSONDecodeError:
+                      failure = {}
+                  break
+
+          reason = failure.get("reason", "unknown")
+
+          lines = [
+              "<!-- agent-fix-failed -->",
+              "",
+              "## Automated fix did not complete",
+              "",
+              "**No commit was pushed.** This pull request is unchanged.",
+              "",
+          ]
+
+          if failure:
+              lines += [
+                  f"**{failure.get('headline', 'The fix run failed')}**",
+                  "",
+                  f"Reason: `{reason}`",
+                  "",
+              ]
+
+              guidance = failure.get("guidance")
+
+              if guidance:
+                  lines += [guidance, ""]
+          else:
+              lines += [
+                  "The run failed outside the Copilot session -- resolving the"
+                  " pull request, checking out the branch, pushing, or"
+                  " publishing the comment.",
+                  "",
+              ]
+
+          lines += [
+              f"Full run log: {run_url}",
+              "",
+              "Any trigger label has been released, so re-adding it is a clean retry.",
+          ]
+
+          body = "\n".join(lines)
+
+          subprocess.run(
+              ["gh", "pr", "comment", pr_number, "--repo", repo, "--body", body],
+              check=True,
+          )
+
+          # Release the button that was pressed. Empty on a
+          # workflow_dispatch run, which pressed none -- and
+          # `--remove-label ""` is a call with an empty argument,
+          # not a no-op, so it is skipped rather than guarded by gh.
+          trigger_label = os.environ.get("TRIGGER_LABEL") or ""
+
+          if trigger_label:
+              subprocess.run(
+                  [
+                      "gh", "pr", "edit", pr_number, "--repo", repo,
+                      "--remove-label", trigger_label,
+                  ],
+                  check=False,
+              )
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("\n" + body + "\n")
+
+  # The independent check on a fix commit. See the equivalent job in
+  # agent-02-implement.yml for the full reasoning; the short form is that the
+  # `pull_request`-triggered gate has repeatedly failed to fire for agent
+  # pushes, landing in `action_required` and never executing (Issue #167), so
+  # nothing outside the fixer's own session ever measured the commit it
+  # pushed. A job in this run needs no second trigger.
+  #
+  # This matters more here than anywhere else in the pipeline. A fix session
+  # edits code in response to a review and pushes it with nobody looking, and
+  # its own re-validation runs in the tree it just edited. This is the only
+  # reading of that commit taken from a clean checkout.
+  #
+  # `steps.push` already distinguishes pushed / no-commit / uncommitted-
+  # changes, so this gates on its `pushed` output rather than recomputing the
+  # state: no commit means the job is skipped, not failed.
+  #
+  # Reports only -- no branch deletion, no reset, no label change. In
+  # particular a failing check here does not touch `review:fix`; whether the
+  # fix stands is a decision for the reviewer and the author.
+  validate-pushed-commit:
+    name: Independent Validation (agent fix)
+    needs: fix
+    if: always() && needs.fix.outputs.pushed == 'true'
+
+    # Narrower than the workflow default on purpose. The called workflow
+    # inherits what this job holds, and it only reads the tree and writes one
+    # check run; the `fix` job's own permissions are untouched.
+    permissions:
+      contents: read
+      checks: write
+
+    uses: ./.github/workflows/godot-validation.yml
+    with:
+      ref: ${{ needs.fix.outputs.pushed-sha }}
+      head-sha: ${{ needs.fix.outputs.pushed-sha }}
+      check-name: Godot Validation (agent-05 fix)

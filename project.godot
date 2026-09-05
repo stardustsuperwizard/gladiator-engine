@@ -1,0 +1,22 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly.
+
+config_version=5
+
+[application]
+
+config/name="Gladiator Engine"
+config/description="Rules engine for turn-based hex grid combat."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7")
+
+[autoload]
+
+; Runs the test suites headlessly and makes the result the process exit code.
+; Deliberately carries no class_name: a global class sharing an autoload's
+; name is a parse error in Godot 4 ("hides an autoload singleton").
+TestBootstrap="*res://tests/test_bootstrap.gd"
+
+[editor_plugins]
+
+enabled=PackedStringArray()
