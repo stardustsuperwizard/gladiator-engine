@@ -137,3 +137,45 @@ func remove_occupant(coord: Vector3i) -> bool:
 
 	_occupants.erase(coord)
 	return true
+
+
+## Every hex reachable from `origin` within `steps` steps, routing around
+## obstacles rather than counting through them -- a breadth-first flood fill
+## over `HexCoord.neighbours()`, not `HexCoord.distance()`. A hex only
+## reachable by a longer detour, or only reachable through a `BLOCKED` or
+## occupied hex, is absent even when its straight-line distance is `steps` or
+## less.
+##
+## A hex is walkable when it `is_blocked()` reports false -- which already
+## covers off-board -- and `is_occupied()` reports false. `origin` itself is
+## exempt from both checks: the fill starts there whether or not something
+## already occupies it, since the mover is standing there. `origin` is never
+## in the result.
+##
+## The result is in breadth-first order: hexes at distance 1 first, then
+## distance 2, and so on, with each hex's neighbours expanded in
+## `HexCoord.DIRECTIONS` order. Two calls with the same arguments on an
+## unchanged board return the identical array. `steps <= 0` returns an empty
+## array.
+func reachable_from(origin: Vector3i, steps: int) -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+	if steps <= 0:
+		return result
+
+	var visited: Dictionary = {origin: true}
+	var frontier: Array[Vector3i] = [origin]
+
+	for _depth in range(steps):
+		var next_frontier: Array[Vector3i] = []
+		for coord in frontier:
+			for neighbour in HexCoord.neighbours(coord):
+				if visited.has(neighbour):
+					continue
+				if is_blocked(neighbour) or is_occupied(neighbour):
+					continue
+				visited[neighbour] = true
+				next_frontier.append(neighbour)
+				result.append(neighbour)
+		frontier = next_frontier
+
+	return result
