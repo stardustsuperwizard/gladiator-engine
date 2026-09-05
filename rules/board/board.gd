@@ -72,6 +72,35 @@ func is_blocked(coord: Vector3i) -> bool:
 	return _terrain[coord] == HexType.BLOCKED
 
 
+## True when nothing stops `from` seeing `to`: spec §2 draws a line between
+## the two hex centres and reports no visibility when it crosses a BLOCKED
+## hex.
+##
+## Only the hexes strictly between the endpoints are tested. `from` and `to`
+## themselves never block, so a hex sees itself and two adjacent hexes see
+## each other even when one of them is BLOCKED -- otherwise a fighter standing
+## in a hazard could not be shot at, and a BLOCKED hex could not be targeted
+## by anything.
+##
+## Only BLOCKED blocks. Occupancy does not: a fighter between two others does
+## not break their line. Neither do HAZARD, EDGE or STARTING. Off-board
+## coordinates do block, which falls out of `is_blocked()` answering true for
+## a coordinate with no hex -- there is no separate membership test here on
+## purpose.
+##
+## This is a line draw, not a search: it does not path-find and does not
+## consult reachability. `HexCoord.line()` documents the tie-break that makes
+## the answer identical in both directions.
+func has_line_of_sight(from: Vector3i, to: Vector3i) -> bool:
+	var path := HexCoord.line(from, to)
+
+	for i in range(1, path.size() - 1):
+		if is_blocked(path[i]):
+			return false
+
+	return true
+
+
 ## Places `occupant_id` at `coord`. Returns `true` and records the occupant
 ## on success. Returns `false` and changes nothing when: there is no hex at
 ## `coord`; the hex `is_blocked()`; the hex is already occupied; or
