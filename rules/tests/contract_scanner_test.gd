@@ -48,7 +48,7 @@ static func _test_detects_plain_violation() -> Array[String]:
 
 
 static func _test_ignores_comment_only_line() -> Array[String]:
-	var line := '# the game side lives in res://scripts/ and is off limits here'
+	var line := "# the game side lives in res://scripts/ and is off limits here"
 	return _expect(
 		not ExtractionContractTest.line_violates(line, PREFIX, true),
 		"a comment-only line must not count as a violation"
@@ -64,7 +64,7 @@ static func _test_detects_code_before_inline_comment() -> Array[String]:
 
 
 static func _test_ignores_prefix_inside_trailing_comment() -> Array[String]:
-	var line := 'var count := 3  # mirrors res://scripts/ but does not touch it'
+	var line := "var count := 3  # mirrors res://scripts/ but does not touch it"
 	return _expect(
 		not ExtractionContractTest.line_violates(line, PREFIX, true),
 		"a prefix mentioned only in a trailing comment must not count"

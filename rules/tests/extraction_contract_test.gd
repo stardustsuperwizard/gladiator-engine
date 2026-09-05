@@ -111,7 +111,7 @@ static func strip_comment(line: String) -> String:
 			i += 2
 			continue
 
-		if c == "\"" and not in_single:
+		if c == '"' and not in_single:
 			in_double = not in_double
 		elif c == "'" and not in_double:
 			in_single = not in_single
