@@ -137,10 +137,19 @@ input.
 One decision buys replays, mid-match save/load, reproducible bug reports ("here
 is the seed"), and later, network sync.
 
-When networking eventually arrives, the safe default is that the authority rolls
-and sends results, rather than both sides rolling from a shared seed.
-Shared-seed lockstep is achievable but demands bit-identical evaluation order on
-both ends — a much stronger constraint than it looks.
+When networking arrives, **the authority rolls and the client is told the
+result.** The seed and the generator position never leave the server, and dice
+are never resolved from a shared seed on both ends.
+
+> **Revised 2026-09-05.** This previously called authority-side rolling "the
+> safe default," weighed only against shared-seed lockstep's demand for
+> bit-identical evaluation order on both ends. That framing was incomplete, and
+> it left as a preference something that is not one. A client holding the seed
+> and the generator position can compute the rolls that have not happened yet —
+> its own and its opponent's. That is not a desync risk, it is an information
+> leak, and it changes how a player would play. Lockstep's evaluation-order
+> constraint is a cost to be weighed; handing a player next round's dice is not.
+> The extraction plan's §5.5 deployment posture is what makes this decidable.
 
 ---
 
@@ -220,3 +229,74 @@ should be a matter of changing where that object lives and how `TurnAction`s
 reach it, not a rules change. That is the bet the architecture makes. If it
 turns out to be a rewrite, the discipline slipped somewhere, and that is worth
 discovering before more is built on top of it.
+
+The three notes below are the Godot mechanics for the deployment posture in
+extraction plan §5.5 — ship a client, run the servers centrally. That section
+says why; this one says how.
+
+### 9.1 One project, two builds
+
+Client and dedicated server are two export presets over the same source tree,
+not two codebases. Godot 4 ships dedicated-server export templates that run
+without a rendering device, and the build is reachable from code and from the
+export config through the `dedicated_server` feature tag
+(`OS.has_feature("dedicated_server")`). The audit's `session_manager.gd` mode
+enum — `OFFLINE` / `LISTEN_SERVER` / `DEDICATED_SERVER`, selected at boot from a
+CLI flag or environment variable (plan §3.2) — is the runtime half of the same
+split, and the two should agree rather than each deciding independently what
+the process is.
+
+The shipped client therefore contains a full copy of `rules/`, and that is not
+a leak to design around. It is what lets the client highlight legal moves,
+preview a Move's reachable set, and animate a result without a round trip. It
+is advisory: the server's copy is the one whose output is the match. Keep the
+client's use of it read-only in that sense — never let a locally resolved
+`TurnResult` become the client's committed state instead of the one that came
+back over the wire.
+
+### 9.2 What crosses the wire is a per-player view, not `GameState`
+
+Spec §3 keeps `perPlayer: { hand, deck, discard, scored, score }` inside the
+game state, and spec §4 places feature tokens face-down. So the serialized
+`GameState` that §5.2 requires — the thing that makes save/load and replay
+work — contains both players' hidden information by construction. Sending it
+to a client hands over the opponent's hand and every unrevealed token, and no
+amount of client-side discipline can take that back: the bytes arrived.
+
+Serialization therefore has two outputs, not one:
+
+- the full state, for save/load, replay, and the server's own persistence, and
+- a **per-recipient projection** — `GameState` plus a viewer id, minus what
+  spec §3's visibility rule says that viewer cannot see — for anything sent to
+  a client.
+
+Build the projection at the same time as serialization rather than after.
+Retrofitting it means auditing every message that already exists, and the
+failure is silent: a leaked hand looks exactly like a working game.
+
+The same applies to `TurnResult`. A result carrying "the drawn card was X" is
+correct for the drawing player and a leak to the other one, so the projection
+belongs on results as well as on state snapshots.
+
+**This is not networking-only, despite living in the networking section.** An
+AI opponent (plan §5.3) is the projection's other consumer: an AI reading the
+full state sees the human's hand and plays as though it had not. Same filter,
+same reason, no wire involved — and if AI ships before networking, the
+projection ships with it.
+
+### 9.3 Ruleset identity at connect
+
+"Every player is running the same rules" is enforced by the server refusing to
+play with a client it does not recognise — not by the client being
+tamper-proof, which an exported PCK is not.
+
+Have the client send an identifier for its rules code at connect and have the
+server reject a mismatch with an explicit "update required," rather than
+letting a divergent client play a match that quietly disagrees with the server
+about what happened. A hash over `rules/**/*.gd` computed at build time and
+baked into the export is enough; it does not need to be a secret, because it
+is not a security check. It is a version check whose failure mode is a clear
+refusal instead of a desync.
+
+Balance numbers are a separate question from rules code, and worth keeping
+separate: see plan §5.5 on serving `.tres` values from the server.
