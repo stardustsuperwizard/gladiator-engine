@@ -70,8 +70,10 @@ static func _test_one_step_returns_the_six_board_neighbours() -> Array[String]:
 	violations.append_array(
 		_expect(
 			result.size() == 6,
-			"reachable_from(origin, 1) on an obstacle-free board must return 6 hexes, got %d"
-			% result.size()
+			(
+				"reachable_from(origin, 1) on an obstacle-free board must return 6 hexes, got %d"
+				% result.size()
+			)
 		)
 	)
 	for neighbour in expected:
@@ -81,13 +83,19 @@ static func _test_one_step_returns_the_six_board_neighbours() -> Array[String]:
 				"reachable_from(origin, 1) must include the on-board neighbour %s" % neighbour
 			)
 		)
-	violations.append_array(
-		_expect(
-			result == expected,
-			(
-				"reachable_from(origin, 1) must expand neighbours in HexCoord.DIRECTIONS order: "
-				+ "expected %s, got %s"
-			) % [expected, result]
+	(
+		violations
+		. append_array(
+			_expect(
+				result == expected,
+				(
+					(
+						"reachable_from(origin, 1) must expand neighbours in HexCoord.DIRECTIONS order: "
+						+ "expected %s, got %s"
+					)
+					% [expected, result]
+				)
+			)
 		)
 	)
 
@@ -101,11 +109,16 @@ static func _test_two_steps_returns_all_eighteen_hexes_at_distance_one_or_two() 
 
 	var result := board.reachable_from(origin, 2)
 
-	violations.append_array(
-		_expect(
-			result.size() == 18,
-			"reachable_from(origin, 2) on a large obstacle-free board must return 18 hexes, got %d"
-			% result.size()
+	(
+		violations
+		. append_array(
+			_expect(
+				result.size() == 18,
+				(
+					"reachable_from(origin, 2) on a large obstacle-free board must return 18 hexes, got %d"
+					% result.size()
+				)
+			)
 		)
 	)
 	for coord in result:
@@ -114,9 +127,12 @@ static func _test_two_steps_returns_all_eighteen_hexes_at_distance_one_or_two() 
 			_expect(
 				distance == 1 or distance == 2,
 				(
-					"reachable_from(origin, 2) returned %s at distance %d: every hex must be "
-					+ "at distance 1 or 2"
-				) % [coord, distance]
+					(
+						"reachable_from(origin, 2) returned %s at distance %d: every hex must be "
+						+ "at distance 1 or 2"
+					)
+					% [coord, distance]
+				)
 			)
 		)
 
@@ -178,20 +194,28 @@ static func _test_blocked_wall_prevents_reaching_a_distance_n_hex() -> Array[Str
 	var target := Vector3i(2, -2, 0)
 	var board := _hex_board(3, [midpoint] as Array[Vector3i])
 
-	violations.append_array(
-		_expect(
-			HexCoord.distance(origin, target) == 2,
-			"target %s must be straight-line distance 2 from origin for this case to test anything"
-			% target
+	(
+		violations
+		. append_array(
+			_expect(
+				HexCoord.distance(origin, target) == 2,
+				(
+					"target %s must be straight-line distance 2 from origin for this case to test anything"
+					% target
+				)
+			)
 		)
 	)
 	violations.append_array(
 		_expect(
 			target not in board.reachable_from(origin, 2),
 			(
-				"a BLOCKED midpoint at %s must remove every route to %s, which must be absent "
-				+ "from reachable_from(origin, 2)"
-			) % [midpoint, target]
+				(
+					"a BLOCKED midpoint at %s must remove every route to %s, which must be absent "
+					+ "from reachable_from(origin, 2)"
+				)
+				% [midpoint, target]
+			)
 		)
 	)
 
@@ -213,20 +237,31 @@ static func _test_occupied_wall_prevents_reaching_a_distance_n_hex() -> Array[St
 			"placing an occupant at %s must succeed for this case to test anything" % midpoint
 		)
 	)
-	violations.append_array(
-		_expect(
-			HexCoord.distance(origin, target) == 2,
-			"target %s must be straight-line distance 2 from origin for this case to test anything"
-			% target
+	(
+		violations
+		. append_array(
+			_expect(
+				HexCoord.distance(origin, target) == 2,
+				(
+					"target %s must be straight-line distance 2 from origin for this case to test anything"
+					% target
+				)
+			)
 		)
 	)
-	violations.append_array(
-		_expect(
-			target not in board.reachable_from(origin, 2),
-			(
-				"an occupied midpoint at %s must remove every route to %s, which must be absent "
-				+ "from reachable_from(origin, 2)"
-			) % [midpoint, target]
+	(
+		violations
+		. append_array(
+			_expect(
+				target not in board.reachable_from(origin, 2),
+				(
+					(
+						"an occupied midpoint at %s must remove every route to %s, which must be absent "
+						+ "from reachable_from(origin, 2)"
+					)
+					% [midpoint, target]
+				)
+			)
 		)
 	)
 
@@ -255,47 +290,68 @@ static func _test_longer_detour_is_excluded_within_n_steps() -> Array[String]:
 	var target := Vector3i(2, 0, -2)
 	var board := _hex_board(3, blocked_neighbours)
 
-	violations.append_array(
-		_expect(
-			HexCoord.distance(origin, target) == 2,
-			"target %s must be straight-line distance 2 from origin for this case to test anything"
-			% target
+	(
+		violations
+		. append_array(
+			_expect(
+				HexCoord.distance(origin, target) == 2,
+				(
+					"target %s must be straight-line distance 2 from origin for this case to test anything"
+					% target
+				)
+			)
 		)
 	)
 	violations.append_array(
 		_expect(
 			not board.is_blocked(open_exit) and not board.is_blocked(detour_step),
-			"the detour route through %s and %s must stay open for this case to test anything"
-			% [open_exit, detour_step]
+			(
+				"the detour route through %s and %s must stay open for this case to test anything"
+				% [open_exit, detour_step]
+			)
 		)
 	)
-	violations.append_array(
-		_expect(
-			(
-				HexCoord.are_adjacent(origin, open_exit)
-				and HexCoord.are_adjacent(open_exit, detour_step)
-				and HexCoord.are_adjacent(detour_step, target)
-			),
-			"origin -> %s -> %s -> %s must be a real 3-step route for this case to test anything"
-			% [open_exit, detour_step, target]
+	(
+		violations
+		. append_array(
+			_expect(
+				(
+					HexCoord.are_adjacent(origin, open_exit)
+					and HexCoord.are_adjacent(open_exit, detour_step)
+					and HexCoord.are_adjacent(detour_step, target)
+				),
+				(
+					"origin -> %s -> %s -> %s must be a real 3-step route for this case to test anything"
+					% [open_exit, detour_step, target]
+				)
+			)
 		)
 	)
 	violations.append_array(
 		_expect(
 			target not in board.reachable_from(origin, 2),
 			(
-				"%s is only reachable by a 3-step detour and must be absent from "
-				+ "reachable_from(origin, 2)"
-			) % target
+				(
+					"%s is only reachable by a 3-step detour and must be absent from "
+					+ "reachable_from(origin, 2)"
+				)
+				% target
+			)
 		)
 	)
-	violations.append_array(
-		_expect(
-			target in board.reachable_from(origin, 3),
-			(
-				"%s must be present in reachable_from(origin, 3): the detour exists, it is just "
-				+ "longer than 2 steps"
-			) % target
+	(
+		violations
+		. append_array(
+			_expect(
+				target in board.reachable_from(origin, 3),
+				(
+					(
+						"%s must be present in reachable_from(origin, 3): the detour exists, it is just "
+						+ "longer than 2 steps"
+					)
+					% target
+				)
+			)
 		)
 	)
 
@@ -312,8 +368,10 @@ static func _test_occupied_adjacent_hex_excluded_unoccupied_included() -> Array[
 	violations.append_array(
 		_expect(
 			board.place_occupant(occupied_neighbour, &"fighter-1"),
-			"placing an occupant at %s must succeed for this case to test anything"
-			% occupied_neighbour
+			(
+				"placing an occupant at %s must succeed for this case to test anything"
+				% occupied_neighbour
+			)
 		)
 	)
 
@@ -322,15 +380,19 @@ static func _test_occupied_adjacent_hex_excluded_unoccupied_included() -> Array[
 	violations.append_array(
 		_expect(
 			occupied_neighbour not in result,
-			"an occupied hex adjacent to origin at %s must be absent from the result"
-			% occupied_neighbour
+			(
+				"an occupied hex adjacent to origin at %s must be absent from the result"
+				% occupied_neighbour
+			)
 		)
 	)
 	violations.append_array(
 		_expect(
 			unoccupied_neighbour in result,
-			"an unoccupied hex the same distance away at %s must be present in the result"
-			% unoccupied_neighbour
+			(
+				"an unoccupied hex the same distance away at %s must be present in the result"
+				% unoccupied_neighbour
+			)
 		)
 	)
 
@@ -355,9 +417,12 @@ static func _test_occupied_origin_still_returns_neighbours() -> Array[String]:
 		_expect(
 			result.size() == 6,
 			(
-				"an occupied origin must still return its 6 walkable neighbours, got %d: the "
-				+ "occupant standing on origin must not block origin itself"
-			) % result.size()
+				(
+					"an occupied origin must still return its 6 walkable neighbours, got %d: the "
+					+ "occupant standing on origin must not block origin itself"
+				)
+				% result.size()
+			)
 		)
 	)
 	violations.append_array(
