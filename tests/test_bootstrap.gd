@@ -28,6 +28,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Hex Coord Test", "run": HexCoordTest.run},
 	{"name": "Board Test", "run": BoardTest.run},
 	{"name": "Line Of Sight Test", "run": LineOfSightTest.run},
+	{"name": "Reachability Test", "run": ReachabilityTest.run},
 ]
 
 var _passes: Array[String] = []
