@@ -51,6 +51,12 @@ on:
       - '.github/scripts/issue_dependencies.py'
       - '.github/scripts/sync-issue-dependencies.py'
       - '.github/scripts/test-issue-dependencies.sh'
+      # Label bootstrap. Creates the labels every trigger is keyed on; it calls
+      # `gh` and never touches the Godot project. Listed individually like the
+      # rest -- this block names scripts rather than the directory, because
+      # `.github/scripts/validate-godot.sh` lives there too and a change to how
+      # validation runs must still run validation.
+      - '.github/scripts/bootstrap-labels.sh'
       # The agent workflows' own composite actions -- prompt-building and
       # CLI plumbing, none of it touches the Godot project.
       # `setup-godot/` is deliberately NOT here: it controls how the engine
