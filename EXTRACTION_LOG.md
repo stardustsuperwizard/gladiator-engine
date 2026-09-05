@@ -66,3 +66,20 @@ quality; the owner is better placed to weigh it.
 | 30 | `.github/scripts/bootstrap-labels.sh` | **new** | No source equivalent. The source documents that the eight `agent:{role}:{vendor}` labels "must already exist" and have no `ensure_label` guard anywhere — a footnote in a repo that has them, and total inertia in one that does not. Creates all 20 labels idempotently. |
 | 31 | `balance-fast.yml`, `balance-deep.yml`, `instructions/sim.instructions.md` | reject | Drive the `sim/` Python balance harness, which was not ported and does not exist here. |
 | 32 | `validate-godot.sh` relocation | note | Moved from `tools/` to `.github/scripts/` so every inherited call site resolves unmodified. Its self-relative project-root derivation needed `../..` instead of `..`; getting that wrong does not error, it hangs — Godot pointed at a directory with no `project.godot` waits rather than failing. |
+
+## 2026-09-05 — Deployment posture
+
+Not extraction decisions: new design decisions, recorded here because plan §0
+asks for every decision and there is nowhere else that keeps them. They follow
+from a stated goal the plan did not previously carry — ship only a client to
+players and run every server whose results count, the shape a league needs.
+Written up in plan §5.5. **Narrows #5:** the session layer's three modes are
+still all adopted, but `LISTEN_SERVER` is now ruled out for ranked play.
+
+| # | Item | Verdict | Rationale |
+| --- | --- | --- | --- |
+| 33 | Authority-side dice rolling | note | Guide §5 called it "the safe default," weighed only against lockstep's bit-identical evaluation order. Promoted to a rule for a reason it had missed: a client holding the seed and generator position can compute rolls that have not happened yet. An information leak, not a desync risk. |
+| 34 | Per-recipient state projection (`PlayerView`) | **new** | No source equivalent — the MOBA has no hidden information to protect. Spec §3 holds both players' hands and every face-down token, so a state snapshot sent to a client leaks the opponent's hand. Deferred as code (plan §5.3); the spec §3 visibility rule it filters against is written now, since it is the part that decides what a leak even is. |
+| 35 | Ruleset identity handshake | **new** | "Everyone runs the same rules" is enforced by the server refusing an unrecognised client, not by the client being tamper-proof. A build-time hash over `rules/**/*.gd`, checked at connect. Guide §9.3. |
+| 36 | Server-supplied balance data | note | Falls out of plan §5.2's existing "balance values in data, not in the resolver" — if the authority serves the `.tres` values, a balance patch reaches a league without a client release. Recorded because the payoff is invisible from §5.2 alone. |
+| 37 | Spec §3 visibility rule | **new** | The spec described `GameState` without saying which parts each player may see, because at one table nobody has to ask. Stated explicitly: hand, undrawn deck order, face-down tokens. Discard and scored piles are treated as public — the tabletop convention, and the one assumption here worth confirming against the physical game. |

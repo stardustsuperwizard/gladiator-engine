@@ -78,6 +78,23 @@ The whole of `GameState` must be serializable. Combat is stochastic
 state alongside everything else — a state snapshot that omits them cannot
 reproduce the match that follows it.
 
+**Visibility.** Serializable is not the same as public. Three parts of the
+state are hidden from the opponent:
+
+- a player's **hand**, until a card is played or revealed;
+- the **order of an undrawn deck**, which is shuffled in Setup (Section 4);
+- a **face-down feature token**, until the reveal step in Setup.
+
+Everything else is open to both players: the board, every fighter's position,
+damage counter and status flags, discard and scored piles, both scores, and
+the round and turn counters. Two players at one table can see all of it.
+
+This is a rule about the game, not about any implementation of it — the same
+rule a physical copy enforces with a card back. It is stated here because it
+is the only place that can settle what an implementation may show to whom, and
+an implementation that hands a player the whole state is not playing this
+game.
+
 ---
 
 ## 4. Setup Sequence

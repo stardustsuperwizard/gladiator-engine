@@ -158,6 +158,10 @@ new `Action` subclass, requiring no edit to `ActionRunner` or `Authority`.
   (`LobbyManager.match_starting`), chosen over a one-shot RPC so late-joining
   peers read state rather than miss an event. That idiom is the portable idea
   here; adapt it rather than the state machine we went looking for.
+- `LISTEN_SERVER` makes the host's own machine the authority. That is right
+  for LAN and casual play and unusable for a match whose result is meant to
+  count, since the host is running the binary that decides it. The mode stays;
+  what changes is which mode a ranked match is allowed to use. See §5.5.
 - Team/player assignment will need genuine changes either way: the MOBA
   model is almost certainly built around fixed teams of individual players.
   Hex-skirmish needs N-players-split-M-teams (spec brief: either one player
@@ -340,6 +344,16 @@ additive rather than exploratory.
 - **Dedicated server as a headless build.** Mechanically the same authority
   object with no local client attached. Cheap once the pattern's proven,
   premature before.
+- **Per-recipient state projection.** The `PlayerView` filter that keeps one
+  player's hand, deck order, and unrevealed feature tokens out of what the
+  other player's client receives (§5.5, guide §9.2). Deferred as *code*, not as
+  a *constraint*: serialization built in the MVP should not make it harder, and
+  spec §3's visibility rule is what it filters against.
+- **Ruleset identity handshake.** Client sends a hash of its rules code at
+  connect; server refuses a mismatch with "update required" instead of playing
+  a match the two ends disagree about (guide §9.3).
+- **Server-supplied balance data.** Serving `.tres` values from the authority
+  so a balance change does not require a client release (§5.5).
 - **N-players-split-M-teams, lobby UI, matchmaking, reconnection handling.**
   All real work; none of it blocks validating whether the core loop is fun.
 - ~~**The generalized authority-gate/verb-registration pattern** referenced in
@@ -359,6 +373,60 @@ object is the *only* thing that ever calls into the rules module; and
 replaying a recorded action sequence against its recorded seed reproduces the
 identical final state. At that point, adding networking is a transport change, not a rules change
 — which is the whole point of building it this way.
+
+---
+
+### 5.5 Deployment posture — operator-run authority
+
+> **New 2026-09-05.** This plan described three deployment targets (§3.2:
+> single-player, LAN, dedicated server) without ever saying which of them is
+> allowed to be authoritative, because nothing required an answer. A stated
+> goal now does: **ship only a client to players, and run centrally every
+> server whose results are meant to count** — what a league needs, where every
+> match must have been resolved by the same ruleset. Recorded here because the
+> answer changes decisions in §5.3, §7, and guide §5, and those decisions are
+> free now and expensive after there is networking code to revise.
+
+None of this is MVP work and none of it changes §5.1. It is written down so
+the deferred networking work is shaped correctly when it arrives.
+
+**It is possible, and the two commitments in `AGENTS.md` are what make it so.**
+Client and dedicated server are two export presets over one project (guide
+§9.1), and "every action goes through one authority object" means a league
+build is that object living on an operator-run server rather than in the
+player's process. The client still contains `rules/`; it just stops being the
+copy that decides.
+
+Four constraints follow, and they are the whole of it:
+
+1. **The server's `rules/` is the only copy whose output counts.** The
+   client's copy is advisory — legal-move highlighting, animation, preview.
+   A client must never commit its own locally resolved result as state.
+2. **The server rolls, and the seed never leaves it.** A client that knows the
+   seed and generator position knows the dice that have not happened yet. See
+   guide §5, revised for this reason.
+3. **What crosses the wire is a per-player view.** `GameState` holds both
+   players' hands and every face-down token (spec §3), so sending it whole
+   leaks the opponent's hand to anyone willing to read the packets. Guide §9.2.
+4. **Ranked play requires an operator-run authority.** `LISTEN_SERVER` is for
+   offline, LAN, and development. Enforce this at the league level — ranked
+   matches are played against servers the operator runs, and results are
+   reported by that server rather than by either client — not by trying to
+   strip host code out of the client export, which buys nothing.
+
+**One lever worth noticing.** §5.2 already requires balance values in data
+rather than in the resolver. If the authority *serves* those values at match
+start and the client uses what it is handed rather than its local `.tres`,
+then dice counts, damage, health and point costs become server-side config: a
+balance patch reaches an entire league without a client release. Resolver
+*logic* changes still need a new client build, which is what the §9.3
+handshake's version gate is for — refusing an out-of-date client is a clear
+failure, and a silent disagreement about the rules is not.
+
+**What this is not.** None of the above makes the client tamper-proof, and it
+is not trying to. A modified client can lie about what it wants to do; it
+cannot make the server agree, and that is the property a league actually
+needs.
 
 ---
 
@@ -423,3 +491,17 @@ in 5.3 is actually being built.
   N-players-split-M-teams.
 - **Fighter model:** supports both "1 fighter roster per player" and "one
   team's roster split across multiple players" without schema changes.
+
+**Post-MVP, operator-run authority (§5.5) — apply only if that posture is
+being built:**
+
+- **Information containment:** no payload a client receives contains another
+  player's hand, undrawn deck order, or an unrevealed feature token. Asserted
+  against the serialized bytes, not against the sending code.
+- **Rules identity:** a client whose rules-code hash does not match the
+  server's is refused at connect with a stated reason, rather than admitted
+  and allowed to diverge.
+- **Balance without a release:** changing a weapon's dice count for a running
+  league is a server-side data change, with no client build shipped.
+- **Authority location:** a ranked match is resolved by an operator-run
+  server; `LISTEN_SERVER` cannot produce a result that counts.
