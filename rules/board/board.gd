@@ -179,3 +179,78 @@ func reachable_from(origin: Vector3i, steps: int) -> Array[Vector3i]:
 		frontier = next_frontier
 
 	return result
+
+
+## Every hex and its occupant as JSON-compatible primitives -- `int`, `String`,
+## `Array`, `Dictionary` only, no `Vector3i` and no `StringName` -- one entry
+## per `coords()` entry, in that order:
+##
+##   {"hexes": [{"coord": [x, y, z], "type": <int>, "occupant": "<id or "">"}]}
+##
+## `"type"` is the `HexType` enum's integer value. `"occupant"` is the
+## occupant id as a plain `String`, or `""` when the hex is empty. See
+## `from_dict()` for the inverse.
+func to_dict() -> Dictionary:
+	var hexes: Array = []
+	for coord in _coord_order:
+		var entry: Dictionary = {
+			"coord": [coord.x, coord.y, coord.z],
+			"type": _terrain[coord],
+			"occupant": String(_occupants.get(coord, EMPTY_OCCUPANT)),
+		}
+		hexes.append(entry)
+	return {"hexes": hexes}
+
+
+## Rebuilds a `Board` from `to_dict()`'s shape, replaying `add_hex()` and
+## `place_occupant()` in array order -- never writing `_terrain`,
+## `_occupants` or `_coord_order` directly -- so every invariant those
+## methods enforce (coordinate validity, no duplicate hex, no occupant on a
+## blocked or absent hex, no double occupancy, no empty id) applies to
+## deserialized input for free.
+##
+## Returns `null`, having built nothing usable, when `data` is malformed:
+## `"hexes"` missing; `"hexes"` not an `Array`; an entry not a `Dictionary`;
+## `"coord"` not a three-element `int` array passing `HexCoord.is_valid()`;
+## `"type"` not an `int` in the `HexType` range; `"occupant"` not a `String`;
+## or any `add_hex()` / `place_occupant()` call refusing. `{"hexes": []}` is
+## valid and returns an empty `Board`.
+static func from_dict(data: Dictionary) -> Board:
+	if not data.has("hexes"):
+		return null
+
+	var hexes: Variant = data["hexes"]
+	if typeof(hexes) != TYPE_ARRAY:
+		return null
+
+	var board := Board.new()
+
+	for entry in hexes:
+		if typeof(entry) != TYPE_DICTIONARY:
+			return null
+
+		var coord_field: Variant = entry.get("coord")
+		if typeof(coord_field) != TYPE_ARRAY or coord_field.size() != 3:
+			return null
+		for component in coord_field:
+			if typeof(component) != TYPE_INT:
+				return null
+		var coord := Vector3i(coord_field[0], coord_field[1], coord_field[2])
+		if not HexCoord.is_valid(coord):
+			return null
+
+		var type_field: Variant = entry.get("type")
+		if typeof(type_field) != TYPE_INT or type_field not in HexType.values():
+			return null
+
+		var occupant_field: Variant = entry.get("occupant")
+		if typeof(occupant_field) != TYPE_STRING:
+			return null
+
+		if not board.add_hex(coord, type_field as HexType):
+			return null
+
+		if occupant_field != "" and not board.place_occupant(coord, StringName(occupant_field)):
+			return null
+
+	return board
