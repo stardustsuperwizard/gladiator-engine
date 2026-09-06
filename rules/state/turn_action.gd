@@ -37,5 +37,5 @@ func actor_id() -> String:
 ## meaningful on its own -- it exists so `TurnAction` stays instantiable and
 ## directly testable -- and returns an unsuccessful `TurnResult` whose reason
 ## is `FAILURE_NOT_IMPLEMENTED`. Every concrete command overrides this.
-func resolve(state: GameState) -> TurnResult:
+func resolve(_state: GameState) -> TurnResult:
 	return TurnResult.failure(FAILURE_NOT_IMPLEMENTED)
