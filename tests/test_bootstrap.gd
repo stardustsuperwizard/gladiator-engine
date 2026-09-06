@@ -34,6 +34,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Reachability Test", "run": ReachabilityTest.run},
 	{"name": "Deterministic Rng Test", "run": DeterministicRngTest.run},
 	{"name": "Game State Test", "run": GameStateTest.run},
+	{"name": "Determinism Test", "run": DeterminismTest.run},
 ]
 
 var _passes: Array[String] = []
