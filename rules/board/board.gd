@@ -232,15 +232,18 @@ static func from_dict(data: Dictionary) -> Board:
 		var coord_field: Variant = entry.get("coord")
 		if typeof(coord_field) != TYPE_ARRAY or coord_field.size() != 3:
 			return null
+		var components: Array[int] = []
 		for component in coord_field:
-			if typeof(component) != TYPE_INT:
+			var number: Variant = _as_int(component)
+			if number == null:
 				return null
-		var coord := Vector3i(coord_field[0], coord_field[1], coord_field[2])
+			components.append(number)
+		var coord := Vector3i(components[0], components[1], components[2])
 		if not HexCoord.is_valid(coord):
 			return null
 
-		var type_field: Variant = entry.get("type")
-		if typeof(type_field) != TYPE_INT or type_field not in HexType.values():
+		var type_field: Variant = _as_int(entry.get("type"))
+		if type_field == null or type_field not in HexType.values():
 			return null
 
 		var occupant_field: Variant = entry.get("occupant")
@@ -254,3 +257,26 @@ static func from_dict(data: Dictionary) -> Board:
 			return null
 
 	return board
+
+
+## `value` as an `int`, or `null` when it is not an integer.
+##
+## An integral `float` is accepted because JSON has exactly one number type
+## and Godot's `JSON.parse_string()` hands every number back as a `float` --
+## `5` in, `5.0` out. A reparsed `5.0` here is an `int` that has been through
+## JSON, not a wrong type. `GameState` (#23) nests this board's `to_dict()`
+## and is required to accept its own output after a JSON round trip, which it
+## cannot do while this refuses one. A fractional `float` is still a refusal,
+## as is anything that is not a number, so no input this already accepted
+## behaves differently.
+static func _as_int(value: Variant) -> Variant:
+	if typeof(value) == TYPE_INT:
+		return value
+	if typeof(value) != TYPE_FLOAT:
+		return null
+
+	var number: float = value
+	if number != floorf(number):
+		return null
+
+	return int(number)
