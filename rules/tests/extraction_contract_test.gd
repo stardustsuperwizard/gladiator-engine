@@ -61,13 +61,13 @@ static func run() -> bool:
 static func scan() -> Array[String]:
 	var violations: Array[String] = []
 
-	for file_path in _get_files_recursive(RULES_DIR):
+	for file_path in files_recursive(RULES_DIR):
 		if file_path in EXEMPT_FILES:
 			continue
 		if not _is_scanned(file_path):
 			continue
 
-		var content := _read_file(file_path)
+		var content := read_file(file_path)
 		if content.is_empty():
 			continue
 
@@ -130,7 +130,12 @@ static func _is_scanned(file_path: String) -> bool:
 	return false
 
 
-static func _get_files_recursive(dir_path: String) -> Array[String]:
+## Every file under dir_path, recursively, as res:// paths.
+##
+## Public because AmbientRngContractTest walks the same tree. Hidden entries
+## (leading ".") are skipped, which keeps .godot/ and .git/ out of a scan
+## rooted higher up.
+static func files_recursive(dir_path: String) -> Array[String]:
 	var files: Array[String] = []
 	var dir := DirAccess.open(dir_path)
 
@@ -144,7 +149,7 @@ static func _get_files_recursive(dir_path: String) -> Array[String]:
 		if not file_name.begins_with("."):
 			var full_path := dir_path.path_join(file_name)
 			if dir.current_is_dir():
-				files.append_array(_get_files_recursive(full_path))
+				files.append_array(files_recursive(full_path))
 			else:
 				files.append(full_path)
 		file_name = dir.get_next()
@@ -153,7 +158,12 @@ static func _get_files_recursive(dir_path: String) -> Array[String]:
 	return files
 
 
-static func _read_file(file_path: String) -> String:
+## File contents as text, or "" when the file cannot be opened.
+##
+## Public for the same reason as files_recursive(): a second scanner needs it.
+## An unreadable file reads as empty rather than aborting the scan -- a scanner
+## that dies on one bad path reports nothing about the rest of the tree.
+static func read_file(file_path: String) -> String:
 	var file := FileAccess.open(file_path, FileAccess.READ)
 	if file == null:
 		return ""
