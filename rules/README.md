@@ -31,6 +31,7 @@ dependency arrow: **the game depends on `rules/`, never the reverse.**
 | `fighters/` | Runtime fighter and weapon model, status flags, damage | §3, §9 |
 | `cards/` | Scoring and ability decks, hands, draw/discard | §4, §10 |
 | `state/` | `GameState`, `TurnAction`, `TurnResult`, serialization, RNG | §3 |
+| `actions/` | One `TurnAction` subclass per player command | §6 |
 | `tests/` | Contract and regression suites | — |
 
 ## Why `TurnAction` lives here, not in the game
