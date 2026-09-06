@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="WeaponTemplate" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://rules/fighters/weapon_template.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+template_id = "sword"
+display_name = "Sword"
+range_hexes = 1
+dice_count = 3
+damage_value = 2
+weapon_type = "melee"
+ability_tags = PackedStringArray("cleave")

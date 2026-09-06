@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="WeaponTemplate" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://rules/fighters/weapon_template.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+template_id = "bow"
+display_name = "Bow"
+range_hexes = 4
+dice_count = 2
+damage_value = 1
+weapon_type = "ranged"
+ability_tags = PackedStringArray()
