@@ -126,10 +126,13 @@ static func _test_from_dict_resumes_rather_than_rewinds() -> Array[String]:
 			_expect(
 				draw == expected[i],
 				(
-					"REWIND BUG: from_dict() must resume the sequence after the snapshot, not "
-					+ "rewind to the start of it -- draw %d after restore was %d, expected %d "
-					+ "(this is what a seed-assigned-after-state bug looks like)"
-				) % [i, draw, expected[i]]
+					(
+						"REWIND BUG: from_dict() must resume the sequence after the snapshot, not "
+						+ "rewind to the start of it -- draw %d after restore was %d, expected %d "
+						+ "(this is what a seed-assigned-after-state bug looks like)"
+					)
+					% [i, draw, expected[i]]
+				)
 			)
 		)
 
@@ -237,7 +240,8 @@ static func _test_next_int_to_less_than_from_returns_from_without_advancing() ->
 	)
 	violations.append_array(
 		_expect(
-			rng.get_state() == state_before, "next_int() must not advance get_state() when to < from"
+			rng.get_state() == state_before,
+			"next_int() must not advance get_state() when to < from"
 		)
 	)
 
