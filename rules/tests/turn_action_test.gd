@@ -36,9 +36,7 @@ static func _test_ok_is_successful_with_empty_reason() -> Array[String]:
 	var violations: Array[String] = []
 	var result := TurnResult.ok()
 
-	violations.append_array(
-		_expect(result.success, "TurnResult.ok() must have success == true")
-	)
+	violations.append_array(_expect(result.success, "TurnResult.ok() must have success == true"))
 	violations.append_array(
 		_expect(result.reason == &"", 'TurnResult.ok() must have reason == &""')
 	)
@@ -66,7 +64,8 @@ static func _test_failure_carries_its_reason() -> Array[String]:
 static func _test_actor_id_returns_the_constructed_id() -> Array[String]:
 	var action := TurnAction.new("fighter_1")
 	return _expect(
-		action.actor_id() == "fighter_1", 'actor_id() must return the id the action was constructed with'
+		action.actor_id() == "fighter_1",
+		"actor_id() must return the id the action was constructed with"
 	)
 
 
@@ -91,7 +90,8 @@ static func _test_base_resolve_returns_not_implemented() -> Array[String]:
 ## A minimal subclass with its own FAILURE_* block, exercising the contract
 ## the class docstring states: one subclass per command, resolve() overridden,
 ## the base's FAILURE_NOT_IMPLEMENTED never reached.
-class _AlwaysSucceedsAction extends TurnAction:
+class _AlwaysSucceedsAction:
+	extends TurnAction
 	const FAILURE_NEVER := &"turn_action_test_never"
 
 	func resolve(_state: GameState) -> TurnResult:
