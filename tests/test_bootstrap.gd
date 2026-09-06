@@ -27,6 +27,8 @@ var _suites: Array[Dictionary] = [
 	{"name": "Contract Scanner Test", "run": ContractScannerTest.run},
 	{"name": "Ambient RNG Contract Test", "run": AmbientRngContractTest.run},
 	{"name": "Ambient RNG Scanner Test", "run": AmbientRngScannerTest.run},
+	{"name": "Gate Bypass Contract Test", "run": GateBypassContractTest.run},
+	{"name": "Gate Bypass Scanner Test", "run": GateBypassScannerTest.run},
 	{"name": "Hex Coord Test", "run": HexCoordTest.run},
 	{"name": "Board Test", "run": BoardTest.run},
 	{"name": "Board Serialization Test", "run": BoardSerializationTest.run},
