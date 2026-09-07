@@ -541,9 +541,11 @@ jobs:
               ["gh", "label", "create", "deferred-finding",
                "--repo", repo, "--color", "C5DEF5",
                "--description",
-               "Filed by agent-06-triage.yml from a merged pull"
-               " request's Discovered Out-of-Scope Work or Deferred"
-               " Findings section"],
+               # GitHub caps a label description at 100 characters and
+               # answers 422 over it, which fails the whole triage run
+               # before a single finding is filed. Keep this under that.
+               "Filed by agent-06-triage.yml from a merged PR's"
+               " out-of-scope or deferred findings"],
               capture_output=True, text=True,
           )
 
