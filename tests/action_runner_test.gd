@@ -25,6 +25,7 @@ static func run() -> bool:
 	violations.append_array(_test_resolve_receives_the_authoritys_state())
 	violations.append_array(_test_action_failure_is_passed_through_unmodified())
 	violations.append_array(_test_run_reason_matches_refusal())
+	violations.append_array(_test_permitted_attack_resolves_through_the_runner())
 
 	if violations.is_empty():
 		return true
@@ -300,5 +301,84 @@ static func _test_run_reason_matches_refusal() -> Array[String]:
 				"run(%s, %s) must report exactly the reason refusal() gives" % [actor, requester]
 			)
 		)
+
+	return violations
+
+
+## `AttackAction` submits through the very same `run()` every other command
+## uses: adding it required no edit to `ActionRunner` and none to `Authority`,
+## because generality comes from subclassing `resolve()`.
+##
+## This assertion lives here rather than in `rules/tests/attack_action_test.gd`
+## for the reason that suite's docstring gives -- `rules/` names no game-side
+## class, and `ActionRunner` and `Authority` are game-side.
+static func _test_permitted_attack_resolves_through_the_runner() -> Array[String]:
+	var violations: Array[String] = []
+
+	var template := FighterTemplate.new()
+	template.template_id = "action-runner-test-fighter"
+	template.save = 2
+	template.health = 5
+
+	var weapon := WeaponTemplate.new()
+	weapon.template_id = "action-runner-test-weapon"
+	weapon.range_hexes = 1
+	weapon.dice_count = 3
+	weapon.damage_value = 1
+	weapon.weapon_type = WeaponTemplate.MELEE
+
+	# Every face a critical on the attack die and a symbol in no success set on
+	# the save die, so the outcome is the rule under test rather than the seed.
+	var attack_profile := DiceProfile.new()
+	attack_profile.faces = PackedStringArray([DicePool.CRITICAL])
+	attack_profile.match_symbol = WeaponTemplate.MELEE
+	var save_profile := DiceProfile.new()
+	save_profile.faces = PackedStringArray(["blank"])
+	save_profile.match_symbol = "guard"
+
+	var attacker_hex := Vector3i(0, 0, 0)
+	var target_hex := Vector3i(1, -1, 0)
+
+	var board := Board.new()
+	board.add_hex(attacker_hex, Board.HexType.NORMAL)
+	board.add_hex(target_hex, Board.HexType.NORMAL)
+
+	var state := GameState.new(board, DeterministicRng.new(13))
+	state.add_player("p1")
+	state.add_player("p2")
+	state.add_fighter("f1", Fighter.new("f1", template, "p1", attacker_hex).to_dict())
+	state.add_fighter("f2", Fighter.new("f2", template, "p2", target_hex).to_dict())
+	board.place_occupant(attacker_hex, &"f1")
+	board.place_occupant(target_hex, &"f2")
+
+	var action := AttackAction.new("f1", "f2", weapon, template, attack_profile, save_profile)
+	var result := ActionRunner.new(Authority.new(state)).run(action, "p1")
+
+	violations.append_array(
+		_expect(result.success, "run() on a permitted AttackAction must return a successful result")
+	)
+	violations.append_array(
+		_expect(
+			action.outcome() == DicePool.Outcome.HIT,
+			"the attack submitted through the runner must have resolved to a HIT"
+		)
+	)
+
+	var stored := Fighter.from_dict(state.fighter("f2"), template)
+	violations.append_array(
+		_expect(
+			stored != null and stored.damage_counter() == weapon.damage_value,
+			"an attack resolved through the runner must have applied its damage to the state"
+		)
+	)
+
+	var refused := AttackAction.new("f2", "f1", weapon, template, attack_profile, save_profile)
+	var refusal := ActionRunner.new(Authority.new(state)).run(refused, "p2")
+	violations.append_array(
+		_expect(
+			refusal.reason == Authority.REFUSED_NOT_YOUR_TURN,
+			"an AttackAction submitted out of turn must be refused by the gate, not by the action"
+		)
+	)
 
 	return violations
