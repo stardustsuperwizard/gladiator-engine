@@ -31,6 +31,8 @@ var _suites: Array[Dictionary] = [
 	{"name": "Gate Bypass Scanner Test", "run": GateBypassScannerTest.run},
 	{"name": "Orphan Test Contract Test", "run": OrphanTestContractTest.run},
 	{"name": "Orphan Test Scanner Test", "run": OrphanTestScannerTest.run},
+	{"name": "Base Class Contract Test", "run": BaseClassContractTest.run},
+	{"name": "Base Class Scanner Test", "run": BaseClassScannerTest.run},
 	{"name": "Hex Coord Test", "run": HexCoordTest.run},
 	{"name": "Board Test", "run": BoardTest.run},
 	{"name": "Board Serialization Test", "run": BoardSerializationTest.run},
