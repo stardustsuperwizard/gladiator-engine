@@ -99,8 +99,7 @@ static func _test_scene_tree_bases_are_reported() -> Array[String]:
 static func _test_quoted_path_base_is_reported() -> Array[String]:
 	var path := "res://rules/tests/synthetic_quoted_test.gd"
 	var sources := {
-		path:
-		_source("SyntheticQuotedTest", ['extends "res://rules/state/turn_action.gd"'])
+		path: _source("SyntheticQuotedTest", ['extends "res://rules/state/turn_action.gd"'])
 	}
 	var reported := BaseClassContractTest.violations_for(BUILTINS_ONLY, sources)
 
@@ -137,7 +136,9 @@ static func _test_permitted_bases_are_not_reported() -> Array[String]:
 static func _test_implicit_ref_counted_is_not_reported() -> Array[String]:
 	var violations: Array[String] = []
 	var path := "res://rules/tests/synthetic_implicit_test.gd"
-	var source := _source("SyntheticImplicitTest", ["", "static func run() -> bool:", "\treturn true"])
+	var source := _source(
+		"SyntheticImplicitTest", ["", "static func run() -> bool:", "\treturn true"]
+	)
 
 	violations.append_array(
 		_expect(
@@ -245,12 +246,11 @@ static func _test_the_real_allowlist_contains_turn_action() -> Array[String]:
 	var violations: Array[String] = []
 	var allowed := BaseClassContractTest.real_allowed_base_classes()
 
-	violations.append_array(
-		_expect(not allowed.is_empty(), "the real allowlist must not be empty")
-	)
+	violations.append_array(_expect(not allowed.is_empty(), "the real allowlist must not be empty"))
 	violations.append_array(
 		_expect(
-			"TurnAction" in allowed, "the real allowlist must contain TurnAction, got: %s" % [allowed]
+			"TurnAction" in allowed,
+			"the real allowlist must contain TurnAction, got: %s" % [allowed]
 		)
 	)
 
@@ -275,9 +275,7 @@ static func _test_real_action_files_are_clean() -> Array[String]:
 	var reported := BaseClassContractTest.scan()
 
 	violations.append_array(
-		_expect(
-			not _reports(reported, ATTACK_ACTION_PATH), "%s must be clean" % ATTACK_ACTION_PATH
-		)
+		_expect(not _reports(reported, ATTACK_ACTION_PATH), "%s must be clean" % ATTACK_ACTION_PATH)
 	)
 	violations.append_array(
 		_expect(not _reports(reported, PASS_ACTION_PATH), "%s must be clean" % PASS_ACTION_PATH)

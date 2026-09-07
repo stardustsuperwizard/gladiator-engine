@@ -72,7 +72,9 @@ static func run() -> bool:
 		return true
 
 	printerr("\n=== Base Class Contract Violations ===")
-	printerr("Files in rules/ must extend RefCounted, Resource, or a class_name declared under rules/.")
+	printerr(
+		"Files in rules/ must extend RefCounted, Resource, or a class_name declared under rules/."
+	)
 	printerr("rules/ stays off the scene tree -- see AGENTS.md's second architectural commitment.")
 	printerr("")
 	for violation in violations:
@@ -97,7 +99,9 @@ static func scan() -> Array[String]:
 ## is reported rather than passed clean.
 static func result_for(sources: Dictionary) -> Array[String]:
 	if sources.is_empty():
-		var complaint := "%s: no .gd file found under this path -- the scan has nothing to check" % RULES_DIR
+		var complaint := (
+			"%s: no .gd file found under this path -- the scan has nothing to check" % RULES_DIR
+		)
 		return [complaint] as Array[String]
 
 	return violations_for(allowed_names_for(sources), sources)
