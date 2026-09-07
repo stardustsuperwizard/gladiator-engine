@@ -5,6 +5,6 @@
 [resource]
 script = ExtResource("1")
 profile_id = "attack-die"
-faces = PackedStringArray("critical", "melee", "ranged", "melee", "ranged", "opening")
+faces = PackedStringArray("critical", "melee", "ranged", "melee", "opening", "advantage")
 match_symbol = "melee"
 bonus_symbols = PackedStringArray("opening", "advantage")

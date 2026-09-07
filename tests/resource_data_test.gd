@@ -1,6 +1,7 @@
-## Game-side data suite for the four authored `.tres` files under
-## `resources/`: `resources/weapons/sword.tres`, `resources/weapons/bow.tres`,
-## `resources/fighters/warrior.tres`, and `resources/fighters/archer.tres`.
+## Game-side data suite for the six authored `.tres` files under `resources/`:
+## `resources/weapons/sword.tres`, `resources/weapons/bow.tres`,
+## `resources/fighters/warrior.tres`, `resources/fighters/archer.tres`,
+## `resources/dice/attack_die.tres`, and `resources/dice/save_die.tres`.
 ##
 ## This suite lives under `tests/`, not `rules/tests/`, because
 ## `rules/tests/extraction_contract_test.gd` fails the build on any file under
@@ -11,7 +12,7 @@
 ## Every number pinned here is authored content, not a balance decision:
 ## `AGENTS.md` says outright that dice counts, damage values, and point costs
 ## are expected to be tuned. Only `_test_field_values_match_authored_content()`
-## names those numbers as literals -- it exists to pin what the four files
+## names those numbers as literals -- it exists to pin what the six files
 ## contain. Every other test below reads its expected values back off a
 ## loaded resource and compares runtime behaviour against them, never against
 ## a second literal, so retuning a `.tres` cannot silently break a test that
@@ -22,6 +23,8 @@ const SWORD_PATH := "res://resources/weapons/sword.tres"
 const BOW_PATH := "res://resources/weapons/bow.tres"
 const WARRIOR_PATH := "res://resources/fighters/warrior.tres"
 const ARCHER_PATH := "res://resources/fighters/archer.tres"
+const ATTACK_DIE_PATH := "res://resources/dice/attack_die.tres"
+const SAVE_DIE_PATH := "res://resources/dice/save_die.tres"
 
 ## Where the "retuning is a file edit" test saves its duplicated, retuned
 ## sword. Never a path under `res://resources/` -- no test may write there.
@@ -39,6 +42,12 @@ static func run() -> bool:
 	violations.append_array(_test_fighter_from_warrior_reports_template_stats())
 	violations.append_array(_test_fighter_from_archer_reports_ranged_weapon())
 	violations.append_array(_test_retuning_is_a_file_edit())
+	violations.append_array(
+		_test_dice_profile_invariants(load(ATTACK_DIE_PATH) as DiceProfile, "attack_die.tres")
+	)
+	violations.append_array(
+		_test_dice_profile_invariants(load(SAVE_DIE_PATH) as DiceProfile, "save_die.tres")
+	)
 
 	if violations.is_empty():
 		return true
@@ -54,7 +63,7 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 	return [] if condition else [message] as Array[String]
 
 
-## Each of the four authored paths loads and is an instance of the expected
+## Each of the six authored paths loads and is an instance of the expected
 ## class. Asserted with `is`, not merely `!= null`: a `.tres` that lost its
 ## script reference loads as a bare `Resource`, and `!= null` alone would not
 ## catch that.
@@ -81,10 +90,20 @@ static func _test_files_load_as_expected_class() -> Array[String]:
 		_expect(archer is FighterTemplate, "archer.tres must load as a FighterTemplate")
 	)
 
+	var attack_die: Variant = load(ATTACK_DIE_PATH)
+	violations.append_array(
+		_expect(attack_die is DiceProfile, "attack_die.tres must load as a DiceProfile")
+	)
+
+	var save_die: Variant = load(SAVE_DIE_PATH)
+	violations.append_array(
+		_expect(save_die is DiceProfile, "save_die.tres must load as a DiceProfile")
+	)
+
 	return violations
 
 
-## Field-by-field pin of what the four authored files contain. The only place
+## Field-by-field pin of what the six authored files contain. The only place
 ## in this suite where a value from the roster tables appears as a literal --
 ## see the class docstring for why that is the deliberate exception.
 static func _test_field_values_match_authored_content() -> Array[String]:
@@ -164,6 +183,114 @@ static func _test_field_values_match_authored_content() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(archer.weapons.size() == 1, "archer.tres weapons must hold exactly one entry")
+	)
+
+	var attack_die := load(ATTACK_DIE_PATH) as DiceProfile
+	violations.append_array(
+		_expect(
+			attack_die.profile_id == "attack-die", 'attack_die.tres profile_id must be "attack-die"'
+		)
+	)
+	violations.append_array(
+		_expect(
+			(
+				attack_die.faces
+				== PackedStringArray(
+					["critical", "melee", "ranged", "melee", "opening", "advantage"]
+				)
+			),
+			(
+				"attack_die.tres faces must be "
+				+ '["critical", "melee", "ranged", "melee", "opening", "advantage"]'
+			)
+		)
+	)
+	violations.append_array(
+		_expect(attack_die.match_symbol == "melee", 'attack_die.tres match_symbol must be "melee"')
+	)
+	violations.append_array(
+		_expect(
+			attack_die.bonus_symbols == PackedStringArray(["opening", "advantage"]),
+			'attack_die.tres bonus_symbols must be ["opening", "advantage"]'
+		)
+	)
+
+	var save_die := load(SAVE_DIE_PATH) as DiceProfile
+	violations.append_array(
+		_expect(save_die.profile_id == "save-die", 'save_die.tres profile_id must be "save-die"')
+	)
+	violations.append_array(
+		_expect(
+			(
+				save_die.faces
+				== PackedStringArray(["critical", "block", "block", "gap", "break", "miss"])
+			),
+			(
+				"save_die.tres faces must be "
+				+ '["critical", "block", "block", "gap", "break", "miss"]'
+			)
+		)
+	)
+	violations.append_array(
+		_expect(save_die.match_symbol == "block", 'save_die.tres match_symbol must be "block"')
+	)
+	violations.append_array(
+		_expect(
+			save_die.bonus_symbols == PackedStringArray(["gap", "break"]),
+			'save_die.tres bonus_symbols must be ["gap", "break"]'
+		)
+	)
+
+	return violations
+
+
+## The `DiceProfile` invariants a `.tres` must satisfy, checked against values
+## read back off `profile` rather than restated as literals: every
+## `bonus_symbols` entry appears in `faces`, `match_symbol` appears in
+## `faces`, `face_count()` equals `faces.size()`, `symbol_at(i)` equals
+## `faces[i]` at every in-range index, and `symbol_at()` returns `""` one
+## index before the first face and one index past the last.
+static func _test_dice_profile_invariants(profile: DiceProfile, file_name: String) -> Array[String]:
+	var violations: Array[String] = []
+
+	for bonus_symbol in profile.bonus_symbols:
+		violations.append_array(
+			_expect(
+				profile.faces.has(bonus_symbol),
+				'%s bonus_symbols entry "%s" must appear in faces' % [file_name, bonus_symbol]
+			)
+		)
+
+	violations.append_array(
+		_expect(
+			profile.faces.has(profile.match_symbol),
+			'%s match_symbol "%s" must appear in faces' % [file_name, profile.match_symbol]
+		)
+	)
+
+	violations.append_array(
+		_expect(
+			profile.face_count() == profile.faces.size(),
+			"%s face_count() must equal faces.size()" % file_name
+		)
+	)
+
+	for i in profile.faces.size():
+		violations.append_array(
+			_expect(
+				profile.symbol_at(i) == profile.faces[i],
+				"%s symbol_at(%d) must equal faces[%d]" % [file_name, i, i]
+			)
+		)
+
+	violations.append_array(
+		_expect(profile.symbol_at(-1) == "", "%s symbol_at(-1) must be an empty string" % file_name)
+	)
+	violations.append_array(
+		_expect(
+			profile.symbol_at(profile.face_count()) == "",
+			"%s symbol_at(face_count()) must be an empty string" % file_name
+		)
 	)
 
 	return violations
