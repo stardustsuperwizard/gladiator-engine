@@ -67,6 +67,13 @@ static func run() -> bool:
 	violations.append_array(_test_defeat_clears_the_hex_and_keeps_the_payload())
 	violations.append_array(_test_equal_seeds_produce_identical_outcome_and_digest())
 
+	# Spec §7.6-7.7's push-back tests live in attack_action_push_test.gd, not
+	# here: see that file's docstring for why the split exists and why it is
+	# not a second suite. Folded into this class's own violations, so a
+	# failure still reports as "FAIL Attack Action Test", the one suite of
+	# record.
+	violations.append_array(AttackActionPushTest.run())
+
 	if violations.is_empty():
 		return true
 
@@ -194,6 +201,16 @@ static func _place(
 static func _stored_damage(state: GameState, fighter_id: String, template: FighterTemplate) -> int:
 	var fighter := Fighter.from_dict(state.fighter(fighter_id), template)
 	return -1 if fighter == null else fighter.damage_counter()
+
+
+## The stored position for `fighter_id`, read back through `Fighter`. Every
+## caller below places its fighters through `_place()` first, so a `null`
+## parse here would itself be a fixture bug, not an outcome under test.
+static func _stored_position(
+	state: GameState, fighter_id: String, template: FighterTemplate
+) -> Vector3i:
+	var fighter := Fighter.from_dict(state.fighter(fighter_id), template)
+	return fighter.position()
 
 
 ## The scenario the parent Feature calls `happy_path`, and the one the
