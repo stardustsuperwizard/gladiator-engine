@@ -1,7 +1,7 @@
 ---
-name: Infrastrucuture and Tooling
+name: Infrastructure and Tooling
 about: Updating the mechanisms that make the repo run
-title: '[plan] '
+title: '[epic] '
 labels: plan, infrastructure
 assignees: ''
 

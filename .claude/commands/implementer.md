@@ -76,7 +76,7 @@ make rather than implying the blocker list was verified.
 
 The Issue carries one of `model:haiku`, `model:sonnet` or `model:opus` — the
 planner's call on how much model this task needs, made by the only role that
-saw the whole feature before any of it was written. Honour it.
+saw the whole epic before any of it was written. Honour it.
 
 `implementer.md`'s frontmatter says `model: haiku`. That is the floor for a task
 nobody tiered, not a pin. Pass the label's tier as the `model` parameter on

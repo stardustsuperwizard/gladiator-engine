@@ -104,7 +104,7 @@ standard still sync.
 
 ## Executing an Implementation Task
 
-This section applies whenever you are working an Issue titled `[impl]`, or
+This section applies whenever you are working an Issue titled `[task]`, or
 any Issue carrying the `implementation` label. It is the same contract as
 `.github/agents/02-implementer.agent.md`, restated here because almost no cloud
 session loads that file: assigning Copilot from an Issue offers no agent
@@ -119,7 +119,7 @@ Treat the Issue's **Objective**, **Scope**, **Architecture Constraints**,
 **Acceptance Criteria**, and **Out of Scope** sections as the authoritative
 implementation contract.
 
-The parent Feature provides context only. It does not expand your scope.
+The parent epic provides context only. It does not expand your scope.
 Neither do sibling tasks, and neither does anything you notice in passing.
 
 ### Procedure
@@ -145,8 +145,8 @@ Do not:
 - create GitHub Issues;
 - modify unrelated systems because you spotted an opportunity;
 - silently resolve architectural or product ambiguity;
-- inherit additional work from the parent Feature;
-- close the parent Feature.
+- inherit additional work from the parent epic;
+- close the parent epic.
 
 If you find work outside the contract, do not implement it and do not file an
 Issue for it. Report it under **Discovered out-of-scope work** and let the
@@ -162,7 +162,7 @@ repository patterns do not need escalation.
 The pull request title must start with `[<n>]`, where `<n>` is the
 Implementation Task Issue number (for example `[94] Add hex line-of-sight
 tie-break`), and its description must close that Issue — `Closes #<n>` — and
-must not close the parent Feature. Report:
+must not close the parent epic. Report:
 
 1. **Files changed** — each file and why.
 2. **Acceptance criteria** — each one, and whether it is satisfied.

@@ -92,7 +92,7 @@ contract.
 
 When running against an Implementation Task Issue, treat its **Scope**,
 **Architecture Constraints**, **Acceptance Criteria**, and **Out of Scope**
-sections as authoritative. Do not inspect the parent Feature for additional
+sections as authoritative. Do not inspect the parent epic for additional
 requirements unless the task explicitly requires context from it.
 
 ## Review

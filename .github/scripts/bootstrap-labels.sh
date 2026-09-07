@@ -40,10 +40,15 @@ agent:fixer:copilot|1D76DB|Route the fix cycle to the Copilot fixer
 agent:fixer:claude|1D76DB|Route the fix cycle to the Claude fixer
 # Issue-type labels, declared in .github/ISSUE_TEMPLATE/*.md frontmatter.
 # GitHub silently drops a template label that does not exist in the repository,
-# so an Issue filed from the Task template would simply arrive without `task`
-# and nothing would say why. `bug` and `enhancement` ship with every new
-# repository; these three do not.
-task|0052CC|Small scoped change that is not a feature
+# so an Issue filed from the Infrastructure template would simply arrive
+# without `infrastructure` and nothing would say why. `bug` and `enhancement`
+# ship with every new repository; these two do not.
+#
+# `task` was removed when the intake Task template was retired and its Issues
+# folded into Infrastructure -- the child level is what carries the name now,
+# as the `[task]` title prefix. Nothing emits the label any more, so bootstrap
+# stops creating it; the label itself survives on any repository that already
+# has it, since this script never deletes.
 infrastructure|5319E7|Build, CI, tooling, or repository plumbing
 dependency|C2E0C6|Dependency addition, removal, or version change
 plan|0E8A16|Intake Issue awaiting decomposition into Implementation Tasks

@@ -32,7 +32,7 @@ Follow `AGENTS.md` and `.github/copilot-instructions.md`.
 >
 > This contract is also mirrored in `.github/copilot-instructions.md` under
 > *Executing an Implementation Task*, and in short form in the
-> **Implementation Agent Contract** section of every `[impl]` Issue.
+> **Implementation Agent Contract** section of every `[task]` Issue.
 > **Keep all three in sync.** The mirror is what nearly every session reads.
 >
 > ## When invoked by `agent-02-implement.yml`
@@ -72,7 +72,7 @@ When running from a GitHub Implementation Task Issue, treat that Issue's:
 
 sections as the authoritative implementation contract.
 
-The parent Feature provides context only. It does not expand your scope.
+The parent epic provides context only. It does not expand your scope.
 
 When receiving a directly delegated task from the planning agent, treat the
 supplied task description and acceptance criteria as the authoritative
@@ -116,7 +116,7 @@ Do not:
 - create GitHub Issues;
 - modify unrelated systems merely because you discovered an opportunity;
 - silently resolve architectural or product ambiguity;
-- inherit additional implementation work from the parent Feature.
+- inherit additional implementation work from the parent epic.
 
 If you discover work outside the supplied implementation contract, do not
 implement it and do not create an Issue for it.
@@ -222,5 +222,5 @@ When running from a GitHub Implementation Task Issue, the implementation pull
 request title must start with `[<n>]`, where `<n>` is that Issue's number,
 and the pull request must close that Implementation Task Issue.
 
-Do not close the parent Feature unless explicitly instructed because the pull
-request completes the entire Feature.
+Do not close the parent epic unless explicitly instructed because the pull
+request completes the entire epic.

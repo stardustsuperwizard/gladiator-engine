@@ -1,7 +1,7 @@
 ---
 name: Bug Report
 about: Document identified bug for fixing.
-title: '[plan] '
+title: '[epic] '
 labels: plan, bug
 assignees: ''
 

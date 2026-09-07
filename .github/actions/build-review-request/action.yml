@@ -183,7 +183,7 @@ runs:
 
             if parent:
                 sections.append(
-                    "# PARENT FEATURE (CONTEXT ONLY)\n\n"
+                    "# PARENT EPIC (CONTEXT ONLY)\n\n"
                     f"#{parent['number']} {parent['title']}\n\n"
                     "This does not expand the task's scope."
                 )

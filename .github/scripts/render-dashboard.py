@@ -73,7 +73,7 @@ AWAITING_REVIEW = "Awaiting review"
 BLOCKED_DEPS = "Blocked — dependencies"
 DONE = "Done"
 
-# Feature states.
+# Epic states.
 PLANNING = "Planning"
 IN_PROGRESS = "In progress"
 AWAITING_SIGNOFF = "Awaiting your sign-off"
@@ -221,7 +221,7 @@ def classify_task(issue: dict, prs: dict[int, dict]) -> tuple[str, dict]:
     return AWAITING_REVIEW, detail
 
 
-def classify_feature(issue: dict) -> tuple[str, dict]:
+def classify_epic(issue: dict) -> tuple[str, dict]:
     detail: dict = {}
 
     if issue["state"] == "CLOSED":
@@ -248,7 +248,7 @@ def classify_feature(issue: dict) -> tuple[str, dict]:
 
 def build(issues: list[dict], prs: list[dict]) -> dict:
     index = pr_index(prs)
-    tasks, features = [], []
+    tasks, epics = [], []
 
     for issue in issues:
         # The dashboard Issue is not work. Checked two ways because on the
@@ -258,20 +258,20 @@ def build(issues: list[dict], prs: list[dict]) -> dict:
             continue
 
         # Structural, not label-based: a task is an issue with a parent, a
-        # feature is one with sub-issues. Labels on tasks have proven
+        # epic is one with sub-issues. Labels on tasks have proven
         # inconsistent (some carry `planned` inherited from the planner).
         if issue.get("parent"):
             state, detail = classify_task(issue, index)
             tasks.append({"issue": issue, "state": state, **detail})
         else:
-            state, detail = classify_feature(issue)
-            features.append({"issue": issue, "state": state, **detail})
+            state, detail = classify_epic(issue)
+            epics.append({"issue": issue, "state": state, **detail})
 
-    return {"tasks": tasks, "features": features}
+    return {"tasks": tasks, "epics": epics}
 
 
 def sort_key(row: dict) -> tuple[int, int]:
-    """Feature number, then task number.
+    """Epic number, then task number.
 
     Every task in the Ready bucket has all its blockers closed, so any order
     is dispatchable. Grouping by parent keeps related work together, which is
@@ -295,7 +295,7 @@ def link(issue: dict) -> str:
 
 def render(model: dict, repo: str | None) -> str:
     tasks = model["tasks"]
-    features = model["features"]
+    epics = model["epics"]
     by_state: dict[str, list[dict]] = {}
     for row in tasks:
         by_state.setdefault(row["state"], []).append(row)
@@ -322,12 +322,12 @@ def render(model: dict, repo: str | None) -> str:
             "",
         ]
         out += task_table(
-            ready, ["Task", "Feature", "Model", "Title"],
+            ready, ["Task", "Epic", "Model", "Title"],
             lambda r: [
                 link(r["issue"]) + (" 🔑" if r.get("restricted") else ""),
                 link(r["issue"]["parent"]),
                 "⚠️ strong" if r.get("delicate") else "any",
-                r["issue"]["title"].removeprefix("[impl] "),
+                r["issue"]["title"].removeprefix("[task] "),
             ],
         )
         if any(r.get("delicate") for r in ready):
@@ -363,7 +363,7 @@ def render(model: dict, repo: str | None) -> str:
                 link(r["issue"]),
                 f"#{r['pr']}" if r.get("pr") else "—",
                 f"`{r.get('verdict', '?')}`",
-                r["issue"]["title"].removeprefix("[impl] "),
+                r["issue"]["title"].removeprefix("[task] "),
             ],
         )
     else:
@@ -376,20 +376,20 @@ def render(model: dict, repo: str | None) -> str:
         out += task_table(
             merge, ["Task", "PR", "Title"],
             lambda r: [link(r["issue"]), f"#{r['pr']}",
-                       r["issue"]["title"].removeprefix("[impl] ")],
+                       r["issue"]["title"].removeprefix("[task] ")],
         )
     else:
         out.append("_Nothing has passed review and is waiting on a merge._")
     out.append("")
 
-    signoff = [f for f in features if f["state"] == AWAITING_SIGNOFF]
+    signoff = [e for e in epics if e["state"] == AWAITING_SIGNOFF]
     out += [f"## {AWAITING_SIGNOFF} ({len(signoff)})", ""]
     if signoff:
         out += [
-            "Every sub-issue is closed. Confirm the Feature's own acceptance "
+            "Every sub-issue is closed. Confirm the epic's own acceptance "
             "criteria hold end to end, do the Human Validation Required "
             "checks in the Godot editor, then close it. Nothing closes a "
-            "Feature automatically — that is the only checkpoint in the "
+            "epic automatically — that is the only checkpoint in the "
             "pipeline.",
             "",
         ]
@@ -399,7 +399,7 @@ def render(model: dict, repo: str | None) -> str:
                 f"— {row['children']} tasks, all closed"
             )
     else:
-        out.append("_No Feature is waiting on you._")
+        out.append("_No epic is waiting on you._")
     out.append("")
 
     out += ["## In flight", ""]
@@ -408,7 +408,7 @@ def render(model: dict, repo: str | None) -> str:
         out += task_table(
             flight, ["Task", "PR", "State", "Title"],
             lambda r: [link(r["issue"]), f"#{r['pr']}", r["state"],
-                       r["issue"]["title"].removeprefix("[impl] ")],
+                       r["issue"]["title"].removeprefix("[task] ")],
         )
     else:
         out.append("_No sessions running._")
@@ -422,17 +422,17 @@ def render(model: dict, repo: str | None) -> str:
             lambda r: [
                 link(r["issue"]),
                 " ".join(f"#{n}" for n in r["blockers"]),
-                r["issue"]["title"].removeprefix("[impl] "),
+                r["issue"]["title"].removeprefix("[task] "),
             ],
         )
     else:
         out.append("_Nothing is waiting on a dependency._")
     out.append("")
 
-    decomposed = [f for f in features
-                  if f["state"] not in (DONE, UNPLANNED)]
-    out += [f"## Features in flight ({len(decomposed)})", "",
-            "| Feature | State | Tasks |", "|---|---|---|"]
+    decomposed = [e for e in epics
+                  if e["state"] not in (DONE, UNPLANNED)]
+    out += [f"## Epics in flight ({len(decomposed)})", "",
+            "| Epic | State | Tasks |", "|---|---|---|"]
     for row in sorted(decomposed, key=lambda r: r["issue"]["number"]):
         tally = (f"{row['children'] - row['open_children']}/{row['children']}"
                  if "children" in row else "—")
@@ -443,7 +443,7 @@ def render(model: dict, repo: str | None) -> str:
 
     # The queue for `agent:planner:*`. Long enough to collapse, but leaving it off
     # entirely is how a backlog becomes invisible.
-    waiting = sorted([f for f in features if f["state"] == UNPLANNED],
+    waiting = sorted([e for e in epics if e["state"] == UNPLANNED],
                      key=lambda r: r["issue"]["number"])
     out += ["", f"## Awaiting planning ({len(waiting)})", ""]
     if waiting:
@@ -467,8 +467,8 @@ def render(model: dict, repo: str | None) -> str:
         "",
         "---",
         "",
-        f"{done} tasks done · {len(tasks) - done} open · "
-        f"{active} feature{'' if active == 1 else 's'} in flight · "
+        f"{done} task{'' if done == 1 else 's'} done · {len(tasks) - done} open · "
+        f"{active} epic{'' if active == 1 else 's'} in flight · "
         f"{len(waiting)} awaiting planning",
         "",
         f"_Generated {now} by `.github/scripts/render-dashboard.py`. "
@@ -492,8 +492,8 @@ def main() -> int:
         print(json.dumps({
             "tasks": [{"number": r["issue"]["number"], "state": r["state"]}
                       for r in model["tasks"]],
-            "features": [{"number": r["issue"]["number"], "state": r["state"]}
-                         for r in model["features"]],
+            "epics": [{"number": r["issue"]["number"], "state": r["state"]}
+                      for r in model["epics"]],
         }, indent=2))
     else:
         print(render(model, args.repo))

@@ -89,3 +89,58 @@ still all adopted, but `LISTEN_SERVER` is now ruled out for ranked play.
 | # | Item | Verdict | Rationale |
 | --- | --- | --- | --- |
 | 38 | AI opponent | deferred (post-MVP feature) | Owner's decision: a feature release, not MVP; two human players is the shape being built. Recorded because AI was previously in neither list — every mention across the spec, `AGENTS.md` and the plan is a *justification for the authority chokepoint*, never a work item, so §5.3 could not answer "is this out of scope or just unwritten." Now it answers. Carries three notes for the eventual build: the AI is a game-side controller and not a `rules/` component; it consumes the same per-recipient projection as #34, which therefore has a non-network consumer that may arrive first; and scoring candidate moves under a dice-pool resolver is an unsettled design question, not an implementation detail. |
+
+## 2026-09-07 — Issue taxonomy renamed
+
+Not extraction decisions: a repository convention change, recorded here for
+the same reason the 2026-09-05 block is — plan §0 asks for every decision and
+there is nowhere else that keeps them.
+
+The old vocabulary put a **stage** word where a **thing** word belongs.
+`[plan]` said where an Issue was in its lifecycle, not what it was, while the
+`plan` → `planned` label pair already tracked exactly that stage. And "Task"
+named two different things at once: an intake type, and the child Issues the
+planner emits.
+
+| # | Item | Verdict | Rationale |
+| --- | --- | --- | --- |
+| 39 | `[plan]` → `[epic]` title prefix | **new** | Names the thing rather than its stage. The `plan`/`planned` labels are unchanged and still carry the lifecycle, which is why no workflow logic moved. |
+| 40 | `[impl]` → `[task]` title prefix | **new** | The children are bounded engineering tasks, not user stories: "story" implies user-facing value that decomposes further, which would be a third level this repo does not have. `epic → task` stays two-level and honest. |
+| 41 | Intake `02-task.md` template | reject | Retired, not renamed. Its three Issues (#52, #54, #56) are all build-time guards or test suites — Infrastructure already — and keeping it would have meant "an epic of type Task decomposing into tasks." Folded into `04-infrastructure_tooling.md`; the `task` label is no longer emitted by any template and bootstrap stops creating it. |
+| 42 | Label names left alone | note | Deliberate. `plan`, `planned` and `implementation` keep their names: `implementation` is what `agent-02-implement.yml` refuses to run without and what `issue-linking.yml` selects on, so renaming it would put every in-flight Issue one stale label away from a silent refusal. Renaming titles costs nothing and buys the clarity; renaming labels buys the same clarity and costs a migration window. |
+
+**Why this was cheap.** `render-dashboard.py` already derives the hierarchy
+structurally — "a task is an issue with a parent, a feature is one with
+sub-issues" — having found labels unreliable. The prefixes were therefore
+naming, not plumbing, and only three sites were load-bearing: the planner's
+child-title format, `agent-02-implement.yml`'s PR-title stripper, and
+`feature-status`'s `in:title` search.
+
+## 2026-09-07 — "Feature" split into type and position
+
+Follow-on to #39–#42, and the half of the rename that needed judgment rather
+than a pattern replace.
+
+**The problem.** "Feature" was doing two unrelated jobs. It named a *type* a
+person picks when filing — Feature, Bug, Infrastructure, Dependency — and it
+also named a *position* in the hierarchy: the Issue with sub-issues under it,
+whatever its type. So an Infrastructure Issue like #56 would be decomposed
+into tasks whose bodies each said "the parent Feature," nine times, about
+something nobody had requested as a feature.
+
+| # | Item | Verdict | Rationale |
+| --- | --- | --- | --- |
+| 43 | "Feature" as the hierarchy position | **new** | Now **epic**, everywhere: prompts, workflow output, dashboard headings, the sub-issue template's provenance field. A Bug Report becomes an epic once it is decomposed, and no sentence calls it a feature. |
+| 44 | "Feature" as the intake type | note | **Unchanged, deliberately.** `01-feature.md`, the `Feature` name in GitHub's template picker, the `enhancement` label and every "refiled as a Feature" sentence stay exactly as they were. Freeing the word from the hierarchy job is what lets it mean one thing again — a capability somebody asked for. |
+| 45 | The planner's "one vocabulary note" | reject | Deleted and rewritten. It existed to explain that "parent Feature" was "the contract's name for the relationship, not a claim that the parent was a Feature" — an apology for exactly this ambiguity. With the position renamed the apology is obsolete; the note now states the rule positively instead. |
+| 46 | `03-reviewer.agent.md`'s "feature reviewer" | adapt | Stale role name, found while sweeping. It reviews one Implementation Task's PR against that task's acceptance criteria, never a whole epic. Aligned to "review agent", matching its own local counterpart `.claude/agents/reviewer.md`, which already said so. |
+
+**What a blind replace would have got wrong.** Roughly half the occurrences
+were the type and had to stay. Four more were invisible to a phrase search:
+`parent` and `Feature` split across a line break in three files, and one
+all-caps `# PARENT FEATURE` heading emitted into the reviewer's prompt by
+`build-review-request/action.yml`. `render-dashboard.py` also needed its
+internal identifiers moved (`classify_feature` → `classify_epic`, the
+`features` model key → `epics`), which is where a comprehension variable was
+left dangling and would have raised `NameError` at render time — caught by
+running the renderer against a synthetic model rather than by reading it.

@@ -39,7 +39,7 @@ Closes #<issue-number>
 
 <!-- Work found but deliberately not done.
 
-     An implementer session working an [impl] Issue lists them here and does not
+     An implementer session working a [task] Issue lists them here and does not
      file them. The planner decides what becomes work; an implementer filing its
      own discoveries is how scope creeps back in, one "while I was in there"
      Issue at a time.

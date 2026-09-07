@@ -491,7 +491,7 @@ jobs:
 
           Without the relationship, the automated reviewer has no authoritative
           acceptance criteria, the Implementation Task stays open after merge,
-          and the parent Feature rollup cannot complete.
+          and the parent epic rollup cannot complete.
           EOF
 
           gh pr comment "$PR_NUMBER" \

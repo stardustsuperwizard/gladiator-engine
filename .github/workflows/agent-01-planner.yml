@@ -236,7 +236,7 @@ jobs:
           issue_body = issue.get("body") or ""
 
           # The type label is how the planner tells a Bug Report from a
-          # Feature. All five intake templates carry an `Acceptance Criteria`
+          # Feature. All four intake templates carry an `Acceptance Criteria`
           # section, but they carry different boilerplate in it and different
           # sections around it, so the type decides how much the planner has
           # to specialise. Without this the planner sees a body and has to
@@ -518,13 +518,12 @@ jobs:
 
           WHAT AN INTAKE ISSUE IS:
 
-          Every Issue that reaches you was filed from one of five intake
-          templates. All five are titled `[plan]` and carry the `plan` label
+          Every Issue that reaches you was filed from one of four intake
+          templates. All four are titled `[epic]` and carry the `plan` label
           plus one type label, reported to you as `Type labels:` in the
           INTAKE ISSUE section below.
 
           - `enhancement`    a Feature. A user-visible capability.
-          - `task`           a chore. Bounded work with no feature story.
           - `bug`            a defect report. Something built is wrong.
           - `infrastructure` repository mechanics: workflows, scripts, CI.
           - `dependency`     integrating an external plugin, pack, or model.
@@ -535,7 +534,7 @@ jobs:
           `Primary Criteria`/`Goal` a Feature -- and carry on. Do not stop,
           and do not ask for the Issue to be relabelled.
 
-          All five decompose the same way and produce the same
+          All four decompose the same way and produce the same
           Implementation Tasks. What differs is which sections the body
           carries, and therefore what you must derive rather than copy.
 
@@ -582,13 +581,11 @@ jobs:
 
           ACCEPTANCE CRITERIA:
 
-          All five templates carry an `Acceptance Criteria` section, but
+          All four templates carry an `Acceptance Criteria` section, but
           what they carry differs, and most of it is boilerplate that says
           nothing about this particular Issue:
 
           - Feature ships three generic lines plus commented examples.
-          - Task ships the heading with every line commented out, so in
-            practice it arrives empty.
           - Bug, Infrastructure and Dependency ship generic boilerplate
             only -- "Expected behavior is restored", "Failure path has been
             verified", and the like.
@@ -635,7 +632,7 @@ jobs:
 
           Each task carries a `model_tier` -- your recommendation for how
           much model the execution session needs. You are the only role that
-          sees the whole feature at once and reads the code before it is
+          sees the whole epic at once and reads the code before it is
           written, so you are the only one positioned to call this. The
           implementer consumes it as the FIRST candidate in its preference
           list, not as a fixed choice: an unavailable model still escalates.
@@ -1266,7 +1263,7 @@ jobs:
             "0E8A16" \
             "Intake ticket awaiting planning"
 
-          # The five intake type labels, for exactly the reason above: each is
+          # The four intake type labels, for exactly the reason above: each is
           # applied by a template, and a template silently drops a label the
           # repository does not define. `Build Planner Request` reports the
           # type to the planner, so a dropped one costs the planner the single
@@ -1278,7 +1275,6 @@ jobs:
           # the live repository as of 2026-08-24; `ensure_label` only checks
           # that the name exists, so these never overwrite an existing label.
           ensure_label "enhancement"    "a2eeef" "New feature or request"
-          ensure_label "task"           "e7fbdb" "General task that is not necessarily a feature request."
           ensure_label "bug"            "d73a4a" "Something isn't working"
           ensure_label "infrastructure" "1f3e3a" "Work related to the repository infrastructure"
           ensure_label "dependency"     "646fda" "External dependency or asset integration"
@@ -1422,7 +1418,7 @@ jobs:
 
           ## Provenance
 
-          - Parent Feature: #{parent}
+          - Parent epic: #{parent}
           - Planner Task: {task["id"]}
 
           ## Model Tier
@@ -1502,7 +1498,7 @@ jobs:
                   "--repo",
                   repo,
                   "--title",
-                  f"[impl] [{parent}] {task['title']}",
+                  f"[task] [{parent}] {task['title']}",
                   "--body-file",
                   body_path,
                   "--label",
@@ -1736,7 +1732,7 @@ jobs:
                       "The issue's Objective, Scope, Architecture Constraints,\n"
                       "Acceptance Criteria and Out of Scope sections are\n"
                       "authoritative. Implement only what they require. Do not\n"
-                      "create issues. Do not close the parent Feature. Report\n"
+                      "create issues. Do not close the parent epic. Report\n"
                       "discovered out-of-scope work instead of doing it.\n"
                       "\n"
                       "Run .github/scripts/validate-godot.sh and report the\n"
@@ -1762,7 +1758,7 @@ jobs:
                       "already reading whether you loaded a profile or not. "
                       "This is its short form.\n\n"
                       "Implement only the Scope and Acceptance Criteria below. "
-                      "The parent Feature provides context only; it does not "
+                      "The parent epic provides context only; it does not "
                       "expand this task's scope, and neither do sibling "
                       "tasks.\n\n"
                       "Do not:\n\n"
@@ -1771,7 +1767,7 @@ jobs:
                       "- implement sibling tasks;\n"
                       "- make speculative improvements;\n"
                       "- create additional GitHub Issues;\n"
-                      "- close the parent Feature.\n\n"
+                      "- close the parent epic.\n\n"
                       "If additional work is discovered, report it under "
                       "`Discovered out-of-scope work` rather than implementing "
                       "it.\n\n"
@@ -1779,7 +1775,7 @@ jobs:
                       "completion. The implementation pull request must be "
                       f"titled starting with `[{number}]` and must close "
                       f"this Issue -- `Closes #{number}` -- and must not close "
-                      "the parent Feature.\n\n"
+                      "the parent epic.\n\n"
                       "---\n\n"
                   )
 
@@ -1934,7 +1930,7 @@ jobs:
 
           lines.extend([
               "",
-              "The parent Feature remains open until all "
+              "The parent epic remains open until all "
               "required Implementation Tasks are completed "
               "and reviewed.",
               "",
