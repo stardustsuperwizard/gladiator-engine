@@ -40,6 +40,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Game State Test", "run": GameStateTest.run},
 	{"name": "Turn Action Test", "run": TurnActionTest.run},
 	{"name": "Pass Action Test", "run": PassActionTest.run},
+	{"name": "Attack Action Test", "run": AttackActionTest.run},
 	{"name": "Determinism Test", "run": DeterminismTest.run},
 	{"name": "Fighter Template Test", "run": FighterTemplateTest.run},
 	{"name": "Fighter Test", "run": FighterTest.run},
