@@ -1680,6 +1680,69 @@ facility with no `gh` equivalent, so `/execute-task` subscribes on the cloud
 surface and polls `gh pr checks --watch` on the desktop one. Same step, two
 mechanisms, both written out, and neither pretending to be the other.
 
+### Verifying the local planner's label transition by hand
+
+Step 12 of `.claude/agents/planner.md` — add `planned`, remove `plan`, consume
+any spent `agent:planner:*` — is an instruction to a model, not a tested code
+path. Nothing automated covers it. The diff that introduced it was markdown,
+`validate-godot.sh` has nothing to say about a prose change, and an
+implementation session cannot check it either: verifying it means filing a
+real intake Issue and decomposing it, and `.github/copilot-instructions.md`
+forbids an implementer creating Issues at all.
+
+So it is checked by hand, by an operator, and both runs below are owed again
+after any change to step 12 — not only the first time it was written.
+
+**The success path.**
+
+1. File a scratch intake Issue through any of the four templates, so it
+   carries `plan` plus a type label. Two obvious tasks is enough; it does not
+   have to be work anyone intends to do.
+2. Optionally add `agent:planner:claude` first. That is the only way to
+   exercise the trigger-label branch, because the slash command never applies
+   one itself — the usual local run has no button to consume.
+3. Run `/planner <n>`.
+4. Confirm on the Issue: `planned` present, `plan` gone, the type label still
+   there, and no `agent:planner:*` left behind.
+
+The type label is the one to look at twice. On the cloud surface the write
+replaces the entire label set, so a step 12 that forgot to read the labels
+first would leave the epic carrying `planned` alone — passing the
+`plan`/`planned` check while having silently eaten `infrastructure`. That is
+the whole reason the `CLOUD` form is a read followed by a write, and it is
+invisible to a check that only asks whether `planned` arrived.
+
+**The failure path.**
+
+Break the label edit deliberately, and confirm the plan survives it.
+
+> Removing a label from a repository removes it from every Issue that carries
+> it, and re-creating it does not put it back. Doing this to `planned` on this
+> repository would empty the *Planned epics* view. Use a fork, or a repository
+> you are willing to repair by hand.
+
+Delete `planned` from the label set so `--add-label` fails on a label that
+does not exist, run `/planner <n>` against a fresh scratch epic, and confirm
+all five of:
+
+- the plan comment is on the Issue, `<!-- claude-planner-complete -->` and all;
+- the sub-issues exist, parented and tiered;
+- `plan` is still on the Issue, so it stays in the awaiting-planning queue;
+- the session reported the failure rather than claiming the epic was planned;
+- it named `.github/scripts/bootstrap-labels.sh` as the repair, rather than
+  creating the label itself.
+
+Restore the label by running that script.
+
+What the second run protects is ordering. Step 12 runs last so that everything
+expensive — the decomposition, the sub-issues, the plan comment — is already
+durable before a label is touched, which makes a failed label edit cost one
+label edit instead of a plan. A step 12 that ran earlier, or that treated its
+own failure as fatal, would turn a missing label into lost work. That property
+is not visible in the success run; it only shows up here.
+
+Record both outcomes on the pull request that changed step 12.
+
 ### `/execute-task` drives one task to a `PASS`, unattended
 
 The four roles are four contracts, but they are not four things a human wants
