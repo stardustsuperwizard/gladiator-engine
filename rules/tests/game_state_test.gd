@@ -650,16 +650,13 @@ static func _test_update_fighter_refuses_empty_id() -> Array[String]:
 			"update_fighter() must return false for an empty id"
 		)
 	)
-	(
-		violations
-		. append_array(
-			_expect(
-				(
-					state.fighter_ids() == (["fighter_a"] as Array[String])
-					and state.fighter("fighter_a") == {"template": "murmillo"}
-				),
-				"a refused update_fighter() with an empty id must leave fighter_ids() and payloads unchanged"
-			)
+	violations.append_array(
+		_expect(
+			(
+				state.fighter_ids() == (["fighter_a"] as Array[String])
+				and state.fighter("fighter_a") == {"template": "murmillo"}
+			),
+			"update_fighter() with empty id leaves fighter_ids() and payloads unchanged"
 		)
 	)
 
@@ -701,13 +698,9 @@ static func _test_update_fighter_preserves_fighter_order() -> Array[String]:
 	var order_before := state.fighter_ids()
 	state.update_fighter("fighter_b", {"template": "hoplomachus"})
 
-	(
-		violations
-		. append_array(
-			_expect(
-				state.fighter_ids() == order_before,
-				"update_fighter() must leave fighter_ids() in the same order it was in before the update"
-			)
+	violations.append_array(
+		_expect(
+			state.fighter_ids() == order_before, "update_fighter() preserves fighter_ids() order"
 		)
 	)
 
