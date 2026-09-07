@@ -19,10 +19,20 @@ Three documents, three jobs — keep them that way:
 
 Do not put Godot specifics in the spec, and do not put mechanics in the guide.
 
-**The current state is: no code.** The next thing to build is extraction plan
-§5.1, "Slice 0" — a board, two fighters, one Attack routed through the
-authority object, and tests asserting the result against the tabletop rules
-worked by hand. Do not build ahead of it.
+**Current state (2026-09-07): Slice 0 is done.** Extraction plan §5.1 is built
+and merged — the hex board with cube distance and symmetric line of sight; the
+`WeaponTemplate`/`FighterTemplate`/`Fighter` model over authored `.tres`;
+`DeterministicRng` and a serializable, digestible `GameState`; the dice pool
+with flanking and surrounding; and `AttackAction` and `PassAction` resolving
+through `Authority`/`ActionRunner`, with the hand-worked combat tests §5.1
+asks for and contract tests behind both architectural commitments.
+
+The next thing to build is the rest of §5.2, in the spec's own build order
+(§12): the remaining core actions (Move, Charge, Guard, Focus) → status
+effects → the card system → scoring and the end phase → victory conditions.
+There is still no UI and no hotseat loop, so §5.4's "play a full 3-round match"
+is some way off. Do not build ahead of the order above, and check §5.3 before
+building something that feels obviously missing — it may be missing on purpose.
 
 The mechanics are inherited from a settled tabletop game, so the rules are not
 up for redesign. The numbers are: expect dice counts, damage values, and point
