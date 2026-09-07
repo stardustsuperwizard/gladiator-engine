@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="DiceProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://rules/combat/dice_profile.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+profile_id = "save-die"
+faces = PackedStringArray("critical", "block", "block", "gap", "break", "miss")
+match_symbol = "block"
+bonus_symbols = PackedStringArray("gap", "break")
