@@ -379,7 +379,7 @@ jobs:
               MSG="The most recent review verdict is \`PASS\`. There is nothing to fix."
               ;;
             PLANNING*)
-              MSG="The most recent review verdict is \`PLANNING FAILURE\`. This is not a bounded implementation defect -- it needs to go back through planning (re-run \`/planner\` on the parent Feature), not an automated fix."
+              MSG="The most recent review verdict is \`PLANNING FAILURE\`. This is not a bounded implementation defect -- it needs to go back through planning (re-run \`/planner\` on the parent epic), not an automated fix."
               ;;
             DESIGN*)
               MSG="The most recent review verdict is \`DESIGN AMBIGUITY\`. Only a human can resolve this -- the fixer does not guess at design intent."

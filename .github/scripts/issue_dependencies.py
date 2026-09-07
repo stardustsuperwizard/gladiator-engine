@@ -14,8 +14,8 @@ Every Issue template in this repository carries the same block, and it is the
 Two relationship words, and only two. `Blocked by` means "this Issue cannot
 start until that one closes"; `Blocks` is the same edge written from the other
 end. Both are accepted on any Issue because the person who knows about an edge
-is not reliably the one on the blocked side of it -- a planner decomposing a
-Feature knows the whole chain and writes `Blocks` rows, while someone filing a
+is not reliably the one on the blocked side of it -- a planner decomposing an
+epic knows the whole chain and writes `Blocks` rows, while someone filing a
 bug usually knows only what they are waiting on.
 
 Why a table at all, when GitHub has native issue dependencies: the native

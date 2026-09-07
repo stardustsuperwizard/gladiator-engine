@@ -175,7 +175,7 @@ alike: adding a field and its accessor is not the same work as changing how
 authority is resolved, and paying the same model for both wastes money on one
 and risks the other.
 
-The planner sets it. It is the only role that sees the whole feature at once
+The planner sets it. It is the only role that sees the whole epic at once
 and reads the code before it is written, so it is the only one positioned to
 judge how much model a task needs — and it is already an Opus session, so the
 judgement is made by the most capable model in the pipeline. The rubric it
@@ -682,7 +682,7 @@ Implementation Task
 │ last sibling closed? comment on the parent     │
 └────────────────────────────────────────────────┘
         │
-   you do the human checks and close the Feature
+   you do the human checks and close the epic
 
 
         you add  dashboard:update  (or dispatch it)
@@ -924,7 +924,7 @@ ship.
 ### Step 2 — Execution
 
 Work tasks in dependency order. The **Agent Control Plane** Issue lists what
-is ready right now, grouped by Feature, with a ⚠️ against any task expected to
+is ready right now, grouped by epic, with a ⚠️ against any task expected to
 touch `.tscn`, `.tres`, `project.godot`, or `addons/`, and a 🔑 against any
 task neither automated path can run at all. It renders on demand, so add
 `dashboard:update` first if it looks stale — see *The control plane*.
@@ -1243,16 +1243,16 @@ implementation problem. Record it.
 `agent-03-rollup.yml` fires on any Issue closing or reopening. No AI credits.
 It writes no status, because status is derived — its whole job is to
 **notify**. When the last open sibling closes, it comments on the parent
-Feature saying so.
+epic saying so.
 
 A comment specifically, because a comment sends a push notification. The
-control plane Issue shows the same Feature under *Awaiting your sign-off* once
+control plane Issue shows the same epic under *Awaiting your sign-off* once
 it is re-rendered, and an issue view can be filtered to surface it — but
 neither one pushes.
 
-What is left is human: confirm the Feature's own acceptance criteria hold end
+What is left is human: confirm the epic's own acceptance criteria hold end
 to end, do the **Human Validation Required** checks in the Godot editor, then
-close the Feature. Nothing closes a Feature automatically — that transition is
+close the epic. Nothing closes an epic automatically — that transition is
 the human sign-off, and automating it would remove the only checkpoint in the
 pipeline.
 
@@ -1261,9 +1261,9 @@ Child states are read from `subIssues.nodes[].state` rather than the cached
 
 ### Issue hierarchy
 
-The Feature Issue is the parent and remains the source of truth for intended
+The epic Issue is the parent and remains the source of truth for intended
 behavior. Every promoted Implementation Task is a direct GitHub sub-issue of
-that Feature. Writing the parent number in an Issue body is not sufficient;
+that epic. Writing the parent number in an Issue body is not sufficient;
 the GitHub sub-issue relationship must exist — `agent-01-planner.yml` creates
 it with `gh issue create --parent`, which needs a recent `gh`; the runner
 image ships one, but pin it if a run ever fails on an unknown flag.
@@ -1278,7 +1278,7 @@ nothing recording the intent to retry from.
 Each implementation sub-issue:
 
 - follows `.github/ISSUE_TEMPLATE/99-execute_task.md`;
-- has the same milestone as its parent Feature;
+- has the same milestone as its parent epic;
 - carries `implementation` and `machine`, plus `human-credentials` when its
   expected files land in `.github/workflows/` or `.github/actions/` (see
   *Paths the agent workflows cannot push*), and nothing else — the planner
@@ -1289,11 +1289,11 @@ Each implementation sub-issue:
 - is the only Issue assigned to the implementer; and
 - is closed by its own implementation PR.
 
-The parent Feature stays open while its sub-issues are implemented.
+The parent epic stays open while its sub-issues are implemented.
 `agent-03-rollup.yml` comments on it when the last one closes; you close it.
 
 This structure is also what the issue views read. A task is an issue with a
-parent; a Feature is an issue with sub-issues. That is deliberately structural
+parent; an epic is an issue with sub-issues. That is deliberately structural
 rather than label-based — labels on tasks have drifted before, the graph has
 not.
 
@@ -1310,7 +1310,7 @@ The views worth having, and the queries behind them:
 | --- | --- |
 | Awaiting planning | `is:issue is:open label:plan -label:"agent:planner:copilot"` |
 | Planning in flight | `is:issue is:open label:"agent:planner:copilot"` |
-| Planned Features | `is:issue is:open label:planned` |
+| Planned epics | `is:issue is:open label:planned` |
 | Open tasks | `is:issue is:open label:implementation` |
 | Blocking something | `is:issue is:open label:blocker` |
 | Awaiting review | `is:pr is:open draft:false -label:"review:pass","review:fix","review:planning-failure","review:design-ambiguity"` |
@@ -1329,7 +1329,7 @@ enforced by the workflows:
 
 - **`plan` and `planned` are mutually exclusive.** The planner adds one and
   removes the other in the same step, and only on success. So *Awaiting
-  planning* is never a Feature that already has tasks, and never silently
+  planning* is never an epic that already has tasks, and never silently
   loses one that failed to plan.
 - **A PR carries at most one `review:*` label.** `agent-04-review.yml` clears
   the other three before adding one, so *Needs your attention* and *Ready to
@@ -1338,7 +1338,7 @@ enforced by the workflows:
 The `-label:"agent:planner:copilot"` exclusion is what separates "queued" from
 "running": `agent:planner:copilot` is consumed by the planner on success and
 given back
-on failure, so a Feature is in exactly one of the two views at any moment.
+on failure, so an epic is in exactly one of the two views at any moment.
 
 What a view cannot express is the **dependency graph** — `blocker` tells you
 an Issue blocks *something*, but not what, and no query orders tasks by it.
@@ -1448,7 +1448,7 @@ nothing.
 `agent-00-dashboard.yml` regenerates a pinned Issue titled **Agent Control
 Plane**. It spends no AI credits, needs no secrets beyond `GITHUB_TOKEN`, and
 answers the one thing a view cannot: what is unblocked right now, grouped by
-Feature, in dependency order.
+epic, in dependency order.
 
 Every state it shows is **derived** — computed from the repository graph at
 the moment it runs, and stored nowhere:
@@ -1464,7 +1464,7 @@ the moment it runs, and stored nowhere:
 | `review:fix` / `-planning-failure` / `-design-ambiguity` | **Needs your attention** |
 | `review:pass` | **Ready to merge** |
 
-| Condition | Feature state |
+| Condition | Epic state |
 | --- | --- |
 | Issue closed | Done |
 | `agent:planner:copilot` present | Planning |
@@ -1609,11 +1609,11 @@ execution session can read:
 | Artifact | Carries |
 | --- | --- |
 | The `[task]` sub-issue body | Objective, scope, expected files, architecture constraints, acceptance criteria, out of scope, dependencies |
-| The plan comment on the Feature | Plan summary, architecture notes, the task list with Issue numbers |
+| The plan comment on the epic | Plan summary, architecture notes, the task list with Issue numbers |
 
 The sub-issue is authoritative. The implementer is given exactly one Issue and
 never sees the planner's session, so **anything an implementer needs must be in
-the sub-issue body** — not in the plan comment, and not in the parent Feature.
+the sub-issue body** — not in the plan comment, and not in the parent epic.
 The parent is context only and does not expand scope.
 
 This is why `agent-01-planner.yml` validates the plan JSON structurally before
@@ -1726,7 +1726,7 @@ Six things about that loop are decisions rather than obvious consequences:
   label gets `sonnet`, not `haiku` — the planner's own rule is that `sonnet`
   is the answer when the tier is unclear, and an absent label is the most
   unclear a tier gets. Without this the planner's tiering, which is the one
-  judgement made with the whole feature in view, was being discarded locally. When a model turns out to be unavailable rather than merely
+  judgement made with the whole epic in view, was being discarded locally. When a model turns out to be unavailable rather than merely
   cheap, `.claude/settings.json`'s `fallbackModel` chain catches it — see
   *Claude Code gets one fallback chain, not four lists* above for why that
   chain only ever escalates, and why it has to be the committed project file
@@ -1796,7 +1796,7 @@ a single role. The orchestrator is a human in a session.
 
 ### `/feature-status` — where does this feature stand?
 
-`/execute-task` drives one task to a verdict, but a feature is many tasks, and
+`/execute-task` drives one task to a verdict, but an epic is many tasks, and
 between them someone has to work out what is already done: which tasks exist,
 which have pull requests, which came back `FIX`, which are blocked on a task
 that has not merged. `/feature-status <intake-issue>` answers that in one
@@ -1860,7 +1860,7 @@ an Implementation Task it only mentioned in passing. The marker is inert on
 a PR that does close a task, which is reported as a warning rather than
 honored. Everything else — labels, the control plane, rollup, the
 dashboard — reads the Issue graph the same way regardless of which tool
-produced the diff, so switching tools mid-Feature, or per task, doesn't
+produced the diff, so switching tools mid-epic, or per task, doesn't
 require picking one system and discarding the other.
 
 ### One workflow per role, two vendors
@@ -1994,7 +1994,7 @@ are custom agents and MCP servers.
 | `.github/workflows/agent-00-dashboard.yml` | Rewrites the pinned control plane Issue from derived state, on `dashboard:update` or dispatch |
 | `.github/workflows/agent-01-planner.yml` | Decomposes an intake Issue of any type into `[task]` sub-issues |
 | `.github/workflows/agent-02-implement.yml` | Scripted implementer: implements, opens the PR, then validates, formats, self-reviews, and self-fixes against it, on `agent:implementer:copilot`; ends with an independent validation job on the pushed SHA |
-| `.github/workflows/agent-03-rollup.yml` | Comments on the parent Feature when its last sub-issue closes |
+| `.github/workflows/agent-03-rollup.yml` | Comments on the parent epic when its last sub-issue closes |
 | `.github/workflows/agent-04-review.yml` | Reviews a PR against its task contract, emits a verdict |
 | `.github/workflows/agent-05-fix.yml` | Applies a bounded correction against the latest `FIX` verdict, on `agent:fixer:copilot`; refuses fork PRs and diffs it cannot push before spending a session; ends with an independent validation job on the pushed SHA |
 | `.github/workflows/issue-dependencies.yml` | Turns an Issue's `## Dependencies` table into GitHub dependencies, on the `blocker` label or a dispatch; `sweep` rebuilds the whole chain |
@@ -2005,7 +2005,7 @@ are custom agents and MCP servers.
 | `.github/actions/run-agent-session` | The one place a vendor difference lives. Runs one agent session -- Copilot CLI or Claude Code, chosen by its `vendor` input -- walking a model preference list and classifying how the session ended into a shared outcome schema. Not yet shared by the planner, which still carries its own copy of the loop |
 | `.github/actions/extract-review-verdict` | Turns a review session's text into a machine-readable `VERDICT` |
 | `.github/actions/lint-gdscript` | Diff-scoped `gdformat` check/fix, used by `agent-02-implement.yml` and `gdscript-lint.yml` |
-| `.github/scripts/render-dashboard.py` | Derives every task and Feature state from the repository graph |
+| `.github/scripts/render-dashboard.py` | Derives every task and epic state from the repository graph |
 | `.github/scripts/issue_dependencies.py` | The dependency-table grammar, shared by the planner, the sync script and the tests — the one definition of what `Blocked by` and `Blocks` mean |
 | `.github/scripts/sync-issue-dependencies.py` | The only writer of GitHub issue dependencies: reads tables, POSTs the relationships, applies `blocker`, reports drift |
 | `.github/scripts/test-issue-dependencies.sh` | Pins the parser and the sync's `gh` calls against a stub CLI; no Godot, credentials or network |

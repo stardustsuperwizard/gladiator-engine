@@ -61,7 +61,7 @@ Treat that Issue's **Objective**, **Scope**, **Architecture Constraints**,
 **Acceptance Criteria**, and **Out of Scope** sections as the authoritative
 implementation contract.
 
-The parent Feature (`.parent` above) provides context only. It does not
+The parent epic (`.parent` above) provides context only. It does not
 expand your scope, and neither do sibling tasks.
 
 ## Procedure
@@ -97,8 +97,8 @@ Do not:
 - create GitHub Issues;
 - modify unrelated systems merely because you discovered an opportunity;
 - silently resolve architectural or product ambiguity — stop and report it;
-- inherit additional implementation work from the parent Feature;
-- close the parent Feature.
+- inherit additional implementation work from the parent epic;
+- close the parent epic.
 
 If you discover work outside the supplied implementation contract, do not
 implement it and do not create an Issue for it. Report it under
@@ -148,8 +148,8 @@ contents as `body`.
 
 The body MUST:
 
-- start with `Closes #<task-issue-number>` (never the parent Feature, unless
-  this PR truly completes the entire Feature and the user explicitly said
+- start with `Closes #<task-issue-number>` (never the parent epic, unless
+  this PR truly completes the entire epic and the user explicitly said
   so);
 - list files changed and why, under **Changes**;
 - give the exact validation command and result, under

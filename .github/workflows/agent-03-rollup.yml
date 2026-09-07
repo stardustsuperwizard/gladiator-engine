@@ -2,15 +2,15 @@ name: Agent - AW03 Roll Up Parent Status
 
 # Closing an Implementation Task does two things:
 #
-# nothing on its own, unless it was the last open sub-issue of a Feature --
-# in which case the Feature is ready for the human check that closes it, and
+# nothing on its own, unless it was the last open sub-issue of an epic --
+# in which case the epic is ready for the human check that closes it, and
 # this workflow says so in a comment.
 #
 # A comment, specifically, because a comment notifies you. The control plane
 # Issue shows the same fact once it is re-rendered, and an issue view can be
 # filtered to surface it -- but neither one pushes.
 #
-# Task and Feature *status* is not written anywhere as a field: it is a label
+# Task and epic *status* is not written anywhere as a field: it is a label
 # query where a label can express it, and otherwise derived on demand by
 # .github/scripts/render-dashboard.py. See docs/AGENT_WORKFLOW.md.
 
@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       issue_number:
-        description: "Parent Feature number to re-evaluate"
+        description: "Parent epic number to re-evaluate"
         required: true
         type: number
 
@@ -92,7 +92,7 @@ jobs:
           echo "has_parent=true" >> "$GITHUB_OUTPUT"
           echo "is_child=true" >> "$GITHUB_OUTPUT"
           echo "target_parent=$PARENT" >> "$GITHUB_OUTPUT"
-          echo "Issue #$ISSUE_NUMBER rolls up to Feature #$PARENT"
+          echo "Issue #$ISSUE_NUMBER rolls up to epic #$PARENT"
 
       # ---------------------------------------------------------------
       # The closed child itself.
@@ -170,18 +170,18 @@ jobs:
             --body "$(cat <<'EOF'
           <!-- agent-rollup-complete -->
 
-          All Implementation Tasks for this Feature are closed.
+          All Implementation Tasks for this epic are closed.
 
-          Remaining work is human: confirm the Feature's own acceptance
+          Remaining work is human: confirm the epic's own acceptance
           criteria hold end to end, complete any **Human Validation Required**
           checks in the Godot editor, then close this Issue.
           EOF
           )"
 
           {
-            echo "### Feature ready for human review"
+            echo "### Epic ready for human review"
             echo ""
-            echo "- Feature: [#$PARENT](${{ steps.parent.outputs.url }})"
+            echo "- Epic: [#$PARENT](${{ steps.parent.outputs.url }})"
             echo "- Sub-issues closed: ${{ steps.parent.outputs.total }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -194,7 +194,7 @@ jobs:
           {
             echo "### Parent not yet complete"
             echo ""
-            echo "Feature #${{ steps.resolve.outputs.target_parent }} is" \
+            echo "Epic #${{ steps.resolve.outputs.target_parent }} is" \
                  "still waiting on:" \
                  "${{ steps.parent.outputs.open_subs || 'n/a' }}"
           } >> "$GITHUB_STEP_SUMMARY"

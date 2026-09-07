@@ -632,7 +632,7 @@ jobs:
 
           Each task carries a `model_tier` -- your recommendation for how
           much model the execution session needs. You are the only role that
-          sees the whole feature at once and reads the code before it is
+          sees the whole epic at once and reads the code before it is
           written, so you are the only one positioned to call this. The
           implementer consumes it as the FIRST candidate in its preference
           list, not as a fixed choice: an unavailable model still escalates.
@@ -1418,7 +1418,7 @@ jobs:
 
           ## Provenance
 
-          - Parent Feature: #{parent}
+          - Parent epic: #{parent}
           - Planner Task: {task["id"]}
 
           ## Model Tier
@@ -1732,7 +1732,7 @@ jobs:
                       "The issue's Objective, Scope, Architecture Constraints,\n"
                       "Acceptance Criteria and Out of Scope sections are\n"
                       "authoritative. Implement only what they require. Do not\n"
-                      "create issues. Do not close the parent Feature. Report\n"
+                      "create issues. Do not close the parent epic. Report\n"
                       "discovered out-of-scope work instead of doing it.\n"
                       "\n"
                       "Run .github/scripts/validate-godot.sh and report the\n"
@@ -1758,7 +1758,7 @@ jobs:
                       "already reading whether you loaded a profile or not. "
                       "This is its short form.\n\n"
                       "Implement only the Scope and Acceptance Criteria below. "
-                      "The parent Feature provides context only; it does not "
+                      "The parent epic provides context only; it does not "
                       "expand this task's scope, and neither do sibling "
                       "tasks.\n\n"
                       "Do not:\n\n"
@@ -1767,7 +1767,7 @@ jobs:
                       "- implement sibling tasks;\n"
                       "- make speculative improvements;\n"
                       "- create additional GitHub Issues;\n"
-                      "- close the parent Feature.\n\n"
+                      "- close the parent epic.\n\n"
                       "If additional work is discovered, report it under "
                       "`Discovered out-of-scope work` rather than implementing "
                       "it.\n\n"
@@ -1775,7 +1775,7 @@ jobs:
                       "completion. The implementation pull request must be "
                       f"titled starting with `[{number}]` and must close "
                       f"this Issue -- `Closes #{number}` -- and must not close "
-                      "the parent Feature.\n\n"
+                      "the parent epic.\n\n"
                       "---\n\n"
                   )
 
@@ -1930,7 +1930,7 @@ jobs:
 
           lines.extend([
               "",
-              "The parent Feature remains open until all "
+              "The parent epic remains open until all "
               "required Implementation Tasks are completed "
               "and reviewed.",
               "",

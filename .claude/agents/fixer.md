@@ -92,7 +92,7 @@ previous cycle. Report the mismatch, then act on the comment.
 - **`VERDICT: PLANNING FAILURE`** — do NOT attempt a bounded fix. This means
   the review found a flaw in the plan or an architectural gap, not a
   correctable implementation defect. Stop and report that the task needs to
-  go back through planning (re-run `/planner` on the parent Feature, or
+  go back through planning (re-run `/planner` on the parent epic, or
   the user resolves it directly) rather than guessing at a redesign.
 - **`VERDICT: DESIGN AMBIGUITY`** — do NOT touch the code. Stop and report
   the ambiguity to the user; only they can resolve it.
