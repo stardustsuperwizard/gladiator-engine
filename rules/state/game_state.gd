@@ -125,6 +125,24 @@ func fighter_ids() -> Array[String]:
 	return _fighter_order.duplicate()
 
 
+## Replaces the stored payload for `fighter_id` with `data`. Returns `false`
+## and changes nothing when `fighter_id` is empty or names no fighter already
+## in the state.
+##
+## `data` is stored as a deep copy and never inspected -- no key of it is
+## read, validated or interpreted here, exactly as `add_fighter()`. Does not
+## touch `_fighter_order`: the id is already present, so its position in the
+## canonical order is unchanged.
+func update_fighter(fighter_id: String, data: Dictionary) -> bool:
+	if fighter_id.is_empty():
+		return false
+	if not _fighters.has(fighter_id):
+		return false
+
+	_fighters[fighter_id] = data.duplicate(true)
+	return true
+
+
 ## The whole state as JSON-compatible primitives -- `int`, `float`, `String`,
 ## `Array`, `Dictionary` only, no `Vector3i` and no `StringName`:
 ##
