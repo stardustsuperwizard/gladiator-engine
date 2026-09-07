@@ -714,7 +714,7 @@ points, two different products* above.
 
 | Trigger | Added by | Consumed by | Means |
 | --- | --- | --- | --- |
-| `plan` label | Issue template | `agent-01-planner.yml` | Filed, not yet decomposed |
+| `plan` label | Issue template | Planner | Filed, not yet decomposed |
 | `agent:planner:copilot` label | You | `agent-01-planner.yml` | This Issue is ready to be planned |
 | **a pasted agent session** | You | — | Run this task via the native cloud agent, on the model you picked |
 | **assigning Copilot** | You | — | Run this task via the native cloud agent, on the model you picked |
@@ -1670,7 +1670,8 @@ not wire) and the `closingIssuesReferences` GraphQL query (unnecessary, since
 this repository requires `Closes #<n>` on every PR body). One differs in
 semantics and is flagged where it is used: setting labels through
 `issue_write` replaces the whole set, where `gh pr edit --add-label` adds to
-it, so the reviewer reads the current labels first.
+it, so the reviewer reads the current labels first before writing its
+`review:*` verdict, and the planner does the same before writing `planned`.
 
 The asymmetry runs the other way too. Subscribing to a pull request's
 activity — the `<wake reason="external-event">` envelopes that carry comments,
