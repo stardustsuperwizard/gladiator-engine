@@ -54,6 +54,14 @@ violations exist becomes a to-do list nobody works through.
 
 ## 3. Game data lives in Resources
 
+> **Revised 2026-09-07.** The example below previously showed `@export var
+> range: int` and `@export_enum(...) var type: String`, and had no
+> `template_id`. Two of those names cannot be used at all — see *Names the
+> engine has already taken* — so the sample was not merely out of date with
+> the class that shipped, it was unfollowable. Issue #30 had to correct it inline
+> for its implementer and deferred fixing it here; this is that fix. The sample
+> is now `rules/fighters/weapon_template.gd` as built.
+
 Fighters, weapons, and cards should be custom `Resource` subclasses saved as
 `.tres` files:
 
@@ -61,18 +69,48 @@ Fighters, weapons, and cards should be custom `Resource` subclasses saved as
 class_name WeaponTemplate
 extends Resource
 
-@export var display_name: String
-@export var range: int
-@export var dice_count: int
-@export var damage_value: int
-@export_enum("melee", "ranged") var type: String
-@export var ability_tags: PackedStringArray
+const MELEE := "melee"
+const RANGED := "ranged"
+
+@export var template_id: String = ""
+@export var display_name: String = ""
+@export var range_hexes: int = 0
+@export var dice_count: int = 0
+@export var damage_value: int = 0
+@export_enum("melee", "ranged") var weapon_type: String = MELEE
+@export var ability_tags: PackedStringArray = PackedStringArray()
 ```
 
 This delivers the extraction plan's "templates ship as data, not as a class
 concept" almost for free, and Godot's inspector becomes the balance editor —
 which is what makes tuning dice counts and point values cheap instead of a code
 change.
+
+**Names the engine has already taken.** `range_hexes`, not `range`: `range()`
+is a GDScript global function, and a member shadowing one is at best a warning.
+This project has hit that trap three times now — `GameState.round_number`
+because `round()` is global, and `DeterministicRng.get_seed()`/`get_state()`
+for the same reason — so check a new member name against the engine's globals
+before taking it, and expect the spec to use the short name anyway. Spec §3
+says `range` and `type` because it is engine-agnostic and correct to; the
+rename is this layer's problem, not a disagreement with it.
+
+`weapon_type`, not `type`, is the softer case: nothing is shadowed, but
+`weapon.type` reads ambiguously against `Resource`'s own vocabulary and against
+`typeof()`.
+
+**Three details in the sample that are not incidental.** The `melee`/`ranged`
+discriminator is an `@export_enum` `String` rather than an `int` enum, so a
+`.tres` diff reads `weapon_type = "ranged"` instead of a bare `1` — a legible
+balance-editing surface is the deliverable here, and a hand-readable diff is
+part of it. Every default is the type's zero value: Godot requires an
+initialiser on an `@export`, and a default that looks like a *tuned* number
+(`dice_count = 3`) is a balance value written in GDScript, which is the thing
+this section exists to prevent. `weapon_type` is the one exception, defaulting
+to `MELEE` because `""` is not a member of the exported enum. And `template_id`
+is an opaque, author-assigned string that is never a resource path — it lets a
+serialized fighter record which template it came from without embedding
+`res://resources/...` in the rules module or in the saved state.
 
 **The gotcha that will bite you:** Godot caches and shares `Resource`
 instances. Load the same `.tres` twice and you get the *same object*. If a
