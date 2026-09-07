@@ -214,14 +214,19 @@ static func _test_class_names_in_reads_file_scope_declarations_only() -> Array[S
 
 	violations.append_array(
 		_expect(
-			names.size() == 2, "exactly two names must be parsed, got %d: %s" % [names.size(), names]
+			names.size() == 2,
+			"exactly two names must be parsed, got %d: %s" % [names.size(), names]
 		)
 	)
 	violations.append_array(
-		_expect("SyntheticOne" in names, "SyntheticOne must be parsed from its file-scope declaration")
+		_expect(
+			"SyntheticOne" in names, "SyntheticOne must be parsed from its file-scope declaration"
+		)
 	)
 	violations.append_array(
-		_expect("SyntheticTwo" in names, "SyntheticTwo must be parsed from its file-scope declaration")
+		_expect(
+			"SyntheticTwo" in names, "SyntheticTwo must be parsed from its file-scope declaration"
+		)
 	)
 	violations.append_array(
 		_expect(
@@ -269,15 +274,19 @@ static func _test_turn_action_mentions_are_meaningful() -> Array[String]:
 	violations.append_array(
 		_expect(
 			AUTHORITY_CLASS in content,
-			"%s must mention %s for the clean-by-path case to be meaningful"
-			% [TURN_ACTION_PATH, AUTHORITY_CLASS]
+			(
+				"%s must mention %s for the clean-by-path case to be meaningful"
+				% [TURN_ACTION_PATH, AUTHORITY_CLASS]
+			)
 		)
 	)
 	violations.append_array(
 		_expect(
 			ACTION_RUNNER_CLASS in content,
-			"%s must mention %s for the clean-by-path case to be meaningful"
-			% [TURN_ACTION_PATH, ACTION_RUNNER_CLASS]
+			(
+				"%s must mention %s for the clean-by-path case to be meaningful"
+				% [TURN_ACTION_PATH, ACTION_RUNNER_CLASS]
+			)
 		)
 	)
 
@@ -289,7 +298,8 @@ static func _test_turn_action_mentions_are_meaningful() -> Array[String]:
 ## them -- and must keep passing.
 static func _test_turn_action_is_clean_by_path() -> Array[String]:
 	return _expect(
-		not _scan_reports(TURN_ACTION_PATH), "%s must be reported clean by scan()" % TURN_ACTION_PATH
+		not _scan_reports(TURN_ACTION_PATH),
+		"%s must be reported clean by scan()" % TURN_ACTION_PATH
 	)
 
 
@@ -300,15 +310,19 @@ static func _test_attack_action_mentions_are_meaningful() -> Array[String]:
 	violations.append_array(
 		_expect(
 			AUTHORITY_CLASS in content,
-			"%s must mention %s for the clean-by-path case to be meaningful"
-			% [ATTACK_ACTION_PATH, AUTHORITY_CLASS]
+			(
+				"%s must mention %s for the clean-by-path case to be meaningful"
+				% [ATTACK_ACTION_PATH, AUTHORITY_CLASS]
+			)
 		)
 	)
 	violations.append_array(
 		_expect(
 			ACTION_RUNNER_CLASS in content,
-			"%s must mention %s for the clean-by-path case to be meaningful"
-			% [ATTACK_ACTION_PATH, ACTION_RUNNER_CLASS]
+			(
+				"%s must mention %s for the clean-by-path case to be meaningful"
+				% [ATTACK_ACTION_PATH, ACTION_RUNNER_CLASS]
+			)
 		)
 	)
 
@@ -330,5 +344,6 @@ static func _test_the_real_tree_has_no_violation() -> Array[String]:
 	var reported := InboundTypeContractTest.scan()
 
 	return _expect(
-		reported.is_empty(), "rules/ must contain no inbound type reference: %s" % ", ".join(reported)
+		reported.is_empty(),
+		"rules/ must contain no inbound type reference: %s" % ", ".join(reported)
 	)

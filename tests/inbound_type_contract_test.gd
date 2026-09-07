@@ -103,7 +103,9 @@ static func run() -> bool:
 			% [RULES_DIR, ", ".join(FORBIDDEN_SOURCE_DIRS)]
 		)
 	)
-	printerr("rules/ depends on nothing outside itself -- construct nothing from scripts/ or scenes/.")
+	printerr(
+		"rules/ depends on nothing outside itself -- construct nothing from scripts/ or scenes/."
+	)
 	printerr("")
 	for violation in violations:
 		printerr("FAIL " + violation)
@@ -131,7 +133,8 @@ static func violations_for(forbidden: Array[String]) -> Array[String]:
 					"%s and %s yielded no class_name declarations -- the derivation is empty, so this check would enforce nothing"
 					% [FORBIDDEN_SOURCE_DIRS[0], FORBIDDEN_SOURCE_DIRS[1]]
 				)
-			] as Array[String]
+			]
+			as Array[String]
 		)
 
 	var violations: Array[String] = []
