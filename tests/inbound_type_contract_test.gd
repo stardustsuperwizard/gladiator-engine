@@ -9,7 +9,7 @@
 ## **path** -- a `preload()` or `load()` of `res://scripts/...`. It does not
 ## catch `rules/` naming a game-side **type** by its global `class_name`,
 ## which needs no path at all: GDScript's global class names are visible
-## everywhere once registered, so `Authority.new(state)` compiles inside
+## everywhere once registered, so a game-side type's constructor compiles inside
 ## `rules/` with no `preload()` in sight. That gap is what
 ## `docs/godot-implementation-guide.md` §2 records as holding "by review, not
 ## by the build" -- this file is what makes it hold by the build.
@@ -130,7 +130,8 @@ static func violations_for(forbidden: Array[String]) -> Array[String]:
 		return (
 			[
 				(
-					"%s and %s yielded no class_name declarations -- the derivation is empty, so this check would enforce nothing"
+					"%s and %s yielded no class_name declarations -- the derivation is empty, "
+						"so this check would enforce nothing"
 					% [FORBIDDEN_SOURCE_DIRS[0], FORBIDDEN_SOURCE_DIRS[1]]
 				)
 			]
