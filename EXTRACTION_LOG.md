@@ -89,3 +89,29 @@ still all adopted, but `LISTEN_SERVER` is now ruled out for ranked play.
 | # | Item | Verdict | Rationale |
 | --- | --- | --- | --- |
 | 38 | AI opponent | deferred (post-MVP feature) | Owner's decision: a feature release, not MVP; two human players is the shape being built. Recorded because AI was previously in neither list — every mention across the spec, `AGENTS.md` and the plan is a *justification for the authority chokepoint*, never a work item, so §5.3 could not answer "is this out of scope or just unwritten." Now it answers. Carries three notes for the eventual build: the AI is a game-side controller and not a `rules/` component; it consumes the same per-recipient projection as #34, which therefore has a non-network consumer that may arrive first; and scoring candidate moves under a dice-pool resolver is an unsettled design question, not an implementation detail. |
+
+## 2026-09-07 — Issue taxonomy renamed
+
+Not extraction decisions: a repository convention change, recorded here for
+the same reason the 2026-09-05 block is — plan §0 asks for every decision and
+there is nowhere else that keeps them.
+
+The old vocabulary put a **stage** word where a **thing** word belongs.
+`[plan]` said where an Issue was in its lifecycle, not what it was, while the
+`plan` → `planned` label pair already tracked exactly that stage. And "Task"
+named two different things at once: an intake type, and the child Issues the
+planner emits.
+
+| # | Item | Verdict | Rationale |
+| --- | --- | --- | --- |
+| 39 | `[plan]` → `[epic]` title prefix | **new** | Names the thing rather than its stage. The `plan`/`planned` labels are unchanged and still carry the lifecycle, which is why no workflow logic moved. |
+| 40 | `[impl]` → `[task]` title prefix | **new** | The children are bounded engineering tasks, not user stories: "story" implies user-facing value that decomposes further, which would be a third level this repo does not have. `epic → task` stays two-level and honest. |
+| 41 | Intake `02-task.md` template | reject | Retired, not renamed. Its three Issues (#52, #54, #56) are all build-time guards or test suites — Infrastructure already — and keeping it would have meant "an epic of type Task decomposing into tasks." Folded into `04-infrastructure_tooling.md`; the `task` label is no longer emitted by any template and bootstrap stops creating it. |
+| 42 | Label names left alone | note | Deliberate. `plan`, `planned` and `implementation` keep their names: `implementation` is what `agent-02-implement.yml` refuses to run without and what `issue-linking.yml` selects on, so renaming it would put every in-flight Issue one stale label away from a silent refusal. Renaming titles costs nothing and buys the clarity; renaming labels buys the same clarity and costs a migration window. |
+
+**Why this was cheap.** `render-dashboard.py` already derives the hierarchy
+structurally — "a task is an issue with a parent, a feature is one with
+sub-issues" — having found labels unreliable. The prefixes were therefore
+naming, not plumbing, and only three sites were load-bearing: the planner's
+child-title format, `agent-02-implement.yml`'s PR-title stripper, and
+`feature-status`'s `in:title` search.

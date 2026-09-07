@@ -327,7 +327,7 @@ def render(model: dict, repo: str | None) -> str:
                 link(r["issue"]) + (" 🔑" if r.get("restricted") else ""),
                 link(r["issue"]["parent"]),
                 "⚠️ strong" if r.get("delicate") else "any",
-                r["issue"]["title"].removeprefix("[impl] "),
+                r["issue"]["title"].removeprefix("[task] "),
             ],
         )
         if any(r.get("delicate") for r in ready):
@@ -363,7 +363,7 @@ def render(model: dict, repo: str | None) -> str:
                 link(r["issue"]),
                 f"#{r['pr']}" if r.get("pr") else "—",
                 f"`{r.get('verdict', '?')}`",
-                r["issue"]["title"].removeprefix("[impl] "),
+                r["issue"]["title"].removeprefix("[task] "),
             ],
         )
     else:
@@ -376,7 +376,7 @@ def render(model: dict, repo: str | None) -> str:
         out += task_table(
             merge, ["Task", "PR", "Title"],
             lambda r: [link(r["issue"]), f"#{r['pr']}",
-                       r["issue"]["title"].removeprefix("[impl] ")],
+                       r["issue"]["title"].removeprefix("[task] ")],
         )
     else:
         out.append("_Nothing has passed review and is waiting on a merge._")
@@ -408,7 +408,7 @@ def render(model: dict, repo: str | None) -> str:
         out += task_table(
             flight, ["Task", "PR", "State", "Title"],
             lambda r: [link(r["issue"]), f"#{r['pr']}", r["state"],
-                       r["issue"]["title"].removeprefix("[impl] ")],
+                       r["issue"]["title"].removeprefix("[task] ")],
         )
     else:
         out.append("_No sessions running._")
@@ -422,7 +422,7 @@ def render(model: dict, repo: str | None) -> str:
             lambda r: [
                 link(r["issue"]),
                 " ".join(f"#{n}" for n in r["blockers"]),
-                r["issue"]["title"].removeprefix("[impl] "),
+                r["issue"]["title"].removeprefix("[task] "),
             ],
         )
     else:

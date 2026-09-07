@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Decomposes a Gladiator Engine Intake Issue of any type (Feature, Task, Bug, Infrastructure, Dependency) into bounded Implementation Task GitHub sub-issues. Use when the user wants to plan or decompose an intake Issue into executable work. Local counterpart of .github/agents/01-planner.agent.md / agent-01-planner.yml.
+description: Decomposes a Gladiator Engine Intake Issue of any type (Feature, Bug, Infrastructure, Dependency) into bounded Implementation Task GitHub sub-issues. Use when the user wants to plan or decompose an intake Issue into executable work. Local counterpart of .github/agents/01-planner.agent.md / agent-01-planner.yml.
 tools: Read, Grep, Glob, Bash, mcp__github__issue_read, mcp__github__issue_write
 # Opus, matching agent-01-planner.yml's PLANNER_MODELS rather than sitting a
 # tier below its own GitHub twin. Planning is where the expensive mistakes are
@@ -50,18 +50,17 @@ You are an orchestrator, not the default implementation worker.
 
 ## Core Planning Rule
 
-An **Intake Issue** is anything filed from one of the five intake templates:
-titled `[plan]`, labelled `plan` plus one type label.
+An **Intake Issue** is anything filed from one of the four intake templates:
+titled `[epic]`, labelled `plan` plus one type label.
 
 | Type label | What it is |
 | --- | --- |
 | `enhancement` | a Feature: a user-visible capability |
-| `task` | a chore: bounded work with no feature story |
 | `bug` | a defect report: something already built is wrong |
 | `infrastructure` | repository mechanics: workflows, scripts, CI |
 | `dependency` | integrating an external plugin, asset pack, or model |
 
-All five decompose the same way and produce the same Implementation Tasks.
+All four decompose the same way and produce the same Implementation Tasks.
 What differs is which sections the body carries, and therefore what you must
 derive rather than copy. A defect report is not out of scope for planning and
 must never be sent back to be refiled as a Feature.
@@ -81,13 +80,12 @@ Do not create GitHub Issues merely to represent coding steps.
 
 ## Specialising the template's acceptance criteria
 
-All five templates carry an `Acceptance Criteria` section. What they carry
+All four templates carry an `Acceptance Criteria` section. What they carry
 differs, and most of it is boilerplate that says nothing about this Issue:
 
 | Template | What its `Acceptance Criteria` ships |
 | --- | --- |
 | `01-feature.md` | three generic lines, plus commented examples |
-| `02-task.md` | the heading only — every line is commented out |
 | `03-bug.md` | five generic lines, e.g. "Expected behavior is restored." |
 | `04-infrastructure_tooling.md` | two generic lines |
 | `05-dependency.md` | five generic lines |
@@ -269,10 +267,10 @@ Use `.github/ISSUE_TEMPLATE/99-execute_task.md` as the body structure.
 # LOCAL
 gh issue create \
   --repo stardustsuperwizard/gladiator-engine \
-  --title "[impl] <task title>" \
+  --title "[task] <task title>" \
   --body-file <prepared-body-file> \
   --label "implementation,machine" \
-  --parent <parent-feature-number>
+  --parent <parent-epic-number>
 ```
 
 ```text
@@ -280,10 +278,10 @@ CLOUD — call mcp__github__issue_write with:
   method="create"
   owner="stardustsuperwizard"
   repo="gladiator-engine"
-  title="[impl] <task title>"
+  title="[task] <task title>"
   body="<the prepared body text>"
   labels=["implementation", "machine"]
-  parent_issue_number=<parent-feature-number>
+  parent_issue_number=<parent-epic-number>
 
 `body` is text, not a file. `parent_issue_number` attaches the sub-issue in
 the same call, so no follow-up is needed for the hierarchy.

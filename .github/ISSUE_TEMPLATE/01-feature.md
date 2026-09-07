@@ -1,7 +1,7 @@
 ---
 name: Feature
 about: Suggest an idea for this project
-title: '[plan] '
+title: '[epic] '
 labels: plan, enhancement
 assignees: ''
 

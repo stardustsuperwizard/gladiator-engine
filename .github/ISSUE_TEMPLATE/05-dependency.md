@@ -1,7 +1,7 @@
 ---
 name: Dependency integration
 about: Dependencies that are more operationally complicated than ordinary code features—itch.io plugins, art packs, models, audio, etc.
-title: '[plan] '
+title: '[epic] '
 labels: plan, dependency
 assignees: ''
 

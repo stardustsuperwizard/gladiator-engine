@@ -289,10 +289,10 @@ jobs:
           # Computed here, not down in "Prepare Diff and Draft Title", so it
           # exists before the branch-existence check below and doesn't
           # require a fresh implementer run to produce. Implementation Task
-          # Issues are titled "[impl] <description>"; the pull request tag
+          # Issues are titled "[task] <description>"; the pull request tag
           # is "[<n>] <description>" instead.
           TITLE_RAW=$(jq -r '.title' issue.json)
-          TITLE_STRIPPED=$(echo "$TITLE_RAW" | sed -E 's/^\[impl\]\s*//i')
+          TITLE_STRIPPED=$(echo "$TITLE_RAW" | sed -E 's/^\[task\]\s*//i')
           echo "PR_TITLE=[$ISSUE_NUMBER] $TITLE_STRIPPED" >> "$GITHUB_ENV"
 
           if [ "$(jq -r '.state' issue.json)" != "OPEN" ]; then

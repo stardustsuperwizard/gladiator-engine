@@ -52,7 +52,7 @@ CLOUD — call mcp__github__issue_read with:
   issue_number=$ARGUMENTS
 ```
 
-If its title starts with `[impl]`, this is an Implementation Task, not an
+If its title starts with `[task]`, this is an Implementation Task, not an
 intake Issue. Say so and report just that one task — steps 3 and 4 still
 apply to it.
 
@@ -68,9 +68,9 @@ CLOUD — call mcp__github__issue_read with:
 
 ```bash
 # LOCAL — no --json field exposes sub-issues, so use the title convention the
-# planner guarantees: it titles every child "[impl] [<parent>] <title>".
+# planner guarantees: it titles every child "[task] [<parent>] <title>".
 gh issue list --repo stardustsuperwizard/gladiator-engine \
-  --search "[impl] [$ARGUMENTS] in:title" \
+  --search "[task] [$ARGUMENTS] in:title" \
   --state all --limit 50 \
   --json number,title,state,labels,body
 ```

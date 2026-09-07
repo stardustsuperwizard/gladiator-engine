@@ -1,5 +1,5 @@
 ---
-description: Plan an intake Issue of any type (Feature, Task, Bug, Infrastructure, Dependency) into Implementation Task sub-issues (local counterpart of adding agent:planner:copilot)
+description: Plan an intake Issue of any type (Feature, Bug, Infrastructure, Dependency) into Implementation Task sub-issues (local counterpart of adding agent:planner:copilot)
 argument-hint: <intake-issue-number>
 ---
 
@@ -57,12 +57,12 @@ Stop and say so, rather than proceeding, if the Issue:
   `<!-- automated-planner-complete -->` comment — it has been planned, unless
   the user explicitly asked for a re-plan;
 - is an Implementation Task rather than an intake Issue (`implementation`
-  label, `[impl]` title, or a parent Issue of its own). Those are executed
+  label, `[task]` title, or a parent Issue of its own). Those are executed
   with `/execute-task`, not planned.
 
-**All five intake types are plannable** — `enhancement`, `task`, `bug`,
+**All four intake types are plannable** — `enhancement`, `bug`,
 `infrastructure`, and `dependency`. A defect report is not a reason to stop,
-and must never be sent back to be refiled as a Feature. All five templates
+and must never be sent back to be refiled as a Feature. All four templates
 carry an `Acceptance Criteria` section, but most of what they ship is generic
 boilerplate; the planner specialises it against the Issue body rather than
 copying it through. That is expected, not a blocker.

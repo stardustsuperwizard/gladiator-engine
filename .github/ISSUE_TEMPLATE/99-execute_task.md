@@ -1,7 +1,7 @@
 ---
 name: Implementation Task
 about: A bounded engineering task emitted by the planner. Not for human-authored feature requests.
-title: '[impl] [<parent-feature-number>] '
+title: '[task] [<parent-epic-number>] '
 labels: implementation, machine
 assignees: ''
 ---

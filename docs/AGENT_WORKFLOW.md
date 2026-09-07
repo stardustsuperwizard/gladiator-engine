@@ -411,7 +411,7 @@ Execution* below.
 
 What a pasted session does not give you for free is a link back to the Issue,
 because it takes a free-text task description instead. That gap is closed by
-the **Run This Task** block the planner writes at the top of every `[impl]`
+the **Run This Task** block the planner writes at the top of every `[task]`
 Issue: a pre-filled description carrying the Issue's own number, a pointer to
 the contract in `.github/copilot-instructions.md`, and a `Closes #n` line.
 Copy it, start a session on the model you chose, paste. The resulting PR
@@ -616,7 +616,7 @@ a stage — they are triggered by the `blocker` label and by pull request and
 assignment events, not by a stage completing.
 
 ```
-Intake Issue        [plan] in title, `plan` + type label
+Intake Issue        [epic] in title, `plan` + type label
         │
         │  you add  agent:planner:copilot
         ▼
@@ -626,7 +626,7 @@ Intake Issue        [plan] in title, `plan` + type label
 │ reads Issue body + comments + repo inventory   │
 └────────────────────────────────────────────────┘
         │  validated plan JSON
-        │  → [impl] sub-issues, blocked-by wired
+        │  → [task] sub-issues, blocked-by wired
         │  → plan comment on the intake Issue
         ▼
 Implementation Task
@@ -836,7 +836,7 @@ gh secret delete PROJECT_TOKEN --repo stardustsuperwizard/gladiator-engine
 ### Step 1 — Planning
 
 1. File the Issue with one of the intake templates. Title starts with
-   `[plan]`; the template applies `plan` plus a type label.
+   `[epic]`; the template applies `plan` plus a type label.
 2. When the Issue is actually ready — not when you file it — add
    **`agent:planner:copilot`**.
 
@@ -848,7 +848,7 @@ gh secret delete PROJECT_TOKEN --repo stardustsuperwizard/gladiator-engine
 - validates the returned JSON structurally before it is allowed to create
   anything — task count, required fields, unique IDs, no self-dependency, no
   dangling `depends_on`, non-empty acceptance criteria;
-- creates one `[impl]` sub-issue per task with native `--parent` and
+- creates one `[task]` sub-issue per task with native `--parent` and
   `--add-blocked-by` relationships;
 - posts the plan as a comment on the intake Issue;
 - adds `planned` and consumes both `agent:planner:copilot` and `plan`.
@@ -877,14 +877,13 @@ fall out of the intake queue without a plan to show for it.
 
 #### Every intake type is plannable
 
-All five intake templates decompose through the same planner. Nothing in
+All four intake templates decompose through the same planner. Nothing in
 `agent-01-planner.yml` gates on the type label: the only trigger is
 `agent:planner:copilot`, and the only other gate is the already-planned marker.
 
 | Type label | Template | What its `Acceptance Criteria` ships |
 | --- | --- | --- |
 | `enhancement` | `01-feature.md` | three generic lines + commented examples |
-| `task` | `02-task.md` | heading only — every line commented out |
 | `bug` | `03-bug.md` | five generic lines |
 | `infrastructure` | `04-infrastructure_tooling.md` | two generic lines |
 | `dependency` | `05-dependency.md` | five generic lines |
@@ -900,7 +899,7 @@ line through is the failure mode — "Expected behavior is restored"
 (`03-bug.md:66`) is no more checkable than "the bug is fixed". Where the author
 replaced the boilerplate with real criteria, those are authoritative.
 
-The five type labels are ensured in `Ensure Orchestration Labels Exist`
+The four type labels are ensured in `Ensure Orchestration Labels Exist`
 alongside `plan`, and for the same reason: a template silently drops a label
 the repository does not define. That guard heals the vocabulary for the *next*
 Issue, not the one being planned — an Issue already filed without its type
@@ -1019,7 +1018,7 @@ out of `.github/scripts/task_scope.py`:
   instead, in place of the usual paste-this-into-a-session instructions.
 - **The implementer** refuses it. The `workflow_scope` guard sits with the other
   pre-flight checks in `Resolve Implementation Task Issue`, so a hand-written
-  `[impl]` Issue the planner never saw is caught too. Adding
+  `[task]` Issue the planner never saw is caught too. Adding
   `agent:implementer:copilot`
   gets a comment naming the restriction and the alternative, and the label
   removed — no session, no credits.
@@ -1609,7 +1608,7 @@ execution session can read:
 
 | Artifact | Carries |
 | --- | --- |
-| The `[impl]` sub-issue body | Objective, scope, expected files, architecture constraints, acceptance criteria, out of scope, dependencies |
+| The `[task]` sub-issue body | Objective, scope, expected files, architecture constraints, acceptance criteria, out of scope, dependencies |
 | The plan comment on the Feature | Plan summary, architecture notes, the task list with Issue numbers |
 
 The sub-issue is authoritative. The implementer is given exactly one Issue and
@@ -1846,7 +1845,7 @@ already require.
 
 `issue-linking.yml` cuts the other way, and the asymmetry is worth stating
 plainly. It *does* run on `claude/*`, and it requires a closing reference —
-so a Claude Code session working an `[impl]` Issue is covered exactly like a
+so a Claude Code session working an `[task]` Issue is covered exactly like a
 Copilot one, but a session working **without** an Issue (a review or audit,
 per `CLAUDE.md`) hits a job whose only success path is a link it was never
 supposed to have. Nothing observable distinguishes that from an
@@ -1874,7 +1873,7 @@ comment; the only difference is which CLI produced the text in between.
 | Label | Target | Workflow | Models |
 | --- | --- | --- | --- |
 | `agent:planner:{vendor}` | intake Issue | `agent-01-planner.yml` | `vars.{VENDOR}_PLANNER_MODELS` |
-| `agent:implementer:{vendor}` | `[impl]` Issue | `agent-02-implement.yml` | per-task tier, resolved to the vendor's ids |
+| `agent:implementer:{vendor}` | `[task]` Issue | `agent-02-implement.yml` | per-task tier, resolved to the vendor's ids |
 | `agent:reviewer:{vendor}` | pull request | `agent-04-review.yml` | `vars.{VENDOR}_REVIEWER_MODELS` |
 | `agent:fixer:{vendor}` | pull request | `agent-05-fix.yml` | per-cycle tier, resolved to the vendor's ids |
 
@@ -1993,7 +1992,7 @@ are custom agents and MCP servers.
 | File | Purpose |
 | --- | --- |
 | `.github/workflows/agent-00-dashboard.yml` | Rewrites the pinned control plane Issue from derived state, on `dashboard:update` or dispatch |
-| `.github/workflows/agent-01-planner.yml` | Decomposes an intake Issue of any type into `[impl]` sub-issues |
+| `.github/workflows/agent-01-planner.yml` | Decomposes an intake Issue of any type into `[task]` sub-issues |
 | `.github/workflows/agent-02-implement.yml` | Scripted implementer: implements, opens the PR, then validates, formats, self-reviews, and self-fixes against it, on `agent:implementer:copilot`; ends with an independent validation job on the pushed SHA |
 | `.github/workflows/agent-03-rollup.yml` | Comments on the parent Feature when its last sub-issue closes |
 | `.github/workflows/agent-04-review.yml` | Reviews a PR against its task contract, emits a verdict |

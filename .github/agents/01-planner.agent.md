@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Decomposes a Gladiator Engine Intake Issue of any type (Feature, Task, Bug, Infrastructure, Dependency) into bounded engineering work and orchestrates implementation through GitHub Issues
+description: Decomposes a Gladiator Engine Intake Issue of any type (Feature, Bug, Infrastructure, Dependency) into bounded engineering work and orchestrates implementation through GitHub Issues
 model: Claude Opus 5
 tools: ["read", "search", "agent", "github/*"]
 ---
@@ -46,18 +46,17 @@ You are an orchestrator, not the default implementation worker.
 
 ## Core Planning Rule
 
-An **Intake Issue** is anything filed from one of the five intake templates:
-titled `[plan]`, labelled `plan` plus one type label.
+An **Intake Issue** is anything filed from one of the four intake templates:
+titled `[epic]`, labelled `plan` plus one type label.
 
 | Type label | What it is |
 | --- | --- |
 | `enhancement` | a Feature: a user-visible capability |
-| `task` | a chore: bounded work with no feature story |
 | `bug` | a defect report: something already built is wrong |
 | `infrastructure` | repository mechanics: workflows, scripts, CI |
 | `dependency` | integrating an external plugin, asset pack, or model |
 
-All five decompose the same way and produce the same Implementation Tasks.
+All four decompose the same way and produce the same Implementation Tasks.
 What differs is which sections the body carries, and therefore what you must
 derive rather than copy. A defect report is not out of scope for planning and
 must never be sent back to be refiled as a Feature.
@@ -77,13 +76,12 @@ Do not create GitHub Issues merely to represent coding steps.
 
 ## Specialising the template's acceptance criteria
 
-All five templates carry an `Acceptance Criteria` section. What they carry
+All four templates carry an `Acceptance Criteria` section. What they carry
 differs, and most of it is boilerplate that says nothing about this Issue:
 
 | Template | What its `Acceptance Criteria` ships |
 | --- | --- |
 | `01-feature.md` | three generic lines, plus commented examples |
-| `02-task.md` | the heading only — every line is commented out |
 | `03-bug.md` | five generic lines, e.g. "Expected behavior is restored." |
 | `04-infrastructure_tooling.md` | two generic lines |
 | `05-dependency.md` | five generic lines |
@@ -292,16 +290,16 @@ Create a sub-issue using the equivalent of:
 ```bash
 gh issue create \
   --repo stardustsuperwizard/gladiator-engine \
-  --title "[impl] [<parent-feature-number>] <task title>" \
+  --title "[task] [<parent-epic-number>] <task title>" \
   --body-file <prepared-body-file> \
   --label "implementation,machine" \
-  --parent <parent-feature-number>
+  --parent <parent-epic-number>
 ```
 
-The `[<parent-feature-number>]` title tag duplicates the `--parent` link in
+The `[<parent-epic-number>]` title tag duplicates the `--parent` link in
 human-readable form: GitHub's Issues list does not surface sub-issue
 relationships, so the tag is what lets a person scanning that list see which
-Feature a task belongs to at a glance.
+epic a task belongs to at a glance.
 
 ### Dependencies between tasks
 

@@ -104,7 +104,7 @@ standard still sync.
 
 ## Executing an Implementation Task
 
-This section applies whenever you are working an Issue titled `[impl]`, or
+This section applies whenever you are working an Issue titled `[task]`, or
 any Issue carrying the `implementation` label. It is the same contract as
 `.github/agents/02-implementer.agent.md`, restated here because almost no cloud
 session loads that file: assigning Copilot from an Issue offers no agent
