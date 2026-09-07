@@ -28,10 +28,9 @@ Concretely, inside `rules/`:
   animation is the view's problem.
 - No `print()` for anything the caller needs — return it in the result.
 
-Use static typing throughout
-(`func resolve(state: GameState, action: TurnAction) -> TurnResult:`).
-Typed GDScript is both faster and catches a class of errors the dynamic path
-will not.
+Use static typing throughout — `func resolve(state: GameState) -> TurnResult:`,
+the signature every `TurnAction` subclass overrides. Typed GDScript is both
+faster and catches a class of errors the dynamic path will not.
 
 ---
 
@@ -42,17 +41,43 @@ structurally prevents `rules/` from referencing game code — the compiler will
 not stop you.
 
 The contract test (extraction plan §3.3) is therefore a **lint-style script**,
-not a compiler guarantee: it scans `rules/**/*.gd` for forbidden
-`preload`/`load` paths, forbidden `class_name` identifiers, and the `Node`
-inheritance ruled out above, and fails the build on a hit. Know its limits — it
-catches the obvious violation, not a clever one.
+not a compiler guarantee. Three of them now exist, separate files on purpose
+and none an edit to another:
 
-Write it before there is anything to fix. A contract test added after the
+| Test | Fails the build when |
+| --- | --- |
+| `rules/tests/extraction_contract_test.gd` | a `.gd`, `.json` or `.tres` file under `rules/` names `res://scripts/`, `res://scenes/` or `res://resources/` |
+| `rules/tests/ambient_rng_contract_test.gd` | a `.gd` file under `rules/` calls global `randi`, `randf`, `randi_range`, `randf_range`, `randfn` or `randomize` |
+| `tests/gate_bypass_contract_test.gd` | a `.gd` or `.tscn` under `scripts/` or `scenes/` names `res://rules/`, or calls `.resolve(` itself |
+
+Each is quote-aware, so a `#` inside a string literal does not hide the rest of
+the line, and each has a scanner self-test proving it can actually fail — a
+contract test that cannot fail is worse than none.
+
+> **Revised 2026-09-07.** This section previously said the contract test scans
+> for "forbidden `class_name` identifiers, and the `Node` inheritance ruled out
+> above." It does not, and never did — it matches paths. Both constraints are
+> real (§1, and `rules/README.md`), but a `rules/` file that names a game-side
+> type by global `class_name`, or extends `Node`, passes every scanner above.
+> They hold by review, not by the build. Said plainly here because a guarantee
+> a contributor believes in but does not have is worse than a known gap.
+
+Know the limits generally: these catch the obvious violation, not a clever one.
+
+Write them before there is anything to fix. A contract test added after the
 violations exist becomes a to-do list nobody works through.
 
 ---
 
 ## 3. Game data lives in Resources
+
+> **Revised 2026-09-07.** The example below previously showed `@export var
+> range: int` and `@export_enum(...) var type: String`, and had no
+> `template_id`. Two of those names cannot be used at all — see *Names the
+> engine has already taken* — so the sample was not merely out of date with
+> the class that shipped, it was unfollowable. Issue #30 had to correct it inline
+> for its implementer and deferred fixing it here; this is that fix. The sample
+> is now `rules/fighters/weapon_template.gd` as built.
 
 Fighters, weapons, and cards should be custom `Resource` subclasses saved as
 `.tres` files:
@@ -61,18 +86,48 @@ Fighters, weapons, and cards should be custom `Resource` subclasses saved as
 class_name WeaponTemplate
 extends Resource
 
-@export var display_name: String
-@export var range: int
-@export var dice_count: int
-@export var damage_value: int
-@export_enum("melee", "ranged") var type: String
-@export var ability_tags: PackedStringArray
+const MELEE := "melee"
+const RANGED := "ranged"
+
+@export var template_id: String = ""
+@export var display_name: String = ""
+@export var range_hexes: int = 0
+@export var dice_count: int = 0
+@export var damage_value: int = 0
+@export_enum("melee", "ranged") var weapon_type: String = MELEE
+@export var ability_tags: PackedStringArray = PackedStringArray()
 ```
 
 This delivers the extraction plan's "templates ship as data, not as a class
 concept" almost for free, and Godot's inspector becomes the balance editor —
 which is what makes tuning dice counts and point values cheap instead of a code
 change.
+
+**Names the engine has already taken.** `range_hexes`, not `range`: `range()`
+is a GDScript global function, and a member shadowing one is at best a warning.
+This project has hit that trap three times now — `GameState.round_number`
+because `round()` is global, and `DeterministicRng.get_seed()`/`get_state()`
+for the same reason — so check a new member name against the engine's globals
+before taking it, and expect the spec to use the short name anyway. Spec §3
+says `range` and `type` because it is engine-agnostic and correct to; the
+rename is this layer's problem, not a disagreement with it.
+
+`weapon_type`, not `type`, is the softer case: nothing is shadowed, but
+`weapon.type` reads ambiguously against `Resource`'s own vocabulary and against
+`typeof()`.
+
+**Three details in the sample that are not incidental.** The `melee`/`ranged`
+discriminator is an `@export_enum` `String` rather than an `int` enum, so a
+`.tres` diff reads `weapon_type = "ranged"` instead of a bare `1` — a legible
+balance-editing surface is the deliverable here, and a hand-readable diff is
+part of it. Every default is the type's zero value: Godot requires an
+initialiser on an `@export`, and a default that looks like a *tuned* number
+(`dice_count = 3`) is a balance value written in GDScript, which is the thing
+this section exists to prevent. `weapon_type` is the one exception, defaulting
+to `MELEE` because `""` is not a member of the exported enum. And `template_id`
+is an opaque, author-assigned string that is never a resource path — it lets a
+serialized fighter record which template it came from without embedding
+`res://resources/...` in the rules module or in the saved state.
 
 **The gotcha that will bite you:** Godot caches and shares `Resource`
 instances. Load the same `.tres` twice and you get the *same object*. If a
@@ -91,9 +146,10 @@ model (§3) already implies.
 
 ## 4. Hex coordinates
 
-Use **cube coordinates** (`Vector3i`, with `x + y + z == 0`) or axial
-(`Vector2i`) internally. Red Blob Games' hex grid reference is the canonical
-source for these algorithms; do not re-derive them.
+Use **cube coordinates** — `Vector3i` with `x + y + z == 0`. Axial (`Vector2i`)
+would have served too; cube is what `rules/board/hex_coord.gd` uses and the
+choice is settled, so do not reopen it. Red Blob Games' hex grid reference is
+the canonical source for these algorithms; do not re-derive them.
 
 Godot's `TileMapLayer` supports hex tiles but addresses them in **offset**
 coordinates. Convert at the view boundary and never let an offset coordinate
@@ -175,9 +231,23 @@ defensible candidate, and even that can simply be owned by the match scene.
 
 ## 7. Testing
 
-Use **GdUnit4** or **GUT** — either is fine; pick one and do not revisit it. Run
-headless (`godot --headless`) so the suite works in CI and in an agent session
-with no window.
+> **Revised 2026-09-07.** This previously read "Use **GdUnit4** or **GUT** —
+> either is fine; pick one and do not revisit it." Neither was adopted. By the
+> time Slice 0 shipped, the project had settled on the plain-GDScript pattern
+> below, and Issue #30 was explicitly telling its implementer not to adopt one —
+> so the guide was instructing contributors to do the thing the work refused.
+> `AGENTS.md` still permits a test framework as its single sanctioned
+> dependency exception; nothing has yet needed one.
+
+Tests are plain GDScript with no framework. A suite is a class with a
+`static func run() -> bool` that collects failures into an `Array[String]`,
+prints them, and returns whether it passed. `tests/test_bootstrap.gd` is an
+autoload that runs every suite in its `_suites` array headlessly and makes the
+result the process exit code; registering a suite is one entry in that array.
+
+Run it with `.github/scripts/validate-godot.sh` — two passes, `--import` then
+`--headless --quit` — which is exactly what CI runs. Headless matters: the
+suite has to work in CI and in an agent session with no window.
 
 The tests that matter most are the ones the extraction plan §5.1 describes: a
 known board state, a known seed, a known action, asserted against what the
