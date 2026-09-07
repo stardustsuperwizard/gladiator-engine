@@ -40,6 +40,20 @@
 ## counter at or above health, where `Fighter.is_defeated()` keeps answering
 ## true.
 ##
+## **A push is optional, declared, and not a move -- spec §7.6-7.7.**
+## `push_back` arrives through `_init()`, because spec §7.6 leaves whether to
+## attempt the shove to the attacking player, not to this resolver; defaulting
+## it to `false` keeps every call site from before this existed unchanged. It
+## applies on a `HIT` or a `DRAWN`, never a `MISS`, and never to a target this
+## same attack has just defeated -- spec §9 has already taken that fighter off
+## the board. The destination is the neighbour of the target's hex furthest
+## from the attacker by `HexCoord.distance()`, ties broken by
+## `HexCoord.DIRECTIONS` order; see `_push_destination()`. It draws nothing
+## from `state.rng` -- the generator's position after an attack is pinned by
+## the tests above, and a push must not shift it. And it sets no status flag
+## at all: spec §6's `"moved"` flag belongs to a fighter's own chosen move, not
+## a shove it did not choose, and no `"moved"` constant exists yet regardless.
+##
 ## Adding this action required no edit to `ActionRunner` and none to
 ## `Authority`: generality comes from subclassing `resolve()`.
 class_name AttackAction
@@ -82,6 +96,10 @@ var _target_template: FighterTemplate
 var _attack_profile: DiceProfile
 var _save_profile: DiceProfile
 
+## Declared intent, set once at construction: whether the attacking player
+## wants the target shoved on a Hit or a Drawn. See the class docstring.
+var _push_back: bool = false
+
 ## The resolution detail, read back through the accessors below. Every value
 ## here is meaningless until `resolve()` has returned a successful `TurnResult`;
 ## `_outcome` starts at `MISS` only because the enum has no "unresolved"
@@ -93,17 +111,25 @@ var _attack_bonus: int = 0
 var _save_bonus: int = 0
 var _target_defeated: bool = false
 
+## Whether `_apply_push()` actually moved the target. False until `resolve()`
+## runs, and false forever when `push_back` was never true.
+var _pushed: bool = false
+
 
 ## Every argument is required and every one is stored exactly as given; nothing
 ## is validated here. A `null` template or profile is refused by `resolve()`
 ## with `FAILURE_MISSING_DATA`, which is where it can actually be answered.
+##
+## `push_back` defaults to `false`, so every call site and every test written
+## before this parameter existed remains valid unchanged.
 func _init(
 	actor_id: String,
 	target_id: String,
 	weapon: WeaponTemplate,
 	target_template: FighterTemplate,
 	attack_profile: DiceProfile,
-	save_profile: DiceProfile
+	save_profile: DiceProfile,
+	push_back: bool = false
 ) -> void:
 	super(actor_id)
 	_target_id = target_id
@@ -111,6 +137,7 @@ func _init(
 	_target_template = target_template
 	_attack_profile = attack_profile
 	_save_profile = save_profile
+	_push_back = push_back
 
 
 ## Resolves the attack against `state`, per spec §7.
@@ -170,6 +197,14 @@ func save_bonus_count() -> int:
 ## true.
 func target_defeated() -> bool:
 	return _target_defeated
+
+
+## True when spec §7.6-7.7's push actually moved the target. Always false when
+## `push_back` was `false`, false on a `MISS`, false for a target this attack
+## defeated, and false when the computed destination was refused -- see
+## `_apply_push()`.
+func pushed() -> bool:
+	return _pushed
 
 
 ## Why this attack cannot resolve, or `&""` when it can.
@@ -270,6 +305,10 @@ func _resolve_attack(state: GameState, attacker: Fighter, target: Fighter) -> vo
 	if _outcome == DicePool.Outcome.HIT:
 		_apply_hit(state, target)
 
+	var hit_or_drawn := _outcome == DicePool.Outcome.HIT or _outcome == DicePool.Outcome.DRAWN
+	if _push_back and hit_or_drawn and not _target_defeated:
+		_apply_push(state, attacker, target)
+
 
 ## Applies the weapon's damage to `target`, commits the payload, and takes the
 ## fighter off the board when the damage defeated it.
@@ -284,6 +323,57 @@ func _apply_hit(state: GameState, target: Fighter) -> void:
 	_target_defeated = target.is_defeated()
 	if _target_defeated:
 		state.board.remove_occupant(target.position())
+
+
+## Spec §7.6-7.7: shoves `target` one hex directly away from `attacker`, on a
+## `HIT` or a `DRAWN`. The caller has already excluded `MISS` and a target this
+## same attack defeated; nothing here re-checks either.
+##
+## Tries `Board.place_occupant()` at the computed destination *before*
+## touching the target's current hex, and returns having changed nothing when
+## that placement is refused -- the architecture constraint that
+## `place_occupant()`'s return is checked before the payload is committed. The
+## origin is freed only once the destination is secured, so a refused push
+## never leaves the target standing on no hex at all; because the destination
+## is always a distinct neighbour of the origin, freeing the origin afterwards
+## rather than beforehand changes nothing about which pushes succeed. Draws
+## nothing from `state.rng`, and sets no status flag -- see the class
+## docstring.
+func _apply_push(state: GameState, attacker: Fighter, target: Fighter) -> void:
+	var origin := target.position()
+	var destination := _push_destination(attacker.position(), origin)
+
+	if not state.board.place_occupant(destination, StringName(_target_id)):
+		return
+
+	state.board.remove_occupant(origin)
+	target.move_to(destination)
+	state.update_fighter(_target_id, target.to_dict())
+	_pushed = true
+
+
+## The neighbour of `origin` furthest from `attacker_position` by
+## `HexCoord.distance()`. `HexCoord.neighbours()` returns the six neighbours in
+## fixed `HexCoord.DIRECTIONS` order, and only a strictly greater distance ever
+## replaces the current pick here, so the first neighbour reaching the maximum
+## distance wins any tie -- the lowest `HexCoord.DIRECTIONS` index, exactly as
+## the tie-break this class documents.
+##
+## Not `target + (target - attacker)`: that is a single hex step, correct only
+## when `attacker` and `target` are already adjacent, and wrong for a ranged
+## attack at distance 2 or more.
+func _push_destination(attacker_position: Vector3i, origin: Vector3i) -> Vector3i:
+	var neighbours := HexCoord.neighbours(origin)
+	var best: Vector3i = neighbours[0]
+	var best_distance := HexCoord.distance(attacker_position, best)
+
+	for neighbour in neighbours.slice(1):
+		var distance := HexCoord.distance(attacker_position, neighbour)
+		if distance > best_distance:
+			best = neighbour
+			best_distance = distance
+
+	return best
 
 
 ## `Flanking`'s normalised candidate view -- `{"id", "owner_id", "position"}`
