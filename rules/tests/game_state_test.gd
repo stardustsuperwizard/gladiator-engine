@@ -709,10 +709,13 @@ static func _test_update_fighter_preserves_fighter_order() -> Array[String]:
 	var order_before := state.fighter_ids()
 	state.update_fighter("fighter_b", {"template": "hoplomachus"})
 
-	violations.append_array(
-		_expect(
-			state.fighter_ids() == order_before,
-			"update_fighter() must leave fighter_ids() in the same order it was in before the update"
+	(
+		violations
+		. append_array(
+			_expect(
+				state.fighter_ids() == order_before,
+				"update_fighter() must leave fighter_ids() in the same order it was in before the update"
+			)
 		)
 	)
 	violations.append_array(
@@ -747,7 +750,7 @@ static func _test_update_fighter_digest_matches_across_equal_builds() -> Array[S
 		)
 	)
 
-	var order: Array = (first.to_dict()["fighter_order"] as Array)
+	var order: Array = first.to_dict()["fighter_order"] as Array
 	violations.append_array(
 		_expect(
 			order == (["fighter_a", "fighter_b", "fighter_c"] as Array),
@@ -775,8 +778,10 @@ static func _test_update_fighter_round_trips() -> Array[String]:
 
 	violations.append_array(
 		_expect(
-			restored.fighter("fighter_b")
-			== {"template": "hoplomachus", "weapons": ["sica", "buckler"]},
+			(
+				restored.fighter("fighter_b")
+				== {"template": "hoplomachus", "weapons": ["sica", "buckler"]}
+			),
 			"the updated payload must survive the round trip"
 		)
 	)
