@@ -39,6 +39,13 @@ static func run() -> bool:
 	violations.append_array(_test_add_player_and_player_lookup_refusals())
 	violations.append_array(_test_add_fighter_and_fighter_lookup_refusals())
 	violations.append_array(_test_fighter_payload_is_opaque_and_copied())
+	violations.append_array(_test_update_fighter_replaces_the_payload())
+	violations.append_array(_test_update_fighter_refuses_unknown_id())
+	violations.append_array(_test_update_fighter_refuses_empty_id())
+	violations.append_array(_test_update_fighter_stores_a_deep_copy())
+	violations.append_array(_test_update_fighter_preserves_fighter_order())
+	violations.append_array(_test_update_fighter_digest_matches_across_equal_builds())
+	violations.append_array(_test_update_fighter_round_trips())
 	violations.append_array(_test_from_dict_rejects_missing_board())
 	violations.append_array(_test_from_dict_rejects_missing_rng())
 	violations.append_array(_test_from_dict_rejects_malformed_nested_rng())
@@ -581,6 +588,198 @@ static func _test_fighter_payload_is_opaque_and_copied() -> Array[String]:
 	return violations
 
 
+## `update_fighter()` on a present id must return true and hand the new
+## payload back through fighter().
+static func _test_update_fighter_replaces_the_payload() -> Array[String]:
+	var violations: Array[String] = []
+	var state := GameState.new(Board.new(), DeterministicRng.new(1))
+	state.add_fighter("fighter_a", {"template": "murmillo"})
+
+	violations.append_array(
+		_expect(
+			state.update_fighter("fighter_a", {"template": "retiarius", "hp": 10}),
+			"update_fighter() must return true for an id already in the state"
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.fighter("fighter_a") == {"template": "retiarius", "hp": 10},
+			"fighter() must return the new payload after update_fighter()"
+		)
+	)
+
+	return violations
+
+
+## An unknown id must be refused, leaving every existing payload and
+## fighter_ids() untouched -- update_fighter() is not add_fighter() in
+## disguise.
+static func _test_update_fighter_refuses_unknown_id() -> Array[String]:
+	var violations: Array[String] = []
+	var state := GameState.new(Board.new(), DeterministicRng.new(1))
+	state.add_fighter("fighter_a", {"template": "murmillo"})
+
+	violations.append_array(
+		_expect(
+			not state.update_fighter("fighter_z", {"template": "retiarius"}),
+			"update_fighter() must return false for an id not in the state"
+		)
+	)
+	violations.append_array(
+		_expect(
+			(
+				state.fighter_ids() == (["fighter_a"] as Array[String])
+				and state.fighter("fighter_a") == {"template": "murmillo"}
+				and state.fighter("fighter_z") == {}
+			),
+			"a refused update_fighter() must leave fighter_ids() and payloads unchanged"
+		)
+	)
+
+	return violations
+
+
+static func _test_update_fighter_refuses_empty_id() -> Array[String]:
+	var violations: Array[String] = []
+	var state := GameState.new(Board.new(), DeterministicRng.new(1))
+	state.add_fighter("fighter_a", {"template": "murmillo"})
+
+	violations.append_array(
+		_expect(
+			not state.update_fighter("", {"template": "retiarius"}),
+			"update_fighter() must return false for an empty id"
+		)
+	)
+	violations.append_array(
+		_expect(
+			(
+				state.fighter_ids() == (["fighter_a"] as Array[String])
+				and state.fighter("fighter_a") == {"template": "murmillo"}
+			),
+			"update_fighter() with empty id leaves fighter_ids() and payloads unchanged"
+		)
+	)
+
+	return violations
+
+
+## The stored payload must be a deep copy, matching add_fighter(): mutating a
+## nested value inside the caller's dictionary after the call must not reach
+## what fighter() returns.
+static func _test_update_fighter_stores_a_deep_copy() -> Array[String]:
+	var violations: Array[String] = []
+	var state := GameState.new(Board.new(), DeterministicRng.new(1))
+	state.add_fighter("fighter_a", {"template": "murmillo"})
+
+	var payload := {"template": "retiarius", "weapons": ["trident"]}
+	state.update_fighter("fighter_a", payload)
+
+	payload["template"] = "mutated_by_caller"
+	payload["weapons"].append("mutated_nested")
+	violations.append_array(
+		_expect(
+			state.fighter("fighter_a") == {"template": "retiarius", "weapons": ["trident"]},
+			"mutating the Dictionary passed to update_fighter() must not reach the stored payload"
+		)
+	)
+
+	return violations
+
+
+## fighter_ids() must return the same ids in the same order after an update
+## as before it -- update_fighter() does not touch _fighter_order.
+static func _test_update_fighter_preserves_fighter_order() -> Array[String]:
+	var violations: Array[String] = []
+	var state := GameState.new(Board.new(), DeterministicRng.new(1))
+	state.add_fighter("fighter_a", {"template": "murmillo"})
+	state.add_fighter("fighter_b", {"template": "retiarius"})
+	state.add_fighter("fighter_c", {"template": "thraex"})
+
+	var order_before := state.fighter_ids()
+	state.update_fighter("fighter_b", {"template": "hoplomachus"})
+
+	violations.append_array(
+		_expect(
+			state.fighter_ids() == order_before, "update_fighter() preserves fighter_ids() order"
+		)
+	)
+
+	return violations
+
+
+## Two states built by the same sequence of calls, including the same
+## update_fighter() call, must produce equal digest() values, and the updated
+## fighter must sit at its original index in to_dict()'s fighter_order.
+static func _test_update_fighter_digest_matches_across_equal_builds() -> Array[String]:
+	var violations: Array[String] = []
+
+	var first := _build_state()
+	first.update_fighter("fighter_b", {"template": "hoplomachus"})
+
+	var second := _build_state()
+	second.update_fighter("fighter_b", {"template": "hoplomachus"})
+
+	violations.append_array(
+		_expect(
+			first.digest() == second.digest(),
+			(
+				"two states built by the same sequence of calls, including the same "
+				+ "update_fighter() call, must have equal digest()"
+			)
+		)
+	)
+
+	var order: Array = first.to_dict()["fighter_order"] as Array
+	violations.append_array(
+		_expect(
+			order == (["fighter_a", "fighter_b", "fighter_c"] as Array),
+			"to_dict() must place the updated fighter at its original index in fighter_order"
+		)
+	)
+
+	return violations
+
+
+## A state that has had a fighter updated must round-trip through
+## to_dict()/from_dict() with the updated payload intact and the fighter
+## order preserved.
+static func _test_update_fighter_round_trips() -> Array[String]:
+	var violations: Array[String] = []
+	var state := _build_state()
+	state.update_fighter("fighter_b", {"template": "hoplomachus", "weapons": ["sica", "buckler"]})
+
+	var restored := _round_trip(state)
+	violations.append_array(
+		_expect(restored != null, "from_dict() must accept a state that has had a fighter updated")
+	)
+	if restored == null:
+		return violations
+
+	violations.append_array(
+		_expect(
+			(
+				restored.fighter("fighter_b")
+				== {"template": "hoplomachus", "weapons": ["sica", "buckler"]}
+			),
+			"the updated payload must survive the round trip"
+		)
+	)
+	violations.append_array(
+		_expect(
+			restored.fighter_ids() == state.fighter_ids(),
+			"fighter order must survive the round trip of a state with an updated fighter"
+		)
+	)
+	violations.append_array(
+		_expect(
+			restored.digest() == state.digest(),
+			"a state with an updated fighter must round-trip to an equal digest()"
+		)
+	)
+
+	return violations
+
+
 static func _test_from_dict_rejects_missing_board() -> Array[String]:
 	var data := _build_state().to_dict()
 	data.erase("board")
@@ -761,6 +960,7 @@ static func _test_no_method_draws_a_random_number() -> Array[String]:
 	state.fighter("unknown")
 	state.add_player("east")
 	state.add_fighter("fighter_d", {"template": "provocator"})
+	state.update_fighter("fighter_a", {"template": "provocator"})
 	state.to_dict()
 	state.digest()
 	GameState.from_dict(state.to_dict())
