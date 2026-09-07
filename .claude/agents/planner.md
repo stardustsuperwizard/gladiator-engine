@@ -257,6 +257,68 @@ Repository is always `owner="stardustsuperwizard"`,
     plan comment, and read each one back to verify its parent relationship,
     labels, milestone, and dependencies actually landed.
 
+12. Transition the parent Intake Issue's state labels: add `planned`, remove
+    `plan`, and remove any `agent:planner:*` trigger label still present.
+    This step runs only after the plan comment is published (step 10) and
+    the created sub-issues are verified (step 11) — a run that fails
+    anywhere before this point leaves `plan` in place, so nothing is ever
+    silently dropped from the awaiting-planning queue.
+
+    ```bash
+    # LOCAL
+    gh issue edit <n> --repo stardustsuperwizard/gladiator-engine \
+      --add-label "planned"
+    gh issue edit <n> --repo stardustsuperwizard/gladiator-engine \
+      --remove-label "plan"
+    # only if an agent:planner:* label is actually present on the Issue
+    gh issue edit <n> --repo stardustsuperwizard/gladiator-engine \
+      --remove-label "agent:planner:<vendor>"
+    ```
+
+    ```text
+    CLOUD — a read followed by a write:
+
+    1. mcp__github__issue_read with:
+         method="get_labels"
+         owner="stardustsuperwizard"
+         repo="gladiator-engine"
+         issue_number=<n>
+
+    2. mcp__github__issue_write with:
+         method="update"
+         owner="stardustsuperwizard"
+         repo="gladiator-engine"
+         issue_number=<n>
+         labels=[<every label from step 1, minus "plan", minus any
+                  "agent:planner:*" label, plus "planned">]
+
+    Step 1 is not optional. `labels` here REPLACES the whole set, where `gh
+    issue edit --add-label` adds to it, so writing only `planned` would strip
+    the epic's type label (`enhancement`, `bug`, `infrastructure`,
+    `dependency`) and everything else on it.
+    ```
+
+    Remove an `agent:planner:*` label only when one is actually present. A
+    label is a button: the local path is usually invoked by slash command
+    and has no button to consume, but an epic labelled `agent:planner:claude`
+    and then planned locally would otherwise keep a pressed button — and
+    re-adding it, the documented retry, would be a no-op.
+
+    Both writes are idempotent: adding `planned` when it is already present,
+    and removing `plan` when it is already absent, both succeed quietly, so
+    an explicit re-plan (step 2) is safe to repeat.
+
+    If a label edit fails, report it and stop claiming the epic is planned
+    — but never retract, delete, or disown the plan comment or the created
+    sub-issues over it. This is the same rule already stated for the
+    `model:*` tier above: if the edit fails, say so and carry on. Never
+    abandon a filed task over it.
+
+    Never create the `planned` label yourself. It is bootstrapped by
+    `.github/scripts/bootstrap-labels.sh`; if the add fails because the
+    label does not exist in the repository, the repair is to run that
+    script, not to create the label from here.
+
 ## Split-Session Sub-Issue Contract
 
 Every promoted task MUST be created as an actual GitHub sub-issue of the
