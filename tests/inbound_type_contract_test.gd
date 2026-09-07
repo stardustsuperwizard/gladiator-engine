@@ -130,8 +130,10 @@ static func violations_for(forbidden: Array[String]) -> Array[String]:
 		return (
 			[
 				(
-					"%s and %s yielded no class_name declarations -- the derivation is empty, "
-						"so this check would enforce nothing"
+					(
+						"%s and %s yielded no class_name declarations -- the derivation is empty, "
+						+ "so this check would enforce nothing"
+					)
 					% [FORBIDDEN_SOURCE_DIRS[0], FORBIDDEN_SOURCE_DIRS[1]]
 				)
 			]
