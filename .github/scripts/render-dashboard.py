@@ -467,7 +467,7 @@ def render(model: dict, repo: str | None) -> str:
         "",
         "---",
         "",
-        f"{done} tasks done · {len(tasks) - done} open · "
+        f"{done} task{'' if done == 1 else 's'} done · {len(tasks) - done} open · "
         f"{active} epic{'' if active == 1 else 's'} in flight · "
         f"{len(waiting)} awaiting planning",
         "",
