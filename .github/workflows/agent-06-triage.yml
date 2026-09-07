@@ -147,8 +147,23 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Matched on the comment's first non-blank line, not searched for
+          # anywhere in the body. A `contains` test finds the marker inside any
+          # comment that merely quotes it -- the "Report Triage Failure" step
+          # below used to do exactly that, so a failed run left a comment that
+          # made every subsequent retry skip as already-triaged. This gate must
+          # fail closed. CLAUDE.md documents the same trap for the
+          # no-originating-issue marker, and issue-linking.yml anchors for the
+          # same reason.
           if jq -e '
-            [.comments[] | select(.body | contains("<!-- agent-triage-complete -->"))]
+            [ .comments[]
+              | (.body // "")
+              | split("\n")
+              | map(gsub("\r"; "") | gsub("^[ \t]+|[ \t]+$"; ""))
+              | map(select(. != ""))
+              | (.[0] // "")
+            ]
+            | map(select(. == "<!-- agent-triage-complete -->"))
             | length > 0
           ' pr.json > /dev/null; then
             echo "already=true" >> "$GITHUB_OUTPUT"
@@ -695,7 +710,15 @@ jobs:
               "",
               "## Out-of-scope triage did not complete",
               "",
-              "**No `<!-- agent-triage-complete -->` marker was posted.**"
+              # Deliberately does NOT spell out the completion marker.
+              # "Check Already Triaged" reads the first non-blank line of
+              # each comment, so a marker quoted here would no longer trip
+              # it -- but this comment is also the one a human reads while
+              # deciding whether to retry, and a literal marker in it is a
+              # trap for any future check that searches instead of anchors.
+              # The pull request template omits its own marker for exactly
+              # this reason.
+              "**The triage completion marker was not posted.**"
               " Re-running `agent-06-triage.yml` via `workflow_dispatch` on"
               " this pull request's number is a clean retry.",
               "",
