@@ -208,6 +208,12 @@ new `Action` subclass, requiring no edit to `ActionRunner` or `Authority`.
 
 ## 4. Repo Structure — **BUILT 2026-09-04**
 
+> **Revised 2026-09-07.** The tree below marked `cards/` and a game-side
+> session layer as though they existed. Neither does — `cards/` is spec §4/§10
+> work that follows the remaining core actions, and the session layer is §3.2,
+> after networking starts. Both are now marked. `actions/`, which does exist and
+> holds every `TurnAction` subclass, was missing and is now listed.
+>
 > **Revised 2026-09-04.** This section previously listed `board/`, `combat/`,
 > `fighters/`, `cards/`, `net/` and `ui/` as *siblings* of `rules/`. That
 > would have emptied the rules module of everything it exists to hold: the hex
@@ -232,12 +238,12 @@ gladiator-engine/
     board/                # hex coords, distance, LOS, occupancy (spec §2)
     combat/               # dice-pool resolution, flanking (spec §7-8)
     fighters/             # runtime fighter/weapon model (spec §3, §9)
-    cards/                # scoring/ability decks (spec §4, §10)
+    actions/              # one TurnAction subclass per command (spec §6)
+    cards/                # scoring/ability decks (spec §4, §10) — NOT BUILT
     state/                # GameState, TurnAction, TurnResult, RNG (spec §3)
-    tests/
-      extraction_contract_test.gd   # adapted from source, string-literal bug fixed
-      contract_scanner_test.gd      # proves the scanner can actually fail
-  scripts/                # game side: Authority, runner, session (3.1, 3.2)
+    tests/                # contract scanners and per-module suites
+  scripts/                # game side: Authority, ActionRunner (3.1)
+                          # session layer (3.2) NOT BUILT
   scenes/                 # views; main.tscn placeholder for now
   resources/              # .tres templates: fighters, weapons, cards
   tests/

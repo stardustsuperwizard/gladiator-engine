@@ -8,10 +8,14 @@ dependency arrow: **the game depends on `rules/`, never the reverse.**
 
 - **No outward dependencies.** Nothing here references `res://scripts/`,
   `res://scenes/`, or `res://resources/`. Enforced on every build by
-  `tests/extraction_contract_test.gd`.
+  `rules/tests/extraction_contract_test.gd`. A sibling scanner,
+  `rules/tests/ambient_rng_contract_test.gd`, fails the build on a global
+  `randi()`/`randf()` here.
 - **No inward dependencies either.** Unlike the repo this pattern was adapted
   from, `rules/` does not use game-side types at all — not even by global
-  `class_name`. See *Why `TurnAction` lives here* below.
+  `class_name`. See *Why `TurnAction` lives here* below. Note that no test
+  enforces this one: the scanners above match paths, so a game-side type named
+  by `class_name` would pass them. It holds by review.
 - **Off the scene tree.** `RefCounted` or `Resource`, never `Node`. No
   autoloads, no `await`, no `_process`, no timers. See
   `docs/godot-implementation-guide.md` §1.
@@ -29,7 +33,7 @@ dependency arrow: **the game depends on `rules/`, never the reverse.**
 | `board/` | Hex coordinates, distance, line of sight, occupancy | §2 |
 | `combat/` | Dice-pool resolution, symbol matching, flanking | §7–8 |
 | `fighters/` | Runtime fighter and weapon model, status flags, damage | §3, §9 |
-| `cards/` | Scoring and ability decks, hands, draw/discard | §4, §10 |
+| `cards/` | Scoring and ability decks, hands, draw/discard — **not built yet** | §4, §10 |
 | `state/` | `GameState`, `TurnAction`, `TurnResult`, serialization, RNG | §3 |
 | `actions/` | One `TurnAction` subclass per player command | §6 |
 | `tests/` | Contract and regression suites | — |

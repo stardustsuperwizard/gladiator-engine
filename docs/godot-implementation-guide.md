@@ -28,10 +28,9 @@ Concretely, inside `rules/`:
   animation is the view's problem.
 - No `print()` for anything the caller needs — return it in the result.
 
-Use static typing throughout
-(`func resolve(state: GameState, action: TurnAction) -> TurnResult:`).
-Typed GDScript is both faster and catches a class of errors the dynamic path
-will not.
+Use static typing throughout — `func resolve(state: GameState) -> TurnResult:`,
+the signature every `TurnAction` subclass overrides. Typed GDScript is both
+faster and catches a class of errors the dynamic path will not.
 
 ---
 
@@ -42,12 +41,30 @@ structurally prevents `rules/` from referencing game code — the compiler will
 not stop you.
 
 The contract test (extraction plan §3.3) is therefore a **lint-style script**,
-not a compiler guarantee: it scans `rules/**/*.gd` for forbidden
-`preload`/`load` paths, forbidden `class_name` identifiers, and the `Node`
-inheritance ruled out above, and fails the build on a hit. Know its limits — it
-catches the obvious violation, not a clever one.
+not a compiler guarantee. Three of them now exist, separate files on purpose
+and none an edit to another:
 
-Write it before there is anything to fix. A contract test added after the
+| Test | Fails the build when |
+| --- | --- |
+| `rules/tests/extraction_contract_test.gd` | a `.gd`, `.json` or `.tres` file under `rules/` names `res://scripts/`, `res://scenes/` or `res://resources/` |
+| `rules/tests/ambient_rng_contract_test.gd` | a `.gd` file under `rules/` calls global `randi`, `randf`, `randi_range`, `randf_range`, `randfn` or `randomize` |
+| `tests/gate_bypass_contract_test.gd` | a `.gd` or `.tscn` under `scripts/` or `scenes/` names `res://rules/`, or calls `.resolve(` itself |
+
+Each is quote-aware, so a `#` inside a string literal does not hide the rest of
+the line, and each has a scanner self-test proving it can actually fail — a
+contract test that cannot fail is worse than none.
+
+> **Revised 2026-09-07.** This section previously said the contract test scans
+> for "forbidden `class_name` identifiers, and the `Node` inheritance ruled out
+> above." It does not, and never did — it matches paths. Both constraints are
+> real (§1, and `rules/README.md`), but a `rules/` file that names a game-side
+> type by global `class_name`, or extends `Node`, passes every scanner above.
+> They hold by review, not by the build. Said plainly here because a guarantee
+> a contributor believes in but does not have is worse than a known gap.
+
+Know the limits generally: these catch the obvious violation, not a clever one.
+
+Write them before there is anything to fix. A contract test added after the
 violations exist becomes a to-do list nobody works through.
 
 ---
@@ -129,9 +146,10 @@ model (§3) already implies.
 
 ## 4. Hex coordinates
 
-Use **cube coordinates** (`Vector3i`, with `x + y + z == 0`) or axial
-(`Vector2i`) internally. Red Blob Games' hex grid reference is the canonical
-source for these algorithms; do not re-derive them.
+Use **cube coordinates** — `Vector3i` with `x + y + z == 0`. Axial (`Vector2i`)
+would have served too; cube is what `rules/board/hex_coord.gd` uses and the
+choice is settled, so do not reopen it. Red Blob Games' hex grid reference is
+the canonical source for these algorithms; do not re-derive them.
 
 Godot's `TileMapLayer` supports hex tiles but addresses them in **offset**
 coordinates. Convert at the view boundary and never let an offset coordinate
@@ -213,9 +231,23 @@ defensible candidate, and even that can simply be owned by the match scene.
 
 ## 7. Testing
 
-Use **GdUnit4** or **GUT** — either is fine; pick one and do not revisit it. Run
-headless (`godot --headless`) so the suite works in CI and in an agent session
-with no window.
+> **Revised 2026-09-07.** This previously read "Use **GdUnit4** or **GUT** —
+> either is fine; pick one and do not revisit it." Neither was adopted. By the
+> time Slice 0 shipped, the project had settled on the plain-GDScript pattern
+> below, and Issue #30 was explicitly telling its implementer not to adopt one —
+> so the guide was instructing contributors to do the thing the work refused.
+> `AGENTS.md` still permits a test framework as its single sanctioned
+> dependency exception; nothing has yet needed one.
+
+Tests are plain GDScript with no framework. A suite is a class with a
+`static func run() -> bool` that collects failures into an `Array[String]`,
+prints them, and returns whether it passed. `tests/test_bootstrap.gd` is an
+autoload that runs every suite in its `_suites` array headlessly and makes the
+result the process exit code; registering a suite is one entry in that array.
+
+Run it with `.github/scripts/validate-godot.sh` — two passes, `--import` then
+`--headless --quit` — which is exactly what CI runs. Headless matters: the
+suite has to work in CI and in an agent session with no window.
 
 The tests that matter most are the ones the extraction plan §5.1 describes: a
 known board state, a known seed, a known action, asserted against what the
