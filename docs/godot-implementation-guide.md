@@ -86,6 +86,12 @@ violations exist becomes a to-do list nobody works through.
 > the class that shipped, it was unfollowable. Issue #30 had to correct it inline
 > for its implementer and deferred fixing it here; this is that fix. The sample
 > is now `rules/fighters/weapon_template.gd` as built.
+>
+> **Revised 2026-09-08.** The spec's 2026-09-08 revision removes the weapon
+> entity and makes the fighter's `CombatProfile` the holder of combat stats
+> (docs/hex-skirmish-game-spec.md §3, §7). This example will be updated to
+> reflect that change when the code is reconciled with the spec; see extraction
+> plan §5 and parent epic #83.
 
 Fighters, weapons, and cards should be custom `Resource` subclasses saved as
 `.tres` files:
