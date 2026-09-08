@@ -638,12 +638,47 @@ for path, line_no, name, snippet in offenders:
         file=sys.stderr,
     )
 
-if not offenders:
-    left = len(still)
-    print(f"  ok   — no new working-tree scratch; {left} name(s) still"
-          f" awaiting the #98 conversion")
+# Half-converted is worse than unconverted: the write moves, the read does
+# not, and the step fails at runtime on a file that is simply not there.
+# Within one file a name is either always under $RUNNER_TEMP or never.
+mixed = []
 
-sys.exit(1 if offenders else 0)
+for path in wf.files():
+    text = pathlib.Path(path).read_text(errors="replace")
+    body = "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("#")
+    )
+
+    for name in sorted(set(re.findall(
+        r"([A-Za-z0-9][A-Za-z0-9._-]*\.(?:md|txt|json|jsonl))", body
+    ))):
+        if name.endswith((".yml", ".yaml")) or name in {"action.yml"}:
+            continue
+
+        prefixed = len(re.findall(
+            r"(?:\$RUNNER_TEMP\b[\"']?/|runner\.temp \}\}/|SCRATCH / \")"
+            + re.escape(name),
+            body,
+        ))
+        total = len(re.findall(re.escape(name), body))
+
+        if prefixed and prefixed != total:
+            mixed.append((path, name, prefixed, total))
+
+for path, name, prefixed, total in mixed:
+    print(
+        f"  FAIL — {path} uses {name} both under $RUNNER_TEMP and bare"
+        f" ({prefixed} of {total} occurrences prefixed). A moved write with"
+        f" an unmoved read fails at runtime on a missing file.",
+        file=sys.stderr,
+    )
+
+if not offenders and not mixed:
+    left = len(still)
+    print(f"  ok   — no new working-tree scratch, no half-converted name;"
+          f" {left} still awaiting the #98 conversion")
+
+sys.exit(1 if (offenders or mixed) else 0)
 PY
 }
 
