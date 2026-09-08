@@ -225,6 +225,48 @@ jobs:
               r"(?:\s+(?:as|in|at|by|under|via))?\s*#\d+\b"
           )
 
+          # The keyword rule above cannot see the shape a planning pull
+          # request actually uses to report what it filed, because that
+          # shape has no keyword -- it leads with the reference:
+          #
+          #     - **#101 -- [epic] Spec steward: a docs-scoped agent role.**
+          #
+          # Triage read four such announcements as un-filed findings and
+          # filed them a second time (#104, #105, #91, #112, all closed as
+          # duplicates on 2026-09-08). Two of them were epics, so the
+          # backlog briefly held four "[epic] ... steward" Issues where the
+          # project has two, and a planner reading the deferred-finding list
+          # had no way to tell an announcement from the thing announced.
+          #
+          # Position is what makes this safe to add without loosening the
+          # keyword rule anywhere else. A reference at the HEAD of a bullet,
+          # followed by a separator, is that bullet's subject; the same
+          # number inside its prose is not. The separator is what keeps the
+          # two cases the comment above worries about out: "#100 base HP"
+          # and "#004488" both lead a bullet, and neither is followed by a
+          # dash or a colon.
+          #
+          # `\**` because the real-world shape is bolded -- `**#111 -- ...`
+          # is what #116 produced, and an anchor that only accepted a bare
+          # `#` would have missed the very case this was written for.
+          LEADING_REFERENCE = re.compile(r"^\**#\d+\b\s*[—–\-:]")
+
+          # A reference inside an inline code span is a quotation of a
+          # reference, not one. `findings()` already drops fenced blocks for
+          # this reason; spans were the gap, and it is not hypothetical.
+          #
+          # The bullet announcing #115 escaped re-filing only because it
+          # quoted this module's own examples -- "(`filed as #123`, `see
+          # #123`)" -- and FILED_REFERENCE matched the sample text. Right
+          # outcome, wrong reason, and the same accident works the other way
+          # for any finding that quotes a suppressing phrase while
+          # describing something nobody has filed.
+          #
+          # Applied only to the copy the guards are tested against. The
+          # finding's own text keeps its backticks, because that text
+          # becomes the Issue body a human reads.
+          INLINE_CODE = re.compile(r"`+[^`]*`+")
+
           # `- item`, `* item`, `1. item`, `2) item`. Numbered lists are read
           # because a reviewer asked for "a bullet list" sometimes answers
           # with a numbered one, and recognising only dashes turned that into
@@ -286,7 +328,16 @@ jobs:
               for parts in raw:
                   item = " ".join(parts).strip()
 
-                  if not item or is_empty(item) or FILED_REFERENCE.search(item):
+                  # Guards read the bullet with inline code spans blanked;
+                  # `item` itself is untouched and is what gets filed.
+                  probe = INLINE_CODE.sub(" ", item)
+
+                  if (
+                      not item
+                      or is_empty(item)
+                      or LEADING_REFERENCE.match(probe)
+                      or FILED_REFERENCE.search(probe)
+                  ):
                       continue
 
                   found.append(item)
