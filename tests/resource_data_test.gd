@@ -154,11 +154,19 @@ static func _test_field_values_match_authored_content() -> Array[String]:
 	violations.append_array(_expect(warrior.move == 4, "warrior.tres move must be 4"))
 	violations.append_array(_expect(warrior.save == 2, "warrior.tres save must be 2"))
 	violations.append_array(_expect(warrior.health == 3, "warrior.tres health must be 3"))
-	violations.append_array(_expect(warrior.point_value == 5, "warrior.tres point_value must be 5"))
+	violations.append_array(_expect(warrior.range_hexes == 1, "warrior.tres range_hexes must be 1"))
+	violations.append_array(_expect(warrior.attack == 3, "warrior.tres attack must be 3"))
+	violations.append_array(_expect(warrior.damage == 2, "warrior.tres damage must be 2"))
 	violations.append_array(
 		_expect(
 			warrior.tags == PackedStringArray(["infantry"]),
 			'warrior.tres tags must be ["infantry"]'
+		)
+	)
+	violations.append_array(
+		_expect(
+			warrior.ability_tags == PackedStringArray(["cleave"]),
+			'warrior.tres ability_tags must be ["cleave"]'
 		)
 	)
 	violations.append_array(
@@ -175,10 +183,18 @@ static func _test_field_values_match_authored_content() -> Array[String]:
 	violations.append_array(_expect(archer.move == 5, "archer.tres move must be 5"))
 	violations.append_array(_expect(archer.save == 1, "archer.tres save must be 1"))
 	violations.append_array(_expect(archer.health == 2, "archer.tres health must be 2"))
-	violations.append_array(_expect(archer.point_value == 4, "archer.tres point_value must be 4"))
+	violations.append_array(_expect(archer.range_hexes == 4, "archer.tres range_hexes must be 4"))
+	violations.append_array(_expect(archer.attack == 2, "archer.tres attack must be 2"))
+	violations.append_array(_expect(archer.damage == 1, "archer.tres damage must be 1"))
 	violations.append_array(
 		_expect(
 			archer.tags == PackedStringArray(["missile"]), 'archer.tres tags must be ["missile"]'
+		)
+	)
+	violations.append_array(
+		_expect(
+			archer.ability_tags == PackedStringArray(),
+			'archer.tres ability_tags must be []'
 		)
 	)
 	violations.append_array(
@@ -354,8 +370,11 @@ static func _test_parent_feature_scenario_end_to_end() -> Array[String]:
 	var original_move := template.move
 	var original_save := template.save
 	var original_health := template.health
-	var original_point_value := template.point_value
+	var original_range_hexes := template.range_hexes
+	var original_attack := template.attack
+	var original_damage := template.damage
 	var original_tags := template.tags.duplicate()
+	var original_ability_tags := template.ability_tags.duplicate()
 	var original_weapon_count := template.weapons.size()
 	var original_weapon_dice_count := (
 		template.weapons[0].dice_count if original_weapon_count > 0 else -1
@@ -426,14 +445,32 @@ static func _test_parent_feature_scenario_end_to_end() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			reloaded.point_value == original_point_value,
-			"a fresh load() of warrior.tres must still report the original point_value"
+			reloaded.range_hexes == original_range_hexes,
+			"a fresh load() of warrior.tres must still report the original range_hexes"
+		)
+	)
+	violations.append_array(
+		_expect(
+			reloaded.attack == original_attack,
+			"a fresh load() of warrior.tres must still report the original attack"
+		)
+	)
+	violations.append_array(
+		_expect(
+			reloaded.damage == original_damage,
+			"a fresh load() of warrior.tres must still report the original damage"
 		)
 	)
 	violations.append_array(
 		_expect(
 			reloaded.tags == original_tags,
 			"a fresh load() of warrior.tres must still report the original tags"
+		)
+	)
+	violations.append_array(
+		_expect(
+			reloaded.ability_tags == original_ability_tags,
+			"a fresh load() of warrior.tres must still report the original ability_tags"
 		)
 	)
 	violations.append_array(
@@ -487,11 +524,26 @@ static func _test_fighter_from_warrior_reports_template_stats() -> Array[String]
 	)
 	violations.append_array(
 		_expect(
-			fighter.point_value() == template.point_value,
-			(
-				"a Fighter built from warrior.tres must report point_value() equal to the "
-				+ "template's point_value"
-			)
+			fighter.range_hexes() == template.range_hexes,
+			"a Fighter built from warrior.tres must report range_hexes() equal to the template's range_hexes"
+		)
+	)
+	violations.append_array(
+		_expect(
+			fighter.attack() == template.attack,
+			"a Fighter built from warrior.tres must report attack() equal to the template's attack"
+		)
+	)
+	violations.append_array(
+		_expect(
+			fighter.damage() == template.damage,
+			"a Fighter built from warrior.tres must report damage() equal to the template's damage"
+		)
+	)
+	violations.append_array(
+		_expect(
+			fighter.ability_tags() == template.ability_tags,
+			"a Fighter built from warrior.tres must report ability_tags() equal to the template's ability_tags"
 		)
 	)
 

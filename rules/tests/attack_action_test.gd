@@ -111,7 +111,6 @@ static func _fighter_template(save: int, health: int) -> FighterTemplate:
 	template.move = 1
 	template.save = save
 	template.health = health
-	template.point_value = 1
 	return template
 
 

@@ -18,12 +18,20 @@ extends Resource
 @export var move: int = 0
 @export var save: int = 0
 @export var health: int = 0
-@export var point_value: int = 0
+@export var range_hexes: int = 0
+@export var attack: int = 0
+@export var damage: int = 0
 @export var weapons: Array[WeaponTemplate] = []
 @export var tags: PackedStringArray = PackedStringArray()
+@export var ability_tags: PackedStringArray = PackedStringArray()
 
 
 ## True when `tag` is present in `tags`, by exact string match -- same rule as
 ## `WeaponTemplate.has_ability_tag()`.
 func has_tag(tag: String) -> bool:
 	return tag in tags
+
+
+## True when `ability_tag` is present in `ability_tags`, by exact string match.
+func has_ability_tag(ability_tag: String) -> bool:
+	return ability_tag in ability_tags

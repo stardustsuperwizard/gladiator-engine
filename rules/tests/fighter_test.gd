@@ -27,8 +27,11 @@ const TEMPLATE_ID := "test-fighter"
 const DISPLAY_NAME := "Test Fighter"
 const MOVE := 3
 const SAVE := 4
-const POINT_VALUE := 6
+const RANGE_HEXES := 2
+const ATTACK := 3
+const DAMAGE := 1
 const TAG := "elite"
+const ABILITY_TAG := "special"
 const MELEE_WEAPON_ID := "test-blade"
 const MELEE_DAMAGE := 2
 const RANGED_WEAPON_ID := "test-bow"
@@ -90,9 +93,12 @@ static func make_template(health: int) -> FighterTemplate:
 	template.move = MOVE
 	template.save = SAVE
 	template.health = health
-	template.point_value = POINT_VALUE
+	template.range_hexes = RANGE_HEXES
+	template.attack = ATTACK
+	template.damage = DAMAGE
 	template.weapons = [blade, bow] as Array[WeaponTemplate]
 	template.tags = PackedStringArray([TAG])
+	template.ability_tags = PackedStringArray([ABILITY_TAG])
 	return template
 
 
@@ -118,10 +124,19 @@ static func expect_template_unchanged(
 		_expect(template.health == expected_health, "%s must leave template.health" % context)
 	)
 	violations.append_array(
-		_expect(template.point_value == POINT_VALUE, "%s must leave template.point_value" % context)
+		_expect(template.range_hexes == RANGE_HEXES, "%s must leave template.range_hexes" % context)
+	)
+	violations.append_array(
+		_expect(template.attack == ATTACK, "%s must leave template.attack" % context)
+	)
+	violations.append_array(
+		_expect(template.damage == DAMAGE, "%s must leave template.damage" % context)
 	)
 	violations.append_array(
 		_expect(template.tags == PackedStringArray([TAG]), "%s must leave template.tags" % context)
+	)
+	violations.append_array(
+		_expect(template.ability_tags == PackedStringArray([ABILITY_TAG]), "%s must leave template.ability_tags" % context)
 	)
 	violations.append_array(
 		_expect(template.weapons.size() == 2, "%s must leave template.weapons' size" % context)
@@ -173,7 +188,16 @@ static func _test_accessors_report_construction_and_template() -> Array[String]:
 		_expect(fighter.health() == 3, "health() must read through to the template")
 	)
 	violations.append_array(
-		_expect(fighter.point_value() == POINT_VALUE, "point_value() must read through")
+		_expect(fighter.range_hexes() == RANGE_HEXES, "range_hexes() must read through")
+	)
+	violations.append_array(
+		_expect(fighter.attack() == ATTACK, "attack() must read through")
+	)
+	violations.append_array(
+		_expect(fighter.damage() == DAMAGE, "damage() must read through")
+	)
+	violations.append_array(
+		_expect(fighter.ability_tags() == PackedStringArray([ABILITY_TAG]), "ability_tags() must read through")
 	)
 	violations.append_array(
 		_expect(fighter.weapons().size() == 2, "weapons() must report the template's weapons")
@@ -241,12 +265,22 @@ static func _test_two_fighters_share_one_template() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			a.point_value() == b.point_value(), "both fighters must still agree on point_value()"
+			a.weapons() == b.weapons(), "both fighters must still agree on the weapons they carry"
 		)
 	)
 	violations.append_array(
 		_expect(
-			a.weapons() == b.weapons(), "both fighters must still agree on the weapons they carry"
+			a.range_hexes() == b.range_hexes(), "both fighters must still agree on range_hexes()"
+		)
+	)
+	violations.append_array(
+		_expect(
+			a.attack() == b.attack(), "both fighters must still agree on attack()"
+		)
+	)
+	violations.append_array(
+		_expect(
+			a.damage() == b.damage(), "both fighters must still agree on damage()"
 		)
 	)
 
