@@ -136,7 +136,10 @@ static func expect_template_unchanged(
 		_expect(template.tags == PackedStringArray([TAG]), "%s must leave template.tags" % context)
 	)
 	violations.append_array(
-		_expect(template.ability_tags == PackedStringArray([ABILITY_TAG]), "%s must leave template.ability_tags" % context)
+		_expect(
+			template.ability_tags == PackedStringArray([ABILITY_TAG]),
+			"%s must leave template.ability_tags" % context
+		)
 	)
 	violations.append_array(
 		_expect(template.weapons.size() == 2, "%s must leave template.weapons' size" % context)
@@ -190,14 +193,13 @@ static func _test_accessors_report_construction_and_template() -> Array[String]:
 	violations.append_array(
 		_expect(fighter.range_hexes() == RANGE_HEXES, "range_hexes() must read through")
 	)
+	violations.append_array(_expect(fighter.attack() == ATTACK, "attack() must read through"))
+	violations.append_array(_expect(fighter.damage() == DAMAGE, "damage() must read through"))
 	violations.append_array(
-		_expect(fighter.attack() == ATTACK, "attack() must read through")
-	)
-	violations.append_array(
-		_expect(fighter.damage() == DAMAGE, "damage() must read through")
-	)
-	violations.append_array(
-		_expect(fighter.ability_tags() == PackedStringArray([ABILITY_TAG]), "ability_tags() must read through")
+		_expect(
+			fighter.ability_tags() == PackedStringArray([ABILITY_TAG]),
+			"ability_tags() must read through"
+		)
 	)
 	violations.append_array(
 		_expect(fighter.weapons().size() == 2, "weapons() must report the template's weapons")
@@ -274,14 +276,10 @@ static func _test_two_fighters_share_one_template() -> Array[String]:
 		)
 	)
 	violations.append_array(
-		_expect(
-			a.attack() == b.attack(), "both fighters must still agree on attack()"
-		)
+		_expect(a.attack() == b.attack(), "both fighters must still agree on attack()")
 	)
 	violations.append_array(
-		_expect(
-			a.damage() == b.damage(), "both fighters must still agree on damage()"
-		)
+		_expect(a.damage() == b.damage(), "both fighters must still agree on damage()")
 	)
 
 	return violations

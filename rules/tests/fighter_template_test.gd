@@ -69,7 +69,9 @@ static func _test_fighter_template_defaults() -> Array[String]:
 		_expect(fighter.weapons.is_empty(), "weapons must default to an empty array")
 	)
 	violations.append_array(_expect(fighter.tags.is_empty(), "tags must default to an empty array"))
-	violations.append_array(_expect(fighter.ability_tags.is_empty(), "ability_tags must default to an empty array"))
+	violations.append_array(
+		_expect(fighter.ability_tags.is_empty(), "ability_tags must default to an empty array")
+	)
 
 	return violations
 
@@ -281,7 +283,10 @@ static func _test_tres_round_trip_via_user_dir() -> Array[String]:
 		_expect(loaded.health == fighter.health, "health must survive the .tres round trip")
 	)
 	violations.append_array(
-		_expect(loaded.range_hexes == fighter.range_hexes, "range_hexes must survive the .tres round trip")
+		_expect(
+			loaded.range_hexes == fighter.range_hexes,
+			"range_hexes must survive the .tres round trip"
+		)
 	)
 	violations.append_array(
 		_expect(loaded.attack == fighter.attack, "attack must survive the .tres round trip")
@@ -293,7 +298,10 @@ static func _test_tres_round_trip_via_user_dir() -> Array[String]:
 		_expect(loaded.tags == fighter.tags, "tags must survive the .tres round trip")
 	)
 	violations.append_array(
-		_expect(loaded.ability_tags == fighter.ability_tags, "ability_tags must survive the .tres round trip")
+		_expect(
+			loaded.ability_tags == fighter.ability_tags,
+			"ability_tags must survive the .tres round trip"
+		)
 	)
 	violations.append_array(
 		_expect(
