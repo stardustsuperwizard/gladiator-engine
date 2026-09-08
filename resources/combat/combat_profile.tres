@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="CombatProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://rules/combat/combat_profile.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+profile_id = "standard"
+die_sides = 6
+attack_target = 5
+save_target = 5
+engagement_range = 1
+engagement_modifier = 1
+attack_flank_modifier = 1
+attack_surround_modifier = 2
+save_flank_modifier = 2
+save_surround_modifier = 3
+guard_modifier = 1
+min_target = 2
+max_target = 6
