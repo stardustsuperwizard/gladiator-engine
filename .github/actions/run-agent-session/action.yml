@@ -113,6 +113,40 @@ inputs:
     required: false
     default: "Running"
 
+# Every file output below is an ABSOLUTE path under $RUNNER_TEMP, and every
+# scratch file this action writes goes there -- the raw transcripts and the
+# stderr capture as well as the four declared outputs.
+#
+# They used to be bare filenames, resolved against the caller's working
+# directory, which is the checkout. That put agent telemetry in the tree of
+# every workflow that calls this action, and #84's implementation commit
+# carried eleven such files. It also broke that task's retry: the files had
+# become tracked on the branch, so the next run's fresh copies were untracked
+# files in the way of a `git checkout`, which refuses to clobber them.
+#
+# The callers' defences against that -- scoped staging in
+# `agent-02-implement.yml`, and the root-file filter on its dirtiness check --
+# were written when this action's paths could not move, because they are a
+# contract read by three workflows. This is that contract change.
+#
+# Those defences stay for now regardless: they cover every OTHER workflow's
+# scratch too, and that has not moved yet (#98). They come out when it does,
+# which is also when the dirtiness check stops having to discard a
+# legitimately new file at the repository root.
+#
+# READ THESE THROUGH THE OUTPUTS. A caller that hardcodes the bare filename
+# is reading a path this action no longer writes, and the failure is silent:
+# `[ -f agent-session-failure.json ]` is simply false, and a missing failure
+# summary reads as a session that did not fail.
+#
+# The one sanctioned exception is a failure reporter running on `failure()`,
+# which includes a run that failed before this action was reached. A skipped
+# step's outputs are empty strings, and in Python `Path("")` is `.` -- a
+# directory that exists -- so reading through the output would crash the step
+# whose whole job is to explain the failure. Those four reporters join
+# $RUNNER_TEMP and the filename themselves, which is why the failure file's
+# name is part of this contract rather than an implementation detail: it is
+# `agent-session-failure.json`, and it does not move without updating them.
 outputs:
   resolved-model:
     description: The model id that actually produced output
@@ -126,7 +160,7 @@ outputs:
     description: >-
       Path to a file holding the joined text of the session's assistant
       messages. Written even on a failed run if any text survived.
-    value: agent-assistant-text.txt
+    value: ${{ runner.temp }}/agent-assistant-text.txt
   final-text-file:
     description: >-
       Path to a file holding only the session's *last* assistant message --
@@ -142,19 +176,19 @@ outputs:
       so for that vendor this file and the joined one are identical. The two
       outputs stay distinct anyway: which one a caller wants is a property of
       the caller, not of whoever happens to be answering today.
-    value: agent-final-text.txt
+    value: ${{ runner.temp }}/agent-final-text.txt
   outcome-file:
     description: >-
       Path to the classifier verdict for the attempt that produced output (or
       the last attempt tried, on total failure). Both vendors write the same
       schema -- see the docstring in classify-claude-outcome.py for why that
       matters.
-    value: agent-outcome.json
+    value: ${{ runner.temp }}/agent-outcome.json
   failure-file:
     description: >-
       Path to a failure summary, written only when no model produced usable
       output. Callers should check for its existence before reading it.
-    value: agent-session-failure.json
+    value: ${{ runner.temp }}/agent-session-failure.json
 
 runs:
   using: composite
@@ -194,10 +228,10 @@ runs:
 
         copilot --version
         copilot --help 2>&1 | sed -n '/--model/,/^[[:space:]]*$/p' \
-          > model-help.txt
+          > "$RUNNER_TEMP"/model-help.txt
 
         echo "Candidate models for this run: $MODELS"
-        cat model-help.txt
+        cat "$RUNNER_TEMP"/model-help.txt
 
         {
           echo "<details><summary>Copilot CLI model ids</summary>"
@@ -205,7 +239,7 @@ runs:
           echo "Candidates tried in order: \`$MODELS\`"
           echo ""
           echo '```'
-          cat model-help.txt
+          cat "$RUNNER_TEMP"/model-help.txt
           echo '```'
           echo "</details>"
         } >> "$GITHUB_STEP_SUMMARY"
@@ -296,18 +330,18 @@ runs:
             --allow-all-tools \
             --excluded-tools "$EXCLUDED_TOOLS" \
             < "$PROMPT_FILE" \
-            > copilot-output.jsonl 2> agent-error.txt || status=$?
+            > "$RUNNER_TEMP"/copilot-output.jsonl 2> "$RUNNER_TEMP"/agent-error.txt || status=$?
 
           echo "copilot exited $status"
-          echo "output: $(wc -c < copilot-output.jsonl) bytes of JSONL"
+          echo "output: $(wc -c < "$RUNNER_TEMP"/copilot-output.jsonl) bytes of JSONL"
 
           python3 .github/scripts/classify-copilot-outcome.py \
-            --jsonl copilot-output.jsonl \
-            --stderr agent-error.txt \
+            --jsonl "$RUNNER_TEMP"/copilot-output.jsonl \
+            --stderr "$RUNNER_TEMP"/agent-error.txt \
             --exit-status "$status" \
             --model "$model" \
             --credit-limit "$MAX_AI_CREDITS" \
-            --out agent-outcome.json
+            --out "$RUNNER_TEMP"/agent-outcome.json
         }
 
         invoke_claude() {
@@ -342,17 +376,17 @@ runs:
             --max-turns "$MAX_TURNS" \
             --permission-mode dontAsk \
             --allowedTools "$ALLOWED_TOOLS" \
-            > claude-output.json 2> agent-error.txt || status=$?
+            > "$RUNNER_TEMP"/claude-output.json 2> "$RUNNER_TEMP"/agent-error.txt || status=$?
 
           echo "claude exited $status"
-          echo "output: $(wc -c < claude-output.json) bytes of JSON"
+          echo "output: $(wc -c < "$RUNNER_TEMP"/claude-output.json) bytes of JSON"
 
           python3 .github/scripts/classify-claude-outcome.py \
-            --json claude-output.json \
-            --stderr agent-error.txt \
+            --json "$RUNNER_TEMP"/claude-output.json \
+            --stderr "$RUNNER_TEMP"/agent-error.txt \
             --exit-status "$status" \
             --model "$model" \
-            --out agent-outcome.json
+            --out "$RUNNER_TEMP"/agent-outcome.json
         }
 
         # Checked before the loop, not inside it. Without a key every
@@ -362,7 +396,7 @@ runs:
           jq -n '{reason:"harness_error",
                   headline:"No ANTHROPIC_API_KEY reached this session",
                   guidance:"A composite action cannot read `secrets` itself. The caller must pass secrets.ANTHROPIC_API_KEY to this action'"'"'s `api-key` input. `--bare` never reads OAuth credentials, so CLAUDE_CODE_OAUTH_TOKEN does not work here whatever it is set to."}' \
-            > agent-session-failure.json
+            > "$RUNNER_TEMP"/agent-session-failure.json
 
           echo "::error::vendor is 'claude' but no ANTHROPIC_API_KEY reached" \
                "this step. Pass secrets.ANTHROPIC_API_KEY to the api-key input."
@@ -385,9 +419,9 @@ runs:
             claude)  invoke_claude  "$model" ;;
           esac
 
-          reason="$(jq -r '.reason' agent-outcome.json)"
-          headline="$(jq -r '.headline' agent-outcome.json)"
-          guidance="$(jq -r '.guidance' agent-outcome.json)"
+          reason="$(jq -r '.reason' "$RUNNER_TEMP"/agent-outcome.json)"
+          headline="$(jq -r '.headline' "$RUNNER_TEMP"/agent-outcome.json)"
+          guidance="$(jq -r '.guidance' "$RUNNER_TEMP"/agent-outcome.json)"
 
           echo "::endgroup::"
 
@@ -398,7 +432,7 @@ runs:
             continue
           fi
 
-          chars="$(jq -r '.assistant_text_chars' agent-outcome.json)"
+          chars="$(jq -r '.assistant_text_chars' "$RUNNER_TEMP"/agent-outcome.json)"
 
           # Anything that produced text goes forward, even a session that
           # ended badly -- a run can trip its credit or turn cap and still
@@ -427,7 +461,7 @@ runs:
             echo "$guidance"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          cp agent-outcome.json agent-session-failure.json
+          cp "$RUNNER_TEMP"/agent-outcome.json "$RUNNER_TEMP"/agent-session-failure.json
 
           exit 1
         done
@@ -444,7 +478,7 @@ runs:
             '{reason:"model_unavailable",
               headline:"No candidate model was available",
               guidance:$guidance}' \
-            > agent-session-failure.json
+            > "$RUNNER_TEMP"/agent-session-failure.json
 
           echo "::error::None of these models were available to the calling" \
                "identity: $MODELS. (last reason: $last_reason)"
@@ -476,7 +510,11 @@ runs:
         import os
         import pathlib
 
-        outcome_path = pathlib.Path("agent-outcome.json")
+        # This step\'s scratch lives in $RUNNER_TEMP, not the working
+        # tree -- see the note on `outputs` above.
+        SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+        outcome_path = SCRATCH / "agent-outcome.json"
 
         if not outcome_path.exists():
             raise SystemExit(0)
@@ -532,11 +570,15 @@ runs:
         import os
         import pathlib
 
+        # This step\'s scratch lives in $RUNNER_TEMP, not the working
+        # tree -- see the note on `outputs` above.
+        SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
         vendor = os.environ["VENDOR"]
         parts = []
 
         if vendor == "copilot":
-            jsonl = pathlib.Path("copilot-output.jsonl")
+            jsonl = SCRATCH / "copilot-output.jsonl"
 
             if jsonl.exists():
                 for raw_line in jsonl.read_text(errors="replace").splitlines():
@@ -567,7 +609,7 @@ runs:
             # and on an in-run failure Claude Code puts the failure message
             # there too, which is why it is still worth writing out on a
             # failed run rather than only on a clean one.
-            envelope = pathlib.Path("claude-output.json")
+            envelope = SCRATCH / "claude-output.json"
 
             if envelope.exists():
                 raw = envelope.read_text(errors="replace").strip()
@@ -585,7 +627,7 @@ runs:
                             parts.append(result)
 
         text = "\n".join(parts).strip()
-        pathlib.Path("agent-assistant-text.txt").write_text(text + "\n")
+        (SCRATCH / "agent-assistant-text.txt").write_text(text + "\n")
 
         # The last assistant message is the Completion Report for the roles
         # that end with one. Everything before it is the session thinking out
@@ -602,4 +644,4 @@ runs:
                 final = part.strip()
                 break
 
-        pathlib.Path("agent-final-text.txt").write_text((final or text) + "\n")
+        (SCRATCH / "agent-final-text.txt").write_text((final or text) + "\n")

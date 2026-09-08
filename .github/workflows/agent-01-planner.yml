@@ -805,19 +805,33 @@ jobs:
       - name: Record Session Failure
         if: failure() && steps.duplicate_check.outputs.already_planned != 'true'
         shell: bash
+        env:
+          # Read through the action's output, never as a bare filename: the
+          # file lives in $RUNNER_TEMP and `[ -f agent-session-failure.json ]`
+          # would simply be false, which is indistinguishable from a session
+          # that did not fail.
+          SESSION_FAILURE: ${{ steps.session.outputs.failure-file }}
         run: |
           set -euo pipefail
 
-          if [ -f agent-session-failure.json ] && [ ! -f planner-failure.json ]; then
-            cp agent-session-failure.json planner-failure.json
-            echo "Bridged agent-session-failure.json to planner-failure.json."
+          if [ -f "$SESSION_FAILURE" ] && [ ! -f planner-failure.json ]; then
+            cp "$SESSION_FAILURE" planner-failure.json
+            echo "Bridged $SESSION_FAILURE to planner-failure.json."
           fi
 
       - name: Extract and Validate Planner JSON
         if: steps.duplicate_check.outputs.already_planned != 'true'
         shell: python
+        env:
+          # Both are absolute paths under $RUNNER_TEMP. Threaded in from the
+          # action's declared outputs rather than re-typed as filenames --
+          # a hardcoded name here reads a file nothing writes, and reports
+          # the session as having produced no text.
+          ANSWER_FILE: ${{ steps.session.outputs.assistant-text-file }}
+          OUTCOME_FILE: ${{ steps.session.outputs.outcome-file }}
         run: |
           import json
+          import os
           import pathlib
           import sys
 
@@ -831,9 +845,9 @@ jobs:
           # lifted `.result`, for claude) into this file, so this step no
           # longer walks an event stream and no longer knows what a Copilot
           # JSONL event looks like.
-          answer = pathlib.Path("agent-assistant-text.txt")
+          answer = pathlib.Path(os.environ["ANSWER_FILE"])
 
-          outcome_path = pathlib.Path("agent-outcome.json")
+          outcome_path = pathlib.Path(os.environ["OUTCOME_FILE"])
 
           outcome = (
               json.loads(outcome_path.read_text())
@@ -920,9 +934,9 @@ jobs:
               fail(
                   "no_output",
                   "The session produced no output file",
-                  "run-agent-session did not write agent-assistant-text.txt at"
-                  " all. That step writes it even on a failed run, so this is"
-                  " a harness fault rather than a model or budget failure.",
+                  f"run-agent-session did not write {answer} at all. That"
+                  " step writes it even on a failed run, so this is a harness"
+                  " fault rather than a model or budget failure.",
               )
 
           text = answer.read_text(errors="replace").strip()
