@@ -64,12 +64,21 @@ them. Run `.github/scripts/bootstrap-labels.sh` once, and set the
 
 ## Current state
 
-**2026-09-07:** Slice 0 (extraction plan §5.1) is built and merged — board,
+**2026-09-08:** Slice 0 (extraction plan §5.1) is built and merged — board,
 fighters, deterministic state, dice-pool combat with flanking, and Attack and
-Pass resolving through the authority gate. The next work is the rest of §5.2,
-in the spec's §12 build order. Everything in §5.3 is explicitly deferred —
-check that list before building something that feels obviously missing,
-because it may be missing on purpose.
+Pass resolving through the authority gate.
+
+**The spec has since moved ahead of the code.** §3, §6 and §7 were revised on
+2026-09-08: the `Weapon` entity is gone, a fighter carries six combat stats,
+and symbol-matched dice became d6 against a target number. The tree still holds
+`WeaponTemplate`, `DiceProfile`'s faces and `DicePool`'s success sets.
+Reconciling code to spec is the next work and comes **before** the rest of
+§5.2 — Move, Charge and Guard all touch resolution, so building them first
+means building them twice.
+
+After that, the rest of §5.2 in the spec's §12 build order. Everything in §5.3
+is explicitly deferred — check that list before building something that feels
+obviously missing, because it may be missing on purpose.
 
 `AGENTS.md` carries the fuller version of this, as it does everything else; if
 the two ever disagree, that one is right.

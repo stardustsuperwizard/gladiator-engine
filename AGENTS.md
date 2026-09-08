@@ -7,7 +7,7 @@ Adapted from `mikeys_game_bones-rules-moba`'s `AGENTS.md` (extraction plan
 
 `gladiator-engine` is a Godot 4 rules engine for **turn-based hex-grid
 combat**. Two players, small rosters of fighters, a fixed number of rounds,
-and combat resolved by a dice pool with symbol matching.
+and combat resolved by a dice pool rolled against a target number.
 
 Three documents, three jobs — keep them that way:
 
@@ -19,25 +19,59 @@ Three documents, three jobs — keep them that way:
 
 Do not put Godot specifics in the spec, and do not put mechanics in the guide.
 
-**Current state (2026-09-07): Slice 0 is done.** Extraction plan §5.1 is built
-and merged — the hex board with cube distance and symmetric line of sight; the
-`WeaponTemplate`/`FighterTemplate`/`Fighter` model over authored `.tres`;
-`DeterministicRng` and a serializable, digestible `GameState`; the dice pool
-with flanking and surrounding; and `AttackAction` and `PassAction` resolving
-through `Authority`/`ActionRunner`, with the hand-worked combat tests §5.1
-asks for and contract tests behind both architectural commitments.
+**Current state (2026-09-08): Slice 0 is built, and the spec has moved ahead of
+it.** Extraction plan §5.1 is merged — the hex board with cube distance and
+symmetric line of sight; the `FighterTemplate`/`Fighter` model over authored
+`.tres`; `DeterministicRng` and a serializable, digestible `GameState`; the
+dice pool with flanking and surrounding; and `AttackAction` and `PassAction`
+resolving through `Authority`/`ActionRunner`, with the hand-worked combat tests
+§5.1 asks for and contract tests behind both architectural commitments.
 
-The next thing to build is the rest of §5.2, in the spec's own build order
-(§12): the remaining core actions (Move, Charge, Guard, Focus) → status
-effects → the card system → scoring and the end phase → victory conditions.
-There is still no UI and no hotseat loop, so §5.4's "play a full 3-round match"
-is some way off. Do not build ahead of the order above, and check §5.3 before
-building something that feels obviously missing — it may be missing on purpose.
+**The code does not match spec §3, §6 and §7 as revised 2026-09-08.** Still in
+the tree and no longer in the rules: `WeaponTemplate` and
+`FighterTemplate.weapons`; `DiceProfile`'s symbol faces and `DicePool`'s
+success-set matching; the weapon `AttackAction` takes through `_init()`. Not
+yet in the tree and now required: the fighter's `range`, `attack` and `damage`
+stats, and the `CombatProfile` holding the target numbers, the flank and
+surround modifiers, the long-range threshold and the clamp.
 
-The mechanics are inherited from a settled tabletop game, so the rules are not
-up for redesign. The numbers are: expect dice counts, damage values, and point
-costs to be tuned, which is why they live in data files rather than in the
-resolver.
+Reconciling the two is the next work, and it comes **before** the rest of §5.2.
+Move, Charge and Guard all touch resolution — Charge resolves an attack, Guard
+modifies a save target — so building them against the old model means paying
+for them twice. The hand-worked combat tests are the bulk of that cost: their
+expectations are derived from symbol faces and have to be re-derived against
+target numbers.
+
+After that, the rest of §5.2 in the spec's own build order (§12): the remaining
+core actions (Move, Charge, Guard, Focus) → status effects → the card system →
+scoring and the end phase → victory conditions. There is still no UI and no
+hotseat loop, so §5.4's "play a full 3-round match" is some way off. Do not
+build ahead of the order above, and check §5.3 before building something that
+feels obviously missing — it may be missing on purpose.
+
+**The spec is the authority on mechanics, and an implementation session does
+not redesign them.** Most of the rules are inherited from a settled tabletop
+game — the board, the round and turn structure, the core actions, flanking and
+surrounding, scoring and victory. Where that inheritance holds, reasoning from
+the tabletop original is sound.
+
+**It does not hold everywhere, and the exceptions are deliberate.** Spec §7's
+combat resolution diverges on purpose: symbol-faced dice were replaced by d6
+against a target number, and the fighter/weapon split was collapsed into a
+single six-stat fighter with weapons demoted to presentation. Both are dated
+and argued in the spec itself (§3, §7). Do not "restore" either by appeal to
+the tabletop rules or to an older document — check the spec's revision notes
+before concluding a rule is wrong.
+
+Rules changes happen by **revising the spec first**, as an owner decision, with
+the dated revision note the spec's own convention requires. A session that
+believes a rule is wrong says so and stops; it does not correct it in the
+resolver, and a rule that lives only in code is a bug regardless of how right
+it is.
+
+The numbers are a different matter. Dice counts, damage values, target numbers,
+modifiers and point costs are all expected to be tuned, which is why they live
+in data files rather than in the resolver — see spec §12.
 
 ## The two architectural commitments
 
