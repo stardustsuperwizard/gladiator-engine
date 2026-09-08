@@ -278,31 +278,61 @@ jobs:
         run: |
           set -euo pipefail
 
+          # This step's scratch lives in $RUNNER_TEMP, not the working tree.
+          #
+          # It used to be written to the repository root, and that broke a
+          # resumed branch in two places at once. "Commit Leftover Changes"
+          # ran `git add -A`, which swept issue.json, issue-body.md,
+          # blockers.json and task-scope.json into the implementation
+          # commit -- so they became tracked files on agent-exec/<n>. The
+          # next run wrote them again as untracked files here, before
+          # "Create Working Branch" ran, and `git checkout` refuses to
+          # clobber an untracked file with a tracked one:
+          #
+          #   error: The following untracked working tree files would be
+          #   overwritten by checkout: blockers.json issue-body.md
+          #   issue.json task-scope.json
+          #
+          # That aborted #84's retry before the branch was checked out,
+          # having already reported the branch as resumable. Keeping this
+          # step's scratch out of the tree removes both halves: nothing to
+          # sweep into a commit, and nothing to collide on checkout.
+          #
+          # Only ISSUE_JSON is exported. The other three are read solely
+          # within this step; a later step that needs one should export it
+          # here rather than reconstruct the path.
+          ISSUE_JSON="$RUNNER_TEMP/issue.json"
+          ISSUE_BODY="$RUNNER_TEMP/issue-body.md"
+          BLOCKERS_JSON="$RUNNER_TEMP/blockers.json"
+          TASK_SCOPE_JSON="$RUNNER_TEMP/task-scope.json"
+
+          echo "ISSUE_JSON=$ISSUE_JSON" >> "$GITHUB_ENV"
+
           gh issue view "$ISSUE_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,url,state,labels \
-            > issue.json
+            > "$ISSUE_JSON"
 
-          echo "issue_url=$(jq -r '.url' issue.json)" >> "$GITHUB_OUTPUT"
-          echo "title=$(jq -r '.title' issue.json)" >> "$GITHUB_OUTPUT"
+          echo "issue_url=$(jq -r '.url' "$ISSUE_JSON")" >> "$GITHUB_OUTPUT"
+          echo "title=$(jq -r '.title' "$ISSUE_JSON")" >> "$GITHUB_OUTPUT"
 
           # Computed here, not down in "Prepare Diff and Draft Title", so it
           # exists before the branch-existence check below and doesn't
           # require a fresh implementer run to produce. Implementation Task
           # Issues are titled "[task] <description>"; the pull request tag
           # is "[<n>] <description>" instead.
-          TITLE_RAW=$(jq -r '.title' issue.json)
+          TITLE_RAW=$(jq -r '.title' "$ISSUE_JSON")
           TITLE_STRIPPED=$(echo "$TITLE_RAW" | sed -E 's/^\[task\]\s*//i')
           echo "PR_TITLE=[$ISSUE_NUMBER] $TITLE_STRIPPED" >> "$GITHUB_ENV"
 
-          if [ "$(jq -r '.state' issue.json)" != "OPEN" ]; then
+          if [ "$(jq -r '.state' "$ISSUE_JSON")" != "OPEN" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "reason=not_open" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if ! jq -e '[.labels[].name] | index("implementation")' issue.json \
-              > /dev/null; then
+          if ! jq -e '[.labels[].name] | index("implementation")' \
+              "$ISSUE_JSON" > /dev/null; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "reason=not_implementation_task" >> "$GITHUB_OUTPUT"
             exit 0
@@ -331,7 +361,7 @@ jobs:
           # upper, hence the `ascii_downcase`.
           if ! gh api \
                "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/dependencies/blocked_by?per_page=100" \
-               > blockers.json; then
+               > "$BLOCKERS_JSON"; then
             echo "::error::Could not read #$ISSUE_NUMBER's blockers." \
                  "Refusing to dispatch a session that may be blocked." \
                  "Re-add the same label once the API is reachable."
@@ -346,7 +376,7 @@ jobs:
                 | "#\(.number)"
               ]
               | join(", ")
-            ' blockers.json
+            ' "$BLOCKERS_JSON"
           )
 
           if [ -n "$BLOCKERS" ]; then
@@ -376,23 +406,23 @@ jobs:
           # as it did before this guard existed, because a false positive
           # blocks real work while a false negative costs one session and
           # says why.
-          jq -r '.body // ""' issue.json > issue-body.md
+          jq -r '.body // ""' "$ISSUE_JSON" > "$ISSUE_BODY"
 
           if ! python3 .github/scripts/task_scope.py \
-              --body-file issue-body.md > task-scope.json
+              --body-file "$ISSUE_BODY" > "$TASK_SCOPE_JSON"
           then
             echo "::warning::task_scope.py did not run; treating this Issue" \
               "as implementer-eligible."
             echo '{"implementer_eligible": true, "restricted_paths": []}' \
-              > task-scope.json
+              > "$TASK_SCOPE_JSON"
           fi
 
-          if [ "$(jq -r '.implementer_eligible' task-scope.json)" = "false" ]; then
+          if [ "$(jq -r '.implementer_eligible' "$TASK_SCOPE_JSON")" = "false" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "reason=workflow_scope" >> "$GITHUB_OUTPUT"
             echo "restricted_paths=$(
               jq -r '[.restricted_paths[] | "`\(.)`"] | join(", ")' \
-                task-scope.json
+                "$TASK_SCOPE_JSON"
             )" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -628,7 +658,7 @@ jobs:
               BEST="$CANDIDATE_RANK"
               TIER="$CANDIDATE"
             fi
-          done < <(jq -r '.labels[].name' issue.json)
+          done < <(jq -r '.labels[].name' "$ISSUE_JSON")
 
           FLOOR_RANK="$(rank "$IMPLEMENTER_TIER_FLOOR")"
 
@@ -700,11 +730,15 @@ jobs:
         shell: python
         run: |
           import json
+          import os
           import pathlib
 
           root = pathlib.Path(".")
 
-          issue = json.loads(pathlib.Path("issue.json").read_text())
+          # Written to $RUNNER_TEMP by "Resolve Implementation Task Issue",
+          # which exports the path -- see the note there for why it is not
+          # in the working tree.
+          issue = json.loads(pathlib.Path(os.environ["ISSUE_JSON"]).read_text())
 
           sections = []
 
@@ -803,10 +837,50 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -n "$(git status --porcelain)" ]; then
+          # `git add -A` used to stage everything, and the working
+          # directory is also where this workflow and `run-agent-session`
+          # write their scratch. #84's implementation commit therefore
+          # carried eleven files of agent telemetry -- the implementer's own
+          # prompt, the raw session JSONL, agent-outcome.json, model-help.txt
+          # -- alongside the actual change, and those files then broke the
+          # retry's checkout (see "Resolve Implementation Task Issue").
+          #
+          # Relocating this workflow's own scratch fixes the files written
+          # before the session. It cannot fix the ones `run-agent-session`
+          # writes *during* it: their paths are that action's declared
+          # outputs, read by the planner and triage workflows too, so moving
+          # them is a change to a shared contract and not this fix's to make.
+          # Staging is scoped here instead, which covers both.
+          #
+          # The rule: an untracked file at the repository ROOT is never
+          # implementer work. Every source file in this repo lives in a
+          # subdirectory, and the root files that are real -- AGENTS.md,
+          # project.godot, the rest -- are all tracked already, so `git add -u`
+          # picks up any edit to them.
+          git add -u
+          git add -- ':(glob)*/**'
+
+          # A new root file is the one legitimate case this drops, so say so
+          # rather than losing it silently. In practice this lists scratch.
+          SKIPPED=$(git ls-files --others --exclude-standard | grep -v '/' || true)
+
+          if [ -n "$SKIPPED" ]; then
+            echo "::notice::Not committed (untracked at the repository root," \
+                 "treated as workflow scratch):"
+            echo "$SKIPPED"
+          fi
+
+          # Gate on what was actually staged, not on `git status --porcelain`.
+          # Porcelain is never empty -- the scratch above always exists -- so
+          # the old check fired this warning on every single run, and the
+          # commit it made meant "Check For Commit" below could never report
+          # `no_commit`. Both are signals about the session; neither should
+          # move because a workflow wrote a temp file.
+          if git diff --cached --quiet; then
+            echo "The implementer left no uncommitted work to rescue."
+          else
             echo "::warning::The implementer left uncommitted changes;" \
                  "committing them so the work is not discarded."
-            git add -A
             git commit -m "Apply uncommitted implementer changes"
           fi
 
@@ -821,11 +895,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -n "$(git status --porcelain)" ]; then
+          # Same rule as "Commit Leftover Changes" above: untracked files
+          # at the repository root are workflow scratch, not implementer
+          # work. Without this filter the step now fails every run, because
+          # the scratch that `git add -A` used to absorb is deliberately
+          # left in the tree.
+          DIRTY=$(git status --porcelain | grep -v '^?? [^/]*$' || true)
+
+          if [ -n "$DIRTY" ]; then
             echo "::error::The implementer left uncommitted changes instead of" \
                  "either committing a complete implementation or making no" \
                  "changes at all."
-            git status --porcelain
+            echo "$DIRTY"
 
             echo '{"reason":"uncommitted_changes",' \
                  '"headline":"The implementer left uncommitted changes instead of committing or making no changes",' \
