@@ -21,9 +21,11 @@ inputs:
 
   prompt-file:
     description: >-
-      Path to the prepared prompt, relative to the workspace. Copilot reads
-      it from stdin; Claude is pointed at it by path and reads it with its
-      own Read tool. Neither form passes it as an argv element -- Linux caps
+      Path to the prepared prompt. Absolute, and under $RUNNER_TEMP -- every
+      caller builds its prompt there rather than in the checkout (#98).
+      Copilot reads it from stdin; Claude is pointed at it by path and reads
+      it with its own Read tool, which is why the claude branch passes
+      `--add-dir "$RUNNER_TEMP"`. Neither form passes it as an argv element -- Linux caps
       a single argument at 128 KiB (MAX_ARG_STRLEN) and a diff-bearing prompt
       exceeds that long before the larger ARG_MAX applies.
     required: true
@@ -129,10 +131,9 @@ inputs:
 # were written when this action's paths could not move, because they are a
 # contract read by three workflows. This is that contract change.
 #
-# Those defences stay for now regardless: they cover every OTHER workflow's
-# scratch too, and that has not moved yet (#98). They come out when it does,
-# which is also when the dirtiness check stops having to discard a
-# legitimately new file at the repository root.
+# Both are gone now: #98 moved every other workflow's scratch the same way,
+# so `git add -A` means what it says again and the dirtiness check no longer
+# has to discard a legitimately new file at the repository root.
 #
 # READ THESE THROUGH THE OUTPUTS. A caller that hardcodes the bare filename
 # is reading a path this action no longer writes, and the failure is silent:
@@ -368,8 +369,22 @@ runs:
           # per session, and it is the same mechanism the Copilot side uses.
           # Two fallback systems agreeing by accident would be worse than
           # one that obviously owns the job.
+          # --add-dir "$RUNNER_TEMP" is load-bearing since #98 moved the
+          # prompt files out of the checkout. Claude is pointed at the prompt
+          # by PATH and opens it with its own Read tool, and that tool is
+          # scoped to the working directory -- which is the checkout
+          # (/home/runner/work/<repo>/<repo>), while $RUNNER_TEMP is a
+          # sibling (/home/runner/work/_temp). Without this the session
+          # cannot read its own prompt, and the failure looks like a model
+          # that ignored its instructions rather than a path it was refused.
+          #
+          # `--bare` permits it: the flag's own documentation names --add-dir
+          # among the ways to give a bare session context explicitly. The
+          # Copilot branch needs no equivalent -- it feeds the prompt on
+          # stdin, which has no notion of a permitted directory.
           claude \
             --bare \
+            --add-dir "$RUNNER_TEMP" \
             -p "Read $PROMPT_FILE and follow it exactly. It is the whole task." \
             --model "$model" \
             --output-format json \

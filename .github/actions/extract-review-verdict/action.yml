@@ -23,13 +23,13 @@ outputs:
     value: ${{ steps.extract.outputs.slug }}
   review-file:
     description: Path to the verdict line plus full Markdown report, ready to embed in a comment or pull request body
-    value: review.md
+    value: ${{ runner.temp }}/review.md
   failure-file:
     description: >-
       Path to a failure summary, written only when no publishable verdict
       could be extracted (truncated session, malformed output, etc).
       Callers should check for its existence before reading it.
-    value: review-verdict-failure.json
+    value: ${{ runner.temp }}/review-verdict-failure.json
 
 runs:
   using: composite
@@ -52,6 +52,9 @@ runs:
         import pathlib
         import re
         import sys
+
+        # Scratch lives in $RUNNER_TEMP, never the working tree.
+        SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
 
         # The same reading of a session's outcome every other caller uses --
         # imported rather than re-typed, so "cut off" and "hit its ceiling"
@@ -106,7 +109,7 @@ runs:
         def fail(kind, headline, guidance, evidence=""):
             """Record a classified failure and stop the job."""
 
-            pathlib.Path("review-verdict-failure.json").write_text(
+            (SCRATCH / "review-verdict-failure.json").write_text(
                 json.dumps(
                     {
                         "reason": kind,
@@ -222,7 +225,7 @@ runs:
                 " but the report is not in the requested shape."
             )
 
-        pathlib.Path("review.md").write_text(text + "\n")
+        (SCRATCH / "review.md").write_text(text + "\n")
 
         slug = verdict.lower().replace(" ", "-")
 

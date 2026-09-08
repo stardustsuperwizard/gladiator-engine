@@ -61,6 +61,11 @@ run_part () {
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
+# The steps under test read $RUNNER_TEMP, which Actions always sets and a
+# developer's shell does not. Supplied here so running this by hand exercises
+# the same code path CI does, rather than a KeyError.
+export RUNNER_TEMP="${RUNNER_TEMP:-$work_dir}"
+
 cat > "$work_dir/wf.py" <<'EXTRACTOR'
 """Read `run:` block scalars out of workflow and action YAML, without a
 YAML parser -- pyyaml is not guaranteed on a bare runner, and the block
@@ -150,6 +155,7 @@ EXTRACTOR
 
 part1 () {
   python3 - "$work_dir" <<'PY'
+import re
 import sys
 
 sys.path.insert(0, sys.argv[1])
@@ -167,9 +173,23 @@ for path in wf.files():
             failed += 1
             print(f"  FAIL — {path}:{line} does not compile: {exc}",
                   file=sys.stderr)
+            continue
+
+        # Compiling proves nothing about names resolved at runtime, and
+        # SCRATCH is the one every step introduced by #98 depends on. A step
+        # that uses it without defining it raises NameError on the runner --
+        # for a failure reporter, on the day something else already went
+        # wrong. Each step is its own program, so the definition has to be
+        # in the same step, not merely somewhere in the file.
+        if "SCRATCH" in src and not re.search(r"^\s*SCRATCH\s*=", src, re.M):
+            failed += 1
+            print(f"  FAIL — {path}:{line} uses SCRATCH without defining it."
+                  f' Add SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])'
+                  f" to this step.", file=sys.stderr)
 
 if not failed:
-    print(f"  ok   — {count} embedded python step(s) compile")
+    print(f"  ok   — {count} embedded python step(s) compile and resolve"
+          f" SCRATCH")
 
 sys.exit(1 if failed else 0)
 PY
@@ -256,6 +276,7 @@ PY
 part2 () {
   python3 - "$work_dir" "$repo_root" <<'PY'
 import os
+import re
 import sys
 
 sys.path.insert(0, sys.argv[1])
@@ -269,7 +290,16 @@ src = wf.step_source(TRIAGE, "Gather Findings")
 # Everything up to `def findings(` is the matching path: the guards, is_empty()
 # and bullets(). Past it the step reads pr.json and GITHUB_OUTPUT.
 src = src[: src.index("def findings(")]
-src = src.replace('pr = json.loads(pathlib.Path("pr.json").read_text())', "pr = {}")
+# Stub the one filesystem read, however it is currently spelled -- this
+# line moved from pathlib.Path("pr.json") to (SCRATCH / "pr.json") during
+# the #98 conversion, and pinning the old spelling turned that into a
+# confusing traceback rather than a clear failure.
+src = re.sub(r"^pr = json\.loads\(.*\)$", "pr = {}", src, count=1, flags=re.M)
+
+if "pr = {}" not in src:
+    print("  FAIL — could not stub the pr.json read; has the step changed?",
+          file=sys.stderr)
+    sys.exit(1)
 
 module = {}
 exec(compile(src, f"{TRIAGE}:Gather Findings", "exec"), module)
@@ -564,10 +594,11 @@ PY
 # that grows a commit step, and can collide with `git checkout` on a resumed
 # branch. #84 hit both at once. $RUNNER_TEMP removes the whole class.
 #
-# UNCONVERTED is the work #98 has left. It is an allowlist that must only ever
-# shrink: a name not on it and not in $RUNNER_TEMP fails this check, so a new
-# workflow cannot reintroduce the pattern while the old ones are still being
-# migrated.
+# #98 is done: every scratch write in the control plane goes to $RUNNER_TEMP.
+# UNCONVERTED is therefore EMPTY, and this check is absolute -- any scratch
+# written into the checkout fails. It is kept as an empty set rather than
+# deleted so that a future migration has the same shrinking-allowlist shape to
+# use, and so the emptiness is visibly deliberate rather than an oversight.
 # ---------------------------------------------------------------------------
 
 part5 () {
@@ -580,27 +611,7 @@ sys.path.insert(0, sys.argv[1])
 import wf
 
 # Still written into the working tree, tracked by #98. Shrinks to nothing.
-UNCONVERTED = {
-    "all-changes-after-fix.txt", "blocker-comment.md", "candidates.txt",
-    "changed-after-fix.txt", "changed-gd-files.txt", "closing-issues.json",
-    "comment.md", "comments.json", "dashboard.md", "filed-issues.json",
-    "fix-comment.md", "fix-diff.txt", "fix-validate-output.txt",
-    "fix-verdict.md", "fixer-failure.json", "fixer-pr-meta.json",
-    "fixer-prompt.txt", "format-validate-output.txt", "gdformat-output.txt",
-    "gdlint-output.txt", "gdscript-lint-report.md", "implement-diff.txt",
-    "implementer-failure.json", "implementer-prompt.txt", "issue-body.md",
-    "issue.json", "lint-fix-prompt.txt", "lint-fix-validate-output.txt",
-    "no-commit-comment.md", "parent.json", "plan.json", "planner-failure.json",
-    "planner-prompt.txt", "pr-body-verified.md", "pr-body.md", "pr-files.txt",
-    "pr-meta.json", "pr-scope.json", "pr.json", "report.json", "review.md",
-    "review-comment.md", "review-diff.txt", "review-verdict-failure.json",
-    "reviewer-prompt.txt", "skip-comment.md", "suggest.txt",
-    "sync-comment.md", "task-blockers.json", "task.json", "tasks.txt",
-    "triage-drafts.json", "triage-failure.json", "triage-items.json",
-    "triage-prompt.txt", "untracked-after-fix.txt", "update-pr.json",
-    "valid-tasks.txt", "validate-output.txt", "validation-failed-comment.md",
-    "verified-validate-output.txt",
-}
+UNCONVERTED = set()
 
 # `> name.ext`, `--out name.ext`, `--body-file name.ext`, Path("name.ext").
 WRITES = [
@@ -655,12 +666,24 @@ for path in wf.files():
         if name.endswith((".yml", ".yaml")) or name in {"action.yml"}:
             continue
 
+        # A leading boundary on BOTH counts. Without it `pr-meta.json`
+        # matches inside `fixer-pr-meta.json` and `validate-output.txt`
+        # inside `format-validate-output.txt`, so a fully converted file
+        # reports as half converted -- the longer name's occurrences count
+        # towards the shorter name's total but never towards its prefixed
+        # tally, because the prefix does not sit immediately before it.
+        boundary = r"(?<![A-Za-z0-9._-])"
+
         prefixed = len(re.findall(
-            r"(?:\$RUNNER_TEMP\b[\"']?/|runner\.temp \}\}/|SCRATCH / \")"
+            r"(?:\$RUNNER_TEMP\b[\"']?/"
+            r"|runner\.temp \}\}/"
+            r"|SCRATCH / \""
+            r"|SCRATCH\.joinpath\(\""
+            r"|RUNNER_TEMP\"\], \")"
             + re.escape(name),
             body,
         ))
-        total = len(re.findall(re.escape(name), body))
+        total = len(re.findall(boundary + re.escape(name), body))
 
         if prefixed and prefixed != total:
             mixed.append((path, name, prefixed, total))
@@ -675,8 +698,8 @@ for path, name, prefixed, total in mixed:
 
 if not offenders and not mixed:
     left = len(still)
-    print(f"  ok   — no new working-tree scratch, no half-converted name;"
-          f" {left} still awaiting the #98 conversion")
+    print(f"  ok   — no working-tree scratch, no half-converted name"
+          f" ({left} unconverted names allowed)")
 
 sys.exit(1 if (offenders or mixed) else 0)
 PY

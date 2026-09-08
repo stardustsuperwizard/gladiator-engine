@@ -26,122 +26,20 @@ mono_crash.*.json
 __pycache__/
 *.pyc
 
-# ---------------------------------------------------------------------------
-# Control-plane scratch, written at the repository ROOT by the agent workflows
-# (`.github/workflows/`, `.github/actions/`). Ephemeral CI artifacts, never
-# meant to be committed.
+# Control-plane scratch is NOT listed here, and should never need to be.
 #
-# This list is a BACKSTOP, not the mechanism. The mechanism is $RUNNER_TEMP:
-# a file written outside the working tree cannot be swept into a commit, cannot
-# collide with `git checkout` on a resumed branch, and needs no entry here.
-# `agent-02-implement.yml`'s "Resolve Implementation Task Issue" step already
-# works that way, and #97/#98 move the rest. Every name below is expected to
-# disappear as its writer is converted; what should survive is this comment and
-# whatever has not been moved yet.
+# The agent workflows (`.github/workflows/`, `.github/actions/`) write ~69
+# scratch files per run. Every one of them goes to $RUNNER_TEMP, so none is
+# ever written into the working tree and none needs an ignore entry.
 #
-# Until then the list is load-bearing and matched by LITERAL NAME, which is
-# exactly why it is not the mechanism. Renaming a scratch file without renaming
-# its entry here fails no check -- it means "Commit Leftover Changes" sweeps
-# runner telemetry into somebody's pull request, which is what happened to #84
-# (eleven files of agent telemetry in the implementation commit).
+# This briefly WAS a 69-name ignore list, added by #98 as a backstop while the
+# conversion was in flight. It is gone because a literal-name denylist fails
+# silently: rename a scratch file without renaming its entry and nothing goes
+# red -- "Commit Leftover Changes" simply sweeps runner telemetry into
+# somebody's pull request, which is what happened to #84 (eleven files of
+# agent telemetry in the implementation commit, which then broke that task's
+# retry). A file outside the working tree cannot do either, and needs nobody
+# to maintain a list.
 #
-# Derived by inventory from this repository's own writes, NOT copied from
-# mikeys_game_bones-rules-moba. That repo's equivalent block is the same idea
-# and 69 names long, but copying it verbatim would have missed eight files this
-# repo writes and it does not -- including `implementer-failure.json`, which it
-# spells `implementor-`, and which `agent-02-implement.yml` (the one workflow
-# that commits) writes on its failure path.
-#
-# Anchored with a leading `/` so each pattern matches only at the repository
-# root, where the scratch actually lands. Unanchored, `pr.json` or `report.json`
-# would also ignore a future test fixture of that name anywhere in the tree.
-# ---------------------------------------------------------------------------
-
-# run-agent-session's own scratch is NOT listed here. #97 moved all eight of
-# its files -- the four declared outputs, the stderr capture, the model-help
-# dump and both vendor transcripts -- into $RUNNER_TEMP, so none of them is
-# ever written to the working tree and none needs an entry. That is what the
-# rest of this list is working towards.
-
-# agent-01-planner.yml
-/planner-prompt.txt
-/planner-failure.json
-/plan.json
-/comments.json
-
-# agent-02-implement.yml
-/implementer-prompt.txt
-/implementer-failure.json
-/implement-diff.txt
-/pr-body.md
-/pr-body-verified.md
-/validate-output.txt
-/verified-validate-output.txt
-/fix-validate-output.txt
-/validation-failed-comment.md
-
-# agent-03-rollup.yml
-/parent.json
-
-# agent-04-review.yml, build-review-request, extract-review-verdict
-/reviewer-prompt.txt
-/review-diff.txt
-/review-comment.md
-/review.md
-/review-verdict-failure.json
-
-# agent-05-fix.yml, build-fix-request
-/fixer-prompt.txt
-/fixer-failure.json
-/fixer-pr-meta.json
-/fix-diff.txt
-/fix-verdict.md
-/fix-comment.md
-/pr-files.txt
-/pr-scope.json
-
-# agent-06-triage.yml
-/triage-prompt.txt
-/triage-items.json
-/triage-drafts.json
-/triage-failure.json
-/filed-issues.json
-/issue-body.md
-
-# agent-00-dashboard.yml
-/dashboard.md
-
-# issue-linking.yml
-/tasks.txt
-/valid-tasks.txt
-/candidates.txt
-/suggest.txt
-/update-pr.json
-/task-blockers.json
-/blocker-comment.md
-/comment.md
-
-# issue-dependencies.yml
-/report.json
-/sync-comment.md
-
-# gdscript-lint.yml, lint-gdscript
-/lint-fix-prompt.txt
-/lint-fix-validate-output.txt
-/format-validate-output.txt
-/gdformat-output.txt
-/gdlint-output.txt
-/gdscript-lint-report.md
-/changed-gd-files.txt
-/changed-after-fix.txt
-/untracked-after-fix.txt
-/all-changes-after-fix.txt
-
-# Written by more than one of the above.
-/issue.json
-/task.json
-/pr.json
-/pr-meta.json
-/closing-issues.json
-/no-commit-comment.md
-/skip-comment.md
+# `.github/scripts/test-workflow-logic.sh` Part 5 keeps it that way: a
+# workflow that writes scratch into the checkout fails CI.

@@ -40,7 +40,7 @@ inputs:
 outputs:
   prompt-file:
     description: Path to the built fixer prompt
-    value: fixer-prompt.txt
+    value: ${{ runner.temp }}/fixer-prompt.txt
   verdict:
     description: >-
       The VERDICT line found on the pull request in "pr" mode (empty in
@@ -63,11 +63,11 @@ runs:
         gh pr view "$PR_NUMBER" \
           --repo "$GITHUB_REPOSITORY" \
           --json number,title,body,url,headRefName,files,comments \
-          > pr.json
+          > "$RUNNER_TEMP"/pr.json
 
         gh pr diff "$PR_NUMBER" \
           --repo "$GITHUB_REPOSITORY" \
-          > fix-diff.txt
+          > "$RUNNER_TEMP"/fix-diff.txt
 
         OWNER="${GITHUB_REPOSITORY%%/*}"
         NAME="${GITHUB_REPOSITORY##*/}"
@@ -88,17 +88,17 @@ runs:
             }
           ' \
           --jq '.data.repository.pullRequest.closingIssuesReferences.nodes' \
-          > closing-issues.json
+          > "$RUNNER_TEMP"/closing-issues.json
 
-        TASK_NUMBER=$(jq -r '.[0].number // empty' closing-issues.json)
+        TASK_NUMBER=$(jq -r '.[0].number // empty' "$RUNNER_TEMP"/closing-issues.json)
 
         if [ -z "$TASK_NUMBER" ]; then
-          echo '{}' > task.json
+          echo '{}' > "$RUNNER_TEMP"/task.json
         else
           gh issue view "$TASK_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,url \
-            > task.json
+            > "$RUNNER_TEMP"/task.json
         fi
 
         # The correction contract is the most recent
@@ -107,14 +107,14 @@ runs:
           [.comments[] | select(.body | contains("<!-- agent-review-verdict -->"))]
           | last
           | .body // empty
-        ' pr.json > fix-verdict.md
+        ' "$RUNNER_TEMP"/pr.json > "$RUNNER_TEMP"/fix-verdict.md
 
-        if [ ! -s fix-verdict.md ]; then
+        if [ ! -s "$RUNNER_TEMP"/fix-verdict.md ]; then
           echo "verdict=none" >> "$GITHUB_OUTPUT"
         else
           VERDICT=$(
             grep -oE '^VERDICT:\s*(PASS|FIX|PLANNING FAILURE|DESIGN AMBIGUITY)' \
-              fix-verdict.md \
+              "$RUNNER_TEMP"/fix-verdict.md \
               | head -n1 \
               | sed -E 's/^VERDICT:\s*//'
           )
@@ -133,20 +133,20 @@ runs:
       run: |
         set -euo pipefail
 
-        cp "$DIFF_FILE" fix-diff.txt
-        cp "$VERDICT_FILE" fix-verdict.md
+        cp "$DIFF_FILE" "$RUNNER_TEMP"/fix-diff.txt
+        cp "$VERDICT_FILE" "$RUNNER_TEMP"/fix-verdict.md
 
         gh issue view "$ISSUE_NUMBER" \
           --repo "$GITHUB_REPOSITORY" \
           --json number,title,body,url \
-          > task.json
+          > "$RUNNER_TEMP"/task.json
 
         jq -n \
           --arg title "$PR_TITLE" \
           --arg branch "$PR_BRANCH" \
           '{number: null, title: $title, headRefName: $branch,
             body: "(not yet opened -- being fixed before the pull request exists)"}' \
-          > pr.json
+          > "$RUNNER_TEMP"/pr.json
 
     - name: Build Prompt
       shell: python
@@ -157,12 +157,15 @@ runs:
         import os
         import pathlib
 
+        # Scratch lives in $RUNNER_TEMP, never the working tree.
+        SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
         root = pathlib.Path(".")
         max_diff = int(os.environ["MAX_DIFF_CHARS"])
 
-        pr = json.loads(pathlib.Path("pr.json").read_text())
-        task = json.loads(pathlib.Path("task.json").read_text())
-        verdict_comment = pathlib.Path("fix-verdict.md").read_text(errors="replace")
+        pr = json.loads((SCRATCH / "pr.json").read_text())
+        task = json.loads((SCRATCH / "task.json").read_text())
+        verdict_comment = (SCRATCH / "fix-verdict.md").read_text(errors="replace")
 
         sections = []
 
@@ -207,7 +210,7 @@ runs:
             "# LATEST REVIEW VERDICT (YOUR WORKLIST)\n\n" + verdict_comment
         )
 
-        diff = pathlib.Path("fix-diff.txt").read_text(errors="replace")
+        diff = (SCRATCH / "fix-diff.txt").read_text(errors="replace")
         truncated = len(diff) > max_diff
 
         if truncated:
@@ -272,6 +275,6 @@ runs:
         {context}
         """
 
-        pathlib.Path("fixer-prompt.txt").write_text(prompt)
+        (SCRATCH / "fixer-prompt.txt").write_text(prompt)
 
         print(f"Prompt built: {len(prompt)} chars, truncated={truncated}")

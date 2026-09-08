@@ -25,7 +25,7 @@ inputs:
 outputs:
   report-file:
     description: Path to a Markdown report, written even when clean
-    value: gdscript-lint-report.md
+    value: ${{ runner.temp }}/gdscript-lint-report.md
   clean:
     description: >-
       "true" if gdformat (check mode) or gdlint (either mode, run after any
@@ -67,7 +67,7 @@ runs:
         set -euo pipefail
 
         if [ ! -s "$FILES_LIST_FILE" ]; then
-          echo "No GDScript files to check." > gdscript-lint-report.md
+          echo "No GDScript files to check." > "$RUNNER_TEMP"/gdscript-lint-report.md
           echo "clean=true" >> "$GITHUB_OUTPUT"
           echo "formatted=false" >> "$GITHUB_OUTPUT"
           exit 0
@@ -93,7 +93,7 @@ runs:
 
         if [ "${#FILES[@]}" -eq 0 ]; then
           echo "No GDScript files remain after dropping deleted paths." \
-            > gdscript-lint-report.md
+            > "$RUNNER_TEMP"/gdscript-lint-report.md
           echo "clean=true" >> "$GITHUB_OUTPUT"
           echo "formatted=false" >> "$GITHUB_OUTPUT"
           exit 0
@@ -118,7 +118,7 @@ runs:
           FORMAT_CLEAN=true
         else
           set +e
-          gdformat --check --diff "${FILES[@]}" > gdformat-output.txt 2>&1
+          gdformat --check --diff "${FILES[@]}" > "$RUNNER_TEMP"/gdformat-output.txt 2>&1
           FORMAT_STATUS=$?
           set -e
 
@@ -133,7 +133,7 @@ runs:
         # fix mode the report reflects what's left for a human or the
         # reviewer/fixer agents to actually decide about.
         set +e
-        gdlint "${FILES[@]}" > gdlint-output.txt 2>&1
+        gdlint "${FILES[@]}" > "$RUNNER_TEMP"/gdlint-output.txt 2>&1
         LINT_STATUS=$?
         set -e
 
@@ -156,7 +156,7 @@ runs:
             echo "### Formatting (\`gdformat --check\`)"
             echo ""
             echo '```diff'
-            cat gdformat-output.txt
+            cat "$RUNNER_TEMP"/gdformat-output.txt
             echo '```'
           else
             echo "\`gdformat\`: clean."
@@ -168,12 +168,12 @@ runs:
             echo "### Lint (\`gdlint\`)"
             echo ""
             echo '```'
-            cat gdlint-output.txt
+            cat "$RUNNER_TEMP"/gdlint-output.txt
             echo '```'
           else
             echo "\`gdlint\`: clean."
           fi
-        } > gdscript-lint-report.md
+        } > "$RUNNER_TEMP"/gdscript-lint-report.md
 
         echo "clean=$CLEAN" >> "$GITHUB_OUTPUT"
         echo "formatted=$FORMATTED" >> "$GITHUB_OUTPUT"

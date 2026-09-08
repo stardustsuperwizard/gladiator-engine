@@ -500,11 +500,11 @@ jobs:
             echo "## Execution not started"
             echo ""
             echo "$MSG"
-          } > skip-comment.md
+          } > "$RUNNER_TEMP"/skip-comment.md
 
           gh issue comment "$ISSUE_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file skip-comment.md
+            --body-file "$RUNNER_TEMP"/skip-comment.md
 
           # Release the button that was pressed. Empty on a
           # workflow_dispatch run, which pressed none.
@@ -514,7 +514,7 @@ jobs:
               --remove-label "$TRIGGER_LABEL" || true
           fi
 
-          cat skip-comment.md >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP"/skip-comment.md >> "$GITHUB_STEP_SUMMARY"
 
       # Catches the one case "Resolve Implementation Task Issue"'s pr_exists
       # guard doesn't: a prior run that pushed $BRANCH but never got a pull
@@ -733,6 +733,9 @@ jobs:
           import os
           import pathlib
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           root = pathlib.Path(".")
 
           # Written to $RUNNER_TEMP by "Resolve Implementation Task Issue",
@@ -800,7 +803,7 @@ jobs:
           {context}
           """
 
-          pathlib.Path("implementer-prompt.txt").write_text(prompt)
+          (SCRATCH / "implementer-prompt.txt").write_text(prompt)
 
           print(f"Prompt built: {len(prompt)} chars")
 
@@ -813,7 +816,7 @@ jobs:
         with:
           vendor: ${{ steps.route.outputs.vendor }}
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          prompt-file: implementer-prompt.txt
+          prompt-file: ${{ runner.temp }}/implementer-prompt.txt
           models: ${{ steps.tier.outputs.models }}
           max-ai-credits: ${{ env.IMPLEMENTER_MAX_AI_CREDITS }}
           # Needs to edit, run shell commands, and commit -- same tool set
@@ -837,45 +840,33 @@ jobs:
         run: |
           set -euo pipefail
 
-          # `git add -A` used to stage everything, and the working
-          # directory is also where this workflow and `run-agent-session`
-          # write their scratch. #84's implementation commit therefore
-          # carried eleven files of agent telemetry -- the implementer's own
-          # prompt, the raw session JSONL, agent-outcome.json, model-help.txt
-          # -- alongside the actual change, and those files then broke the
+          # `git add -A` again, and correct again.
+          #
+          # It was scoped for a while -- `git add -u` plus an explicit
+          # subdirectory glob -- because the working directory was also where
+          # this workflow and `run-agent-session` wrote their scratch. #84's
+          # implementation commit carried eleven files of agent telemetry
+          # alongside the actual change, and those files then broke the
           # retry's checkout (see "Resolve Implementation Task Issue").
           #
-          # Relocating this workflow's own scratch fixes the files written
-          # before the session. It cannot fix the ones `run-agent-session`
-          # writes *during* it: their paths are that action's declared
-          # outputs, read by the planner and triage workflows too, so moving
-          # them is a change to a shared contract and not this fix's to make.
-          # Staging is scoped here instead, which covers both.
+          # Scoping cost something real: it treated EVERY untracked file at
+          # the repository root as scratch, so an implementer that
+          # legitimately added a root file had that file silently dropped
+          # from its own commit. The rule was "an untracked root file is
+          # never implementer work", which was true of this repository's
+          # layout and not true in principle.
           #
-          # The rule: an untracked file at the repository ROOT is never
-          # implementer work. Every source file in this repo lives in a
-          # subdirectory, and the root files that are real -- AGENTS.md,
-          # project.godot, the rest -- are all tracked already, so `git add -u`
-          # picks up any edit to them.
-          git add -u
-          git add -- ':(glob)*/**'
+          # #98 removed the reason. No workflow writes into the checkout any
+          # more -- everything goes to $RUNNER_TEMP -- so there is no scratch
+          # to exclude, and `git add -A` means what it says again.
+          # `test-workflow-logic.sh` Part 5 fails CI if that stops being true.
+          git add -A
 
-          # A new root file is the one legitimate case this drops, so say so
-          # rather than losing it silently. In practice this lists scratch.
-          SKIPPED=$(git ls-files --others --exclude-standard | grep -v '/' || true)
-
-          if [ -n "$SKIPPED" ]; then
-            echo "::notice::Not committed (untracked at the repository root," \
-                 "treated as workflow scratch):"
-            echo "$SKIPPED"
-          fi
-
-          # Gate on what was actually staged, not on `git status --porcelain`.
-          # Porcelain is never empty -- the scratch above always exists -- so
-          # the old check fired this warning on every single run, and the
-          # commit it made meant "Check For Commit" below could never report
-          # `no_commit`. Both are signals about the session; neither should
-          # move because a workflow wrote a temp file.
+          # Porcelain is meaningful again for the same reason: it used to be
+          # never-empty, because the scratch was always there, so this warning
+          # fired on every single run and the commit it made meant "Check For
+          # Commit" below could never report `no_commit`. Staged-vs-not is
+          # still the sharper question to ask here, so it stays.
           if git diff --cached --quiet; then
             echo "The implementer left no uncommitted work to rescue."
           else
@@ -895,12 +886,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Same rule as "Commit Leftover Changes" above: untracked files
-          # at the repository root are workflow scratch, not implementer
-          # work. Without this filter the step now fails every run, because
-          # the scratch that `git add -A` used to absorb is deliberately
-          # left in the tree.
-          DIRTY=$(git status --porcelain | grep -v '^?? [^/]*$' || true)
+          # Plain porcelain, no filter. This used to strip untracked files
+          # at the repository root, because that is where the workflows wrote
+          # their scratch and the step would otherwise have failed every run.
+          # The filter also hid a real signal: an implementer that left an
+          # untracked root file behind looked clean.
+          #
+          # Since #98 nothing is written into the checkout, so an untracked
+          # file here is genuinely the session's doing and should be reported
+          # as such.
+          DIRTY=$(git status --porcelain)
 
           if [ -n "$DIRTY" ]; then
             echo "::error::The implementer left uncommitted changes instead of" \
@@ -911,7 +906,7 @@ jobs:
             echo '{"reason":"uncommitted_changes",' \
                  '"headline":"The implementer left uncommitted changes instead of committing or making no changes",' \
                  '"guidance":"This is a session-behavior fault, not a budget or availability one. Re-adding the same label retries from a clean branch."}' \
-              > implementer-failure.json
+              > "$RUNNER_TEMP"/implementer-failure.json
 
             echo "made=false" >> "$GITHUB_OUTPUT"
             echo "reason=uncommitted_changes" >> "$GITHUB_OUTPUT"
@@ -954,6 +949,9 @@ jobs:
           import os
           import pathlib
           import subprocess
+
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
 
           issue_number = os.environ["ISSUE_NUMBER"]
           branch = os.environ["BRANCH"]
@@ -1026,7 +1024,7 @@ jobs:
               "```",
           ]
 
-          pathlib.Path("pr-body.md").write_text("\n".join(lines) + "\n")
+          (SCRATCH / "pr-body.md").write_text("\n".join(lines) + "\n")
 
           subprocess.run(["git", "push", "origin", f"HEAD:{branch}"], check=True)
 
@@ -1055,7 +1053,7 @@ jobs:
           def create_pr(draft):
               command = ["gh", "pr", "create", "--repo", repo, "--base", base,
                          "--head", branch, "--title", pr_title,
-                         "--body-file", "pr-body.md"]
+                         "--body-file", SCRATCH / "pr-body.md"]
 
               if draft:
                   command.append("--draft")
@@ -1100,7 +1098,7 @@ jobs:
                   "Actions to create pull requests)."
               )
 
-              pathlib.Path("implementer-failure.json").write_text(
+              (SCRATCH / "implementer-failure.json").write_text(
                   json.dumps({
                       "reason": "pr_create_failed",
                       "headline": "gh pr create failed after the branch was pushed",
@@ -1169,7 +1167,7 @@ jobs:
           # warning below and the "Report Validation Failure" step
           # entirely (its condition needs a real status value to match).
           status=0
-          .github/scripts/validate-godot.sh > validate-output.txt 2>&1 \
+          .github/scripts/validate-godot.sh > "$RUNNER_TEMP"/validate-output.txt 2>&1 \
             || status=$?
 
           echo "status=$status" >> "$GITHUB_OUTPUT"
@@ -1179,7 +1177,7 @@ jobs:
                  "Formatting, the pre-PR review, and the pre-PR fix pass" \
                  "will all be skipped; the already-open pull request is" \
                  "unaffected."
-            tail -c 4000 validate-output.txt
+            tail -c 4000 "$RUNNER_TEMP"/validate-output.txt
           fi
 
       # Best-effort, like the review-and-fix section below: a lint-tooling
@@ -1196,10 +1194,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          git diff --name-only "$BASE_SHA" HEAD -- '*.gd' > changed-gd-files.txt || true
+          git diff --name-only "$BASE_SHA" HEAD -- '*.gd' > "$RUNNER_TEMP"/changed-gd-files.txt || true
 
           echo "Changed GDScript files:"
-          cat changed-gd-files.txt || echo "(none)"
+          cat "$RUNNER_TEMP"/changed-gd-files.txt || echo "(none)"
 
       - name: Apply GDScript Formatting
         if: steps.gd-files.outcome == 'success'
@@ -1208,7 +1206,7 @@ jobs:
         uses: ./.github/actions/lint-gdscript
         with:
           mode: fix
-          files-list-file: changed-gd-files.txt
+          files-list-file: ${{ runner.temp }}/changed-gd-files.txt
 
       - name: Commit Formatting Fixes
         if: steps.format.outcome == 'success' && steps.format.outputs.formatted == 'true'
@@ -1224,10 +1222,10 @@ jobs:
           # net: if it somehow did, drop the formatting commit and continue
           # unformatted rather than block the whole task on a formatter
           # edge case.
-          if ! .github/scripts/validate-godot.sh > format-validate-output.txt 2>&1; then
+          if ! .github/scripts/validate-godot.sh > "$RUNNER_TEMP"/format-validate-output.txt 2>&1; then
             echo "::warning::Validation failed after applying gdformat." \
                  "Reverting the formatting commit and continuing unformatted."
-            tail -c 4000 format-validate-output.txt
+            tail -c 4000 "$RUNNER_TEMP"/format-validate-output.txt
             git reset --hard HEAD~1
           else
             # The pull request already exists by this point (it opened
@@ -1256,7 +1254,7 @@ jobs:
 
           echo "IMPL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
-          git diff "$BASE_SHA" HEAD > implement-diff.txt
+          git diff "$BASE_SHA" HEAD > "$RUNNER_TEMP"/implement-diff.txt
 
       # continue-on-error throughout this whole review-and-fix section:
       # every step in it is best-effort. A hiccup anywhere here (not just a
@@ -1273,7 +1271,7 @@ jobs:
         with:
           mode: diff
           issue-number: ${{ env.ISSUE_NUMBER }}
-          diff-file: implement-diff.txt
+          diff-file: ${{ runner.temp }}/implement-diff.txt
           pr-title: ${{ env.PR_TITLE }}
           pr-branch: ${{ env.BRANCH }}
           max-diff-chars: ${{ env.MAX_DIFF_CHARS }}
@@ -1342,7 +1340,7 @@ jobs:
         with:
           mode: diff
           issue-number: ${{ env.ISSUE_NUMBER }}
-          diff-file: implement-diff.txt
+          diff-file: ${{ runner.temp }}/implement-diff.txt
           verdict-file: ${{ steps.review-verdict.outputs.review-file }}
           pr-title: ${{ env.PR_TITLE }}
           pr-branch: ${{ env.BRANCH }}
@@ -1400,7 +1398,7 @@ jobs:
             exit 0
           fi
 
-          if .github/scripts/validate-godot.sh > fix-validate-output.txt 2>&1; then
+          if .github/scripts/validate-godot.sh > "$RUNNER_TEMP"/fix-validate-output.txt 2>&1; then
             # The pull request is already open (it opened right after the
             # implementer's commit, long before this fix pass ran) -- push the
             # fix commit so the branch behind it actually reflects the fix
@@ -1411,7 +1409,7 @@ jobs:
             echo "::warning::The pre-PR fix commit failed validation." \
                  "Resetting to the pre-fix implementation; the" \
                  "already-open pull request stays unfixed."
-            tail -c 4000 fix-validate-output.txt
+            tail -c 4000 "$RUNNER_TEMP"/fix-validate-output.txt
             git reset --hard "$IMPL_SHA"
             echo "fix_applied=false" >> "$GITHUB_OUTPUT"
           fi
@@ -1459,6 +1457,9 @@ jobs:
           import re
           import subprocess
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           repo = os.environ["GITHUB_REPOSITORY"]
           branch = os.environ["BRANCH"]
           run_url = os.environ["RUN_URL"]
@@ -1484,7 +1485,7 @@ jobs:
           # Kept in sync by hand with render-dashboard.py's VALIDATION_FAILED.
           VALIDATION_FAILED = "validation:failed"
 
-          log = pathlib.Path("verified-validate-output.txt")
+          log = SCRATCH / "verified-validate-output.txt"
 
           with log.open("wb") as handle:
               status = subprocess.run(
@@ -1604,11 +1605,11 @@ jobs:
           else:
               body = body.rstrip() + "\n\n" + section + "\n"
 
-          pathlib.Path("pr-body-verified.md").write_text(body + "\n")
+          (SCRATCH / "pr-body-verified.md").write_text(body + "\n")
 
           subprocess.run(
               ["gh", "pr", "edit", pr_number, "--repo", repo,
-               "--body-file", "pr-body-verified.md"],
+               "--body-file", SCRATCH / "pr-body-verified.md"],
               check=True,
           )
 
@@ -1889,11 +1890,11 @@ jobs:
             echo "ambiguity -- check the session log for its explanation:"
             echo ""
             echo "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          } > no-commit-comment.md
+          } > "$RUNNER_TEMP"/no-commit-comment.md
 
           gh issue comment "$ISSUE_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file no-commit-comment.md
+            --body-file "$RUNNER_TEMP"/no-commit-comment.md
 
           # Release the button that was pressed. Empty on a
           # workflow_dispatch run, which pressed none.
@@ -1937,19 +1938,19 @@ jobs:
             echo '<details><summary>Validation output (tail)</summary>'
             echo ""
             echo '```'
-            tail -c 4000 validate-output.txt
+            tail -c 4000 "$RUNNER_TEMP"/validate-output.txt
             echo '```'
             echo ""
             echo '</details>'
             echo ""
             echo "Full run log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          } > validation-failed-comment.md
+          } > "$RUNNER_TEMP"/validation-failed-comment.md
 
           PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
 
           gh pr comment "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file validation-failed-comment.md
+            --body-file "$RUNNER_TEMP"/validation-failed-comment.md
 
       # Deliberately just `failure()`, not also gated on the guard check
       # having passed: a hard crash in "Resolve Implementation Task Issue"
@@ -1998,7 +1999,11 @@ jobs:
               os.environ["RUNNER_TEMP"], "agent-session-failure.json"
           )
 
-          for candidate in ("implementer-failure.json", session_failure):
+          implementer_failure = os.path.join(
+              os.environ["RUNNER_TEMP"], "implementer-failure.json"
+          )
+
+          for candidate in (implementer_failure, session_failure):
               path = pathlib.Path(candidate)
 
               if path.exists():

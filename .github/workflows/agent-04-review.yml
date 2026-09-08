@@ -175,7 +175,7 @@ jobs:
             --json files \
             --jq '.files[].path' \
             | grep -E '\.gd$' \
-            > changed-gd-files.txt || true
+            > "$RUNNER_TEMP"/changed-gd-files.txt || true
 
       # Best-effort: a lint-tooling hiccup must not block a review that
       # would otherwise work -- it just runs without the static-analysis
@@ -186,7 +186,7 @@ jobs:
         uses: ./.github/actions/lint-gdscript
         with:
           mode: check
-          files-list-file: changed-gd-files.txt
+          files-list-file: ${{ runner.temp }}/changed-gd-files.txt
 
       - name: Build Review Request
         id: build
@@ -237,13 +237,13 @@ jobs:
             echo "Reviewed by \`.github/agents/03-reviewer.agent.md\` via" \
                  "\`agent-04-review.yml\` on \`${{ steps.session.outputs.resolved-model }}\`."
             echo "Re-run by adding the \`agent:reviewer:copilot\` label."
-          } > review-comment.md
+          } > "$RUNNER_TEMP"/review-comment.md
 
           gh pr comment "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file review-comment.md
+            --body-file "$RUNNER_TEMP"/review-comment.md
 
-          cat review-comment.md >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP"/review-comment.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Apply Verdict Label
         shell: bash
@@ -334,7 +334,11 @@ jobs:
               os.environ["RUNNER_TEMP"], "agent-session-failure.json"
           )
 
-          for candidate in ("review-verdict-failure.json", session_failure):
+          verdict_failure = os.path.join(
+              os.environ["RUNNER_TEMP"], "review-verdict-failure.json"
+          )
+
+          for candidate in (verdict_failure, session_failure):
               path = pathlib.Path(candidate)
 
               if path.exists():
