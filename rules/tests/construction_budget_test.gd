@@ -37,10 +37,7 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 
 static func _test_is_satisfied_by_null_returns_false() -> Array[String]:
 	var budget := _make_budget(15, 1, 5)
-	return _expect(
-		not budget.is_satisfied_by(null),
-		"is_satisfied_by(null) must return false"
-	)
+	return _expect(not budget.is_satisfied_by(null), "is_satisfied_by(null) must return false")
 
 
 static func _test_is_satisfied_by_passing_template_returns_true() -> Array[String]:
@@ -151,12 +148,7 @@ static func _test_violations_null_returns_single_message() -> Array[String]:
 
 ## Helper: creates a FighterTemplate with the given stats.
 static func _make_template(
-	move: int,
-	save: int,
-	health: int,
-	range_hexes: int,
-	attack: int,
-	damage: int
+	move: int, save: int, health: int, range_hexes: int, attack: int, damage: int
 ) -> FighterTemplate:
 	var template := FighterTemplate.new()
 	template.template_id = "test"
@@ -171,7 +163,9 @@ static func _make_template(
 
 
 ## Helper: creates a ConstructionBudget with the given values.
-static func _make_budget(total_points: int, min_per_stat: int, max_per_stat: int) -> ConstructionBudget:
+static func _make_budget(
+	total_points: int, min_per_stat: int, max_per_stat: int
+) -> ConstructionBudget:
 	var budget := ConstructionBudget.new()
 	budget.budget_id = "test"
 	budget.total_points = total_points

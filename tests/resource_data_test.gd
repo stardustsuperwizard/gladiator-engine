@@ -491,7 +491,10 @@ static func _test_all_fighters_satisfy_construction_budget() -> Array[String]:
 
 	var budget: Variant = load(CONSTRUCTION_BUDGET_PATH)
 	violations.append_array(
-		_expect(budget is ConstructionBudget, "construction_budget.tres must load as a ConstructionBudget")
+		_expect(
+			budget is ConstructionBudget,
+			"construction_budget.tres must load as a ConstructionBudget"
+		)
 	)
 	if not (budget is ConstructionBudget):
 		return violations
