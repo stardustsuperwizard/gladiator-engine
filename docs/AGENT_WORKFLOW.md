@@ -19,6 +19,14 @@
 How Gladiator Engine uses GitHub Copilot agents, and which model runs which
 role. Optimized for cost and quality; latency is explicitly not a goal.
 
+**This document takes the four roles as given.** Why there are four, what test
+a proposed fifth has to pass, and why an orchestrator delegating to specialist
+sub-agents cannot work on this control plane are in
+`docs/AGENT_ROLE_DESIGN.md`. Several of the findings it reasons from are
+stated here — §*The constraint that shapes everything*, §*Why planning and
+review are CLI sessions*, §*Unsupported frontmatter on github.com* — and it
+cites them rather than restating them.
+
 Verified against GitHub documentation on 2026-08-21. Model availability and
 pricing change often — re-check the sources at the bottom before assuming
 this document is current.
@@ -2055,6 +2063,7 @@ are custom agents and MCP servers.
 
 | File | Purpose |
 | --- | --- |
+| `docs/AGENT_ROLE_DESIGN.md` | Why these are the roles, and the test a proposed new one has to pass |
 | `.github/workflows/agent-00-dashboard.yml` | Rewrites the pinned control plane Issue from derived state, on `dashboard:update` or dispatch |
 | `.github/workflows/agent-01-planner.yml` | Decomposes an intake Issue of any type into `[task]` sub-issues |
 | `.github/workflows/agent-02-implement.yml` | Scripted implementer: implements, opens the PR, then validates, formats, self-reviews, and self-fixes against it, on `agent:implementer:copilot`; ends with an independent validation job on the pushed SHA |

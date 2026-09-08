@@ -151,6 +151,13 @@ models. See `docs/AGENT_WORKFLOW.md` for role definitions, model routing, and
 the handoff contract; `.github/agents/` for the cloud agent profiles and
 `.claude/agents/` for their local Claude Code counterparts.
 
+`docs/AGENT_ROLE_DESIGN.md` answers the separate question of **why these are
+the roles** — the test a proposed new agent has to pass (a tool boundary, a
+cost tier, or a context wall; a job title is none of them), why an
+orchestrator-and-specialists shape does not fit this control plane, and the
+conditions that would make a fifth or sixth role worth adding. Read it before
+proposing one.
+
 The control plane is label-driven. **Every trigger is keyed on a label name,
 and a fresh clone has none of them** — run `.github/scripts/bootstrap-labels.sh`
 once before expecting any workflow to fire.
