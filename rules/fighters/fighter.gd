@@ -9,10 +9,10 @@
 # The public surface is this task's contract, and every alternative gdlint's
 # threshold points at is forbidden by that same contract: the four damage
 # predicates may not collapse into one `damage_state()` or a `DamageState`
-# enum, and the five stat readers may not move behind a stat-bag object,
-# because reading through to the shared template is the design. Twenty-two
-# methods, of which twenty are a single-expression read. The waiver is local
-# rather than a raised threshold in `.gdlintrc`, so no other file's shape
+# enum, and the eight stat readers may not move behind a stat-bag object,
+# because reading through to the shared template is the design. Twenty-five
+# methods, of which twenty-three are a single-expression read. The waiver is
+# local rather than a raised threshold in `.gdlintrc`, so no other file's shape
 # changes because of this one's.
 ##
 ## What has *happened* to a fighter -- its position, its damage counter, its
@@ -169,9 +169,27 @@ func health() -> int:
 	return _template.health
 
 
-## The template's point value.
-func point_value() -> int:
-	return _template.point_value
+## The template's range in hexes.
+func range_hexes() -> int:
+	return _template.range_hexes
+
+
+## The template's attack value.
+func attack() -> int:
+	return _template.attack
+
+
+## The template's damage value.
+func damage() -> int:
+	return _template.damage
+
+
+## The template's ability tags, as a **shallow** copy: a new `PackedStringArray`
+## holding the same string values. Appending to the value returned here cannot
+## reach the template; the elements are shared on purpose. See the class
+## docstring.
+func ability_tags() -> PackedStringArray:
+	return _template.ability_tags.duplicate()
 
 
 ## The template's weapons, as a **shallow** copy: a new `Array` holding the

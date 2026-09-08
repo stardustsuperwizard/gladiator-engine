@@ -62,11 +62,16 @@ static func _test_fighter_template_defaults() -> Array[String]:
 	violations.append_array(_expect(fighter.move == 0, "move must default to 0"))
 	violations.append_array(_expect(fighter.save == 0, "save must default to 0"))
 	violations.append_array(_expect(fighter.health == 0, "health must default to 0"))
-	violations.append_array(_expect(fighter.point_value == 0, "point_value must default to 0"))
+	violations.append_array(_expect(fighter.range_hexes == 0, "range_hexes must default to 0"))
+	violations.append_array(_expect(fighter.attack == 0, "attack must default to 0"))
+	violations.append_array(_expect(fighter.damage == 0, "damage must default to 0"))
 	violations.append_array(
 		_expect(fighter.weapons.is_empty(), "weapons must default to an empty array")
 	)
 	violations.append_array(_expect(fighter.tags.is_empty(), "tags must default to an empty array"))
+	violations.append_array(
+		_expect(fighter.ability_tags.is_empty(), "ability_tags must default to an empty array")
+	)
 
 	return violations
 
@@ -223,9 +228,12 @@ static func _test_tres_round_trip_via_user_dir() -> Array[String]:
 	fighter.move = 3
 	fighter.save = 4
 	fighter.health = 5
-	fighter.point_value = 6
+	fighter.range_hexes = 2
+	fighter.attack = 3
+	fighter.damage = 1
 	fighter.weapons = [melee_weapon, ranged_weapon] as Array[WeaponTemplate]
 	fighter.tags = PackedStringArray(["elite"])
+	fighter.ability_tags = PackedStringArray(["special"])
 
 	var save_result := ResourceSaver.save(fighter, TEST_TRES_PATH)
 	violations.append_array(
@@ -276,12 +284,24 @@ static func _test_tres_round_trip_via_user_dir() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			loaded.point_value == fighter.point_value,
-			"point_value must survive the .tres round trip"
+			loaded.range_hexes == fighter.range_hexes,
+			"range_hexes must survive the .tres round trip"
 		)
 	)
 	violations.append_array(
+		_expect(loaded.attack == fighter.attack, "attack must survive the .tres round trip")
+	)
+	violations.append_array(
+		_expect(loaded.damage == fighter.damage, "damage must survive the .tres round trip")
+	)
+	violations.append_array(
 		_expect(loaded.tags == fighter.tags, "tags must survive the .tres round trip")
+	)
+	violations.append_array(
+		_expect(
+			loaded.ability_tags == fighter.ability_tags,
+			"ability_tags must survive the .tres round trip"
+		)
 	)
 	violations.append_array(
 		_expect(
