@@ -1,6 +1,6 @@
-## Game-side data suite for the three authored `.tres` files under `resources/`:
-## `resources/fighters/warrior.tres`, `resources/fighters/archer.tres`, and
-## `resources/combat/combat_profile.tres`.
+## Game-side data suite for the four authored `.tres` files under `resources/`:
+## `resources/fighters/warrior.tres`, `resources/fighters/archer.tres`,
+## `resources/fighters/construction_budget.tres`, and `resources/combat/combat_profile.tres`.
 ##
 ## **There were seven.** `resources/weapons/` and `resources/dice/` are gone,
 ## deleted along with the two resource classes they were authored against:
@@ -29,6 +29,7 @@ class_name ResourceDataTest
 const WARRIOR_PATH := "res://resources/fighters/warrior.tres"
 const ARCHER_PATH := "res://resources/fighters/archer.tres"
 const COMBAT_PROFILE_PATH := "res://resources/combat/combat_profile.tres"
+const CONSTRUCTION_BUDGET_PATH := "res://resources/fighters/construction_budget.tres"
 
 ## Where the "retuning is a file edit" test saves its duplicated, retuned
 ## warrior. Never a path under `res://resources/` -- no test may write there.
@@ -46,6 +47,7 @@ static func run() -> bool:
 	violations.append_array(_test_fighter_from_archer_reports_template_stats())
 	violations.append_array(_test_retuning_is_a_file_edit())
 	violations.append_array(_test_combat_profile_loads_correctly())
+	violations.append_array(_test_all_fighters_satisfy_construction_budget())
 
 	if violations.is_empty():
 		return true
@@ -478,6 +480,54 @@ static func _test_combat_profile_loads_correctly() -> Array[String]:
 				"attack_surround_modifier (2) must differ from save_surround_modifier (3)"
 			)
 		)
+
+	return violations
+
+
+## Every authored fighter satisfies the construction budget, so a future
+## fighter cannot be added illegally without a red test.
+static func _test_all_fighters_satisfy_construction_budget() -> Array[String]:
+	var violations: Array[String] = []
+
+	var budget: Variant = load(CONSTRUCTION_BUDGET_PATH)
+	violations.append_array(
+		_expect(
+			budget is ConstructionBudget,
+			"construction_budget.tres must load as a ConstructionBudget"
+		)
+	)
+	if not (budget is ConstructionBudget):
+		return violations
+
+	var budget_resource: ConstructionBudget = budget
+	var fighters_dir := "res://resources/fighters/"
+	var fighter_count := 0
+
+	# Enumerate all files under res://resources/fighters/, filtering to FighterTemplate instances.
+	# This naturally skips construction_budget.tres, which lives in the same directory.
+	for file_path in ExtractionContractTest.files_recursive(fighters_dir):
+		if not file_path.ends_with(".tres"):
+			continue
+
+		var resource: Variant = load(file_path)
+		if not (resource is FighterTemplate):
+			continue
+
+		fighter_count += 1
+		var template: FighterTemplate = resource
+		violations.append_array(
+			_expect(
+				budget_resource.is_satisfied_by(template),
+				"the authored fighter at %s must satisfy the construction budget" % file_path
+			)
+		)
+
+	violations.append_array(
+		_expect(
+			fighter_count > 0,
+			"at least one FighterTemplate must be found under res://resources/fighters/"
+		)
+	)
 
 	return violations
 
