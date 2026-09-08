@@ -70,14 +70,14 @@ Fighter {
 
 CombatProfile {                     // one per game; every tuning dial in §7
   dieSides                           // 6
-  attackTarget, saveTarget           // baselines: 4 and 5
+  attackTarget, saveTarget           // baselines: both 5
+  engagementRange                    // 1 — see §7.3, and abilities may raise it
+  engagementModifier                 // attacker is engaged
   attackFlankModifier                // TARGET flanked
   attackSurroundModifier             // TARGET surrounded
   saveFlankModifier                  // ATTACKER flanked
   saveSurroundModifier               // ATTACKER surrounded
   guardModifier                      // defender guarded, §6
-  longRangeThreshold                 // distance at which the penalty applies
-  longRangeModifier                  // added to the attack target
   minTarget, maxTarget               // the clamp, see §7.3
 }
 
@@ -240,9 +240,10 @@ Charge, including one with a long Range. This is worth stating because the
 `melee | ranged` field deleted in §3 is the field a reader might expect to
 gate it — but no rule here ever consulted that field outside resolution, so
 nothing is lost. The attack half of a Charge resolves exactly as a standalone
-Attack does, §7's long-range penalty included, measured from wherever the move
-half ended. A long-ranged fighter that charges is therefore choosing to close
-the distance for accuracy, which is the decision Charge should present.
+Attack does, §7.3's engagement bonus included, measured from wherever the move
+half ended. A long-ranged fighter that charges is therefore trading its reach
+for contact, and buying the engagement bonus with the exposure that comes of
+standing next to someone — which is the decision Charge should present.
 
 ---
 
@@ -256,7 +257,7 @@ the distance for accuracy, which is the decision Charge should present.
 > The symbol model was replaced because it could not express a modifier. A
 > success set is membership, not magnitude, so "−1 to this attack" had no
 > representation at all; the only way to make an attack harder was to author a
-> different die. That blocked §7.3's long-range penalty outright, and it meant
+> different die. That blocked §7.3's positional modifiers outright, and it meant
 > the game's accuracy dial had exactly as many settings as someone had painted
 > faces. A target number gives the same probabilities, every value between
 > them, and modifiers as plain arithmetic.
@@ -265,18 +266,33 @@ the distance for accuracy, which is the decision Charge should present.
 > `[critical, melee, ranged, melee, opening, advantage]`: a melee attack
 > succeeded on 3 of 6 faces, which is target 4+; a ranged attack on 2 of 6,
 > which is target 5+; flanking unlocked one further face and surrounding two,
-> which are −1 and −2 to the target. The **attack** chart preserves those
-> numbers exactly, and the old ranged accuracy survives as a long-range shot:
-> 4+ penalized by +1 is 5+, the 2-in-6 it always was.
+> which are −1 and −2 to the target.
 >
-> **The save chart deliberately does not preserve them.** Revised again
-> 2026-09-08, in the same pass: its baseline moved from 4+ to 5+, its flanking
-> rows from −1/−2 to −2/−3, and Guard was given a number (−1) where §6 had only
-> promised it "improves save results." This is a balance change, not a
+> **The attack chart preserves those numbers, and arrives back at them from a
+> different direction.** The old die made a melee attack 3-in-6 and a ranged
+> attack 2-in-6 — 4+ and 5+ — as a property of the *weapon*. The chart below
+> makes an engaged attack 4+ and an unengaged one 5+, as a property of *where
+> the fighter is standing*. The same two numbers, sorted by position instead of
+> by equipment, which is the whole point of the revision: a bow held in contact
+> is no less accurate than a sword, and a sword swung at reach is not a thing
+> that happens.
+>
+> **The save chart deliberately does not preserve the old numbers.** Revised
+> again 2026-09-08, in the same pass: its baseline moved from 4+ to 5+, its
+> flanking rows from −1/−2 to −2/−3, and Guard was given a number (−1) where §6
+> had only promised it "improves save results." This is a balance change, not a
 > translation — a neutral save drops from 3-in-6 to 2-in-6, making the game
 > markedly more lethal, while a defender whose attacker is boxed in saves better
 > than the old model ever allowed. It widens the gap between a good position and
 > a bad one on both sides of the roll.
+>
+> **Both charts were then restated as pure bonuses**, in a third pass the same
+> day: the attack baseline moved from 4+ to 5+ and the long-range *penalty*
+> became an engagement *bonus*. That is a reframing rather than a retune — the
+> two forms agree at every distance except two hexes, which the threshold model
+> left as a free window and this one closes. `longRangeThreshold` and
+> `longRangeModifier` are gone; `engagementRange` and `engagementModifier`
+> replace them.
 
 ### 7.1 Declare ability tags
 
@@ -306,28 +322,54 @@ Each side starts from a baseline target in §3.1's `CombatProfile` and applies
 every modifier that currently holds. Modifiers are additive, and a **lower
 target is easier**.
 
-**The two charts are not the same chart.** They share a structure — a baseline
-and a set of modifiers — but neither their baselines nor their magnitudes
-match, and an implementation must not collapse them into one shared set of
-dials.
+**The two charts are not the same chart.** Their baselines agree at 5+ and both
+are written as bonuses, but nothing else about them does: the conditions they
+read are different, the magnitudes are different, and an implementation must
+not collapse them into one shared set of dials. That the two numbers currently
+match is a coincidence of tuning, not a rule — they are separate authored
+values and either may move alone.
 
-**Attack — baseline `attackTarget`, 4+**
+**Attack — baseline `attackTarget`, 5+**
 
-| Condition | Effect | Target |
-| --- | --- | --- |
-| *(none)* | — | 4+ |
-| Target is flanked (§8) | −1 | 3+ |
-| Target is surrounded (§8) | −2 | 2+ |
-| Distance ≥ `longRangeThreshold` (3) | +1 | *(added to the above)* |
+| Condition | Effect |
+| --- | --- |
+| *(baseline)* | 5+ |
+| Attacker is **engaged** | −1 |
+| Target is flanked (§8) | −1 |
+| Target is surrounded (§8) | −2 |
+
+An attacker is **engaged** when the distance to the target is at most
+`engagementRange` — 1, so ordinarily when the two are adjacent.
+
+These stack, which produces the familiar melee ladder: an engaged attacker is
+4+, engaged against a flanked target 3+, engaged against a surrounded target
+2+. An attacker striking from outside engagement simply never takes the first
+row, so flanking alone reads 4+ and surrounding 3+. **Range buys reach;
+contact buys accuracy**, and a ranged fighter that closes to contact gets the
+engagement bonus like anyone else — at the cost of being adjacent, which §8
+then prices against it on the save chart.
+
+`engagementRange` is a dial rather than the constant 1 because a special rule
+should be able to move it. The intended shape:
+
+> **Polearm.** This fighter's `engagementRange` is 2. It counts as engaged
+> against a target within two hexes.
+
+No ability implements this yet — §7.1's tag system is unbuilt — but the rule is
+written against a parameter so that adding one later is authoring rather than
+a change to resolution.
 
 **Save — baseline `saveTarget`, 5+**
 
-| Condition | Effect | Target |
-| --- | --- | --- |
-| *(none)* | — | 5+ |
-| Defender is guarded (§6) | −1 | 4+ |
-| **Attacker** is flanked (§8) | −2 | 3+ |
-| **Attacker** is surrounded (§8) | −3 | 2+ |
+| Condition | Effect |
+| --- | --- |
+| *(baseline)* | 5+ |
+| Defender is guarded (§6) | −1 |
+| **Attacker** is flanked (§8) | −2 |
+| **Attacker** is surrounded (§8) | −3 |
+
+An unguarded defender against an unflanked attacker saves on 5+; guarded, 4+;
+against a flanked attacker, 3+; against a surrounded one, 2+.
 
 **Read the save chart's flanking rows carefully: they key on the *attacker's*
 adjacency, not the defender's.** A defender who is flanked does not save worse
@@ -341,16 +383,32 @@ surrounded is at `5 − 1 − 3 = 1`, which the clamp below raises to 2+ — the
 case where the clamp binds today. Flanked and surrounded remain alternatives,
 never cumulative with each other (§8).
 
-Nothing in the game currently raises a save target, so a save is always in the
-range 2+ to 5+.
+**Both charts are written as bonuses.** Every row on both is a subtraction:
+each starts at 5+, the worst either roll can be, and every advantage a fighter
+has earned brings it down. Nothing in the game currently *raises* either
+target, so both land in 2+ to 5+.
 
-**The long-range penalty is a property of the shot, not of the fighter.** It is
-measured against the distance actually being attacked across, not against the
-attacker's Range stat. A fighter with Range 5 shooting a target two hexes away
-takes no penalty; the same fighter shooting across four hexes does. Range buys
-reach; accuracy is decided by where you choose to stand. This is what makes
-positioning a live decision for a ranged fighter every turn rather than a
-consequence settled at character creation.
+That is deliberate and worth keeping. A player reads one question — "what do I
+have going for me here?" — and never has to track which way a sign points. A
+penalty added later should be looked at hard, and probably re-expressed as a
+bonus the other side gets.
+
+**Engagement is a property of the shot, not of the fighter.** It is measured
+against the distance actually being attacked across, never against the
+attacker's Range stat. A fighter with Range 5 standing next to its target is
+engaged and attacks at 4+; the same fighter shooting from four hexes away is
+not, and attacks at 5+. Accuracy is decided by where you choose to stand, which
+keeps positioning a live decision every turn rather than one settled at
+character creation.
+
+**"Engaged" and "adjacent" are not synonyms, and must not be implemented as
+one.** Engagement is this chart's condition and is measured in
+`engagementRange`, which an ability may raise. §8's flanking and surrounding
+are measured in literal adjacency — distance 1 — always, for everyone. A
+Polearm fighter reaches further to *attack*; it does not flank from two hexes
+away, does not help a teammate surround from two hexes away, and does not
+become harder to walk past. Sharing a word here would quietly turn one special
+rule into four.
 
 **The effective target is then clamped to `[minTarget, maxTarget]` — `[2, 6]`.**
 The clamp is what preserves the old model's two absolutes: a natural 6 always
@@ -388,20 +446,30 @@ Nothing happens by default, though a large success margin on either side can
 unlock a small bonus (e.g. attacker steps into the vacated hex; defender
 negates part of the damage or the push).
 
-### 7.8 Balance note: Range is priced by the budget, not by the penalty
+### 7.8 Balance note: what Range costs, and where
 
-Under the old model a ranged attack was permanently less accurate than a melee
-one — 2 of 6 against 3 of 6, at every distance. That is no longer true: inside
-`longRangeThreshold` a fighter with Range 5 attacks at exactly the same target
-number as one with Range 1, while remaining out of reach.
+Range costs accuracy at every distance it is actually used for. A fighter only
+takes the engagement bonus in contact, so any attack made at reach — by a
+Range-8 sharpshooter or a Range-2 spearman alike — is a 5+ before flanking. The
+fighter that closed to contact is a 4+. That is the whole price, it is charged
+per attack rather than at character creation, and it does not scale with the
+Range stat.
 
-Range therefore has no intrinsic cost in the resolution rules, and the
-single-step penalty above does not supply one — Range 8 and Range 3 are equally
-accurate at long distance. **Whatever prices Range must be the point budget**,
-not §7.3's modifier. If long range proves oppressive in play, the first dial to
-turn is `longRangeModifier` scaling with distance rather than applying once;
-that is why both it and `longRangeThreshold` are authored values in
-`CombatProfile` rather than constants in this document.
+*(Revised 2026-09-08 with §7.3. This section previously recorded the opposite
+problem. Under the threshold model it replaced, an attack inside
+`longRangeThreshold` took no penalty at all, so a Range-5 fighter two hexes
+away was exactly as accurate as a Range-1 fighter in contact while staying out
+of reach — a free window that the engagement model closes, because two hexes is
+simply not contact. That window was the only distance at which the two models
+disagree; everywhere else they produce identical target numbers.)*
+
+**Range is still priced primarily by the point budget** (§3.2). One step of
+accuracy is a real cost but a flat one: Range 8 and Range 3 attack at the same
+5+, so nothing in resolution distinguishes them and the 15 points are what stop
+everyone buying the maximum. If long reach proves oppressive in play, the dials
+to reach for are `engagementModifier` and the budget's `maxPerStat`, not a
+distance-scaled penalty — the sign discipline in §7.3 is worth more than a
+second variable.
 
 ---
 
@@ -409,6 +477,11 @@ that is why both it and `longRangeThreshold` are authored values in
 
 - **Flanked:** exactly one enemy fighter (other than the active attacker/target) is adjacent to the fighter in question.
 - **Surrounded:** two or more such enemies are adjacent. Also counts as flanked.
+
+**Adjacent here means distance 1, always.** This section is measured in literal
+adjacency and never in §7.3's `engagementRange`, which an ability may raise. A
+fighter whose reach has been extended attacks from further away; it does not
+flank from further away. See §7.3's note on the two words.
 
 The condition is symmetric — it is asked of the attacker and of the target
 alike — but **what it is worth is not**, and the two must be read off §7.3's
@@ -505,7 +578,7 @@ fighters the sum and the count order the same way.)*
 - **Numbers are data; rules are code.** All six fighter stats, card effects, and
   every field of §3.1's `CombatProfile` and `ConstructionBudget` — the two
   baseline target numbers, the attack and save flanking modifiers *as separate
-  dials*, the guard modifier, the long-range threshold and modifier, the clamp,
+  dials*, the guard modifier, the engagement range and modifier, the clamp,
   the point total and the per-stat floor and ceiling — belong in data files the
   resolver reads. The numbers will be tuned, and tuning should never mean
   editing the combat resolver. §7.8 names the dial most likely to move first.
