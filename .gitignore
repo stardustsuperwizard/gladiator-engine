@@ -57,19 +57,11 @@ __pycache__/
 # would also ignore a future test fixture of that name anywhere in the tree.
 # ---------------------------------------------------------------------------
 
-# Written by run-agent-session, whichever vendor answered. These four are the
-# action's DECLARED OUTPUTS, read by agent-01-planner.yml and agent-06-triage.yml
-# as well -- moving them is a shared-contract change, which is #97.
-/agent-assistant-text.txt
-/agent-final-text.txt
-/agent-outcome.json
-/agent-session-failure.json
-/agent-error.txt
-/model-help.txt
-
-# Vendor-specific session transcripts, also from run-agent-session.
-/claude-output.json
-/copilot-output.jsonl
+# run-agent-session's own scratch is NOT listed here. #97 moved all eight of
+# its files -- the four declared outputs, the stderr capture, the model-help
+# dump and both vendor transcripts -- into $RUNNER_TEMP, so none of them is
+# ever written to the working tree and none needs an entry. That is what the
+# rest of this list is working towards.
 
 # agent-01-planner.yml
 /planner-prompt.txt

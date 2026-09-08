@@ -483,6 +483,12 @@ jobs:
         id: parse
         if: steps.gather.outputs.has-items == 'true'
         shell: python
+        env:
+          # Absolute paths under $RUNNER_TEMP, read through the action's
+          # declared outputs. A bare filename here would resolve against the
+          # checkout, where this action no longer writes anything.
+          OUTCOME_FILE: ${{ steps.session.outputs.outcome-file }}
+          FINAL_TEXT_FILE: ${{ steps.session.outputs.final-text-file }}
         run: |
           import json
           import os
@@ -500,10 +506,14 @@ jobs:
 
           items = json.loads(pathlib.Path("triage-items.json").read_text())
 
-          outcome_path = pathlib.Path("agent-outcome.json")
+          outcome_path = pathlib.Path(os.environ["OUTCOME_FILE"])
           outcome = json.loads(outcome_path.read_text()) if outcome_path.exists() else {}
 
-          text = pathlib.Path("agent-final-text.txt").read_text(errors="replace").strip()
+          text = (
+              pathlib.Path(os.environ["FINAL_TEXT_FILE"])
+              .read_text(errors="replace")
+              .strip()
+          )
 
           def fail(headline, guidance):
               pathlib.Path("triage-failure.json").write_text(
@@ -746,7 +756,18 @@ jobs:
 
           failure = {}
 
-          for candidate in ("triage-failure.json", "agent-session-failure.json"):
+          # $RUNNER_TEMP directly rather than the session step's
+          # `failure-file` output: this reporter runs on `failure()`,
+          # which includes a run that failed BEFORE the session step, and
+          # a skipped step's outputs are empty strings. `Path("")` is
+          # `.`, which exists and is a directory -- so reading through
+          # the output would crash the one step whose whole job is to
+          # explain a failure. The action documents this path as stable.
+          session_failure = os.path.join(
+              os.environ["RUNNER_TEMP"], "agent-session-failure.json"
+          )
+
+          for candidate in ("triage-failure.json", session_failure):
               path = pathlib.Path(candidate)
 
               if path.exists():
