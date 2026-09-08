@@ -104,9 +104,7 @@ static func outcome(attack_successes: int, save_successes: int) -> Outcome:
 ##
 ## Degenerate inputs return an empty array without advancing `rng` at all,
 ## mirroring `roll()`: a `dice_count` below 1, or a `die_sides` below 1.
-static func roll_dice(
-	dice_count: int, die_sides: int, rng: DeterministicRng
-) -> PackedInt32Array:
+static func roll_dice(dice_count: int, die_sides: int, rng: DeterministicRng) -> PackedInt32Array:
 	var rolled := PackedInt32Array()
 
 	if dice_count < 1 or die_sides < 1:
@@ -145,10 +143,7 @@ static func count_at_or_above(rolled: PackedInt32Array, target: int) -> int:
 ## are parameters because the attack and save charts use different ones
 ## (spec §8), and because a balance value may not live in GDScript.
 static func target_modifier(
-	bonus_count: int,
-	flank_modifier: int,
-	surround_modifier: int,
-	extra: int
+	bonus_count: int, flank_modifier: int, surround_modifier: int, extra: int
 ) -> int:
 	var modifier := extra
 

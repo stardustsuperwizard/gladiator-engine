@@ -523,8 +523,10 @@ static func _test_count_at_or_above_boundary_is_inclusive() -> Array[String]:
 
 	return _expect(
 		DicePool.count_at_or_above(rolled, 4) == 3,
-		"count_at_or_above() must count entries >= target inclusively, got %d"
-		% DicePool.count_at_or_above(rolled, 4)
+		(
+			"count_at_or_above() must count entries >= target inclusively, got %d"
+			% DicePool.count_at_or_above(rolled, 4)
+		)
 	)
 
 
