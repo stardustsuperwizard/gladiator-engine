@@ -1,0 +1,12 @@
+{
+  "delicate": true,
+  "expected_paths": [
+    "resources/combat/combat_profile.tres",
+    "rules/combat/combat_profile.gd",
+    "rules/tests/combat_profile_test.gd",
+    "tests/resource_data_test.gd"
+  ],
+  "implementer_eligible": true,
+  "reason": "",
+  "restricted_paths": []
+}
