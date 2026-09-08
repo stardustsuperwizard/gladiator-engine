@@ -60,7 +60,7 @@ build order and architecture live in
 ```
 Fighter {
   id, owner, position
-  stats: { move, save, health, range, attack, damage, pointValue }
+  stats: { move, save, health, range, attack, damage }
   statusFlags: [moved, charged, guarded, hazard, ...]
   damageCounter: int
   tags: [ ]            // used to gate which abilities/cards apply
@@ -68,13 +68,22 @@ Fighter {
   enhanced: bool        // "powered up" state, see Section 9
 }
 
-CombatProfile {                    // one per game; every tuning dial in §7
-  dieSides                          // 6
-  attackTarget, saveTarget          // baseline target numbers
-  flankModifier, surroundModifier   // subtracted from the target number
-  longRangeThreshold                // distance at which the penalty applies
-  longRangeModifier                 // added to the target number
-  minTarget, maxTarget              // the clamp, see §7.3
+CombatProfile {                     // one per game; every tuning dial in §7
+  dieSides                           // 6
+  attackTarget, saveTarget           // baselines: 4 and 5
+  attackFlankModifier                // TARGET flanked
+  attackSurroundModifier             // TARGET surrounded
+  saveFlankModifier                  // ATTACKER flanked
+  saveSurroundModifier               // ATTACKER surrounded
+  guardModifier                      // defender guarded, §6
+  longRangeThreshold                 // distance at which the penalty applies
+  longRangeModifier                  // added to the attack target
+  minTarget, maxTarget               // the clamp, see §7.3
+}
+
+ConstructionBudget {                // §3.2; validates an authored fighter
+  totalPoints                        // 15
+  minPerStat, maxPerStat             // 1 and 5
 }
 
 Hex {
@@ -109,8 +118,33 @@ each is answered by something the opponent could have bought instead:
 | **Damage** | Points added to the target's counter on a Hit (§7.5) | opponent's Health |
 | **Health** | Counter value at which this fighter is defeated (§9) | opponent's Damage |
 
-`pointValue` sits alongside them as the costing number — what the opponent
-scores for defeating this fighter (§9) — not as a seventh combat stat.
+There is no seventh number. A fighter is these six and nothing else.
+
+#### The construction budget
+
+Every fighter is built from the same **15 points**, with a **minimum of 1** and
+a **maximum of 5** in each of the six. The floor spends 6 of the 15, so a build
+is really an allocation of the **9 discretionary points** left over, and no
+fighter can be absent from any part of the game — every fighter can move,
+survive a hit, and make an attack.
+
+This is a rule about which fighters are *legal*, not about play, so it belongs
+to authoring rather than resolution: nothing in §7 reads the budget, and an
+implementation should assert it over authored fighters rather than compute
+with it.
+
+The reference fighters satisfy it exactly:
+
+| | Move | Save | Health | Range | Attack | Damage | Total |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Warrior | 4 | 2 | 3 | 1 | 3 | 2 | **15** |
+| Archer | 5 | 1 | 2 | 4 | 2 | 1 | **15** |
+
+The ceiling of 5 is what stops a single stat from being the whole build, and it
+binds hardest on Damage and Health, which are the pair that decides how many
+hits a fight lasts. A Damage-5 fighter defeats *any* legal fighter in one hit,
+because 5 is also the Health ceiling — that is the sharpest edge the budget
+allows, and it costs 5 of the 9 discretionary points to reach.
 
 Two cautions for implementers:
 
@@ -196,7 +230,7 @@ One per Action Step, targeting one friendly fighter:
 - **Move** — step through adjacent empty hexes up to the fighter's Move stat; must end in a different hex than it started; gain a "moved" flag.
 - **Attack** — pick a valid visible target within the fighter's Range, run the Combat Resolution algorithm (Section 7). There is no weapon to choose: an attack is fully described by the acting fighter's stats and the distance to the target.
 - **Charge** — combined Move + Attack on the same fighter in one action, only usable if the fighter has no "moved"/"charged" flag yet this round; produces a distinct "charged" flag instead of "moved."
-- **Guard** — apply a defensive flag that improves save results and prevents being pushed, until cleared at end of round.
+- **Guard** — apply a defensive flag that lowers this fighter's save target by `guardModifier` (§7.3) and prevents it being pushed, until cleared at end of round.
 - **Focus/Mulligan** — discard any number of cards from hand, draw replacements of the same type, plus one bonus card.
 
 **Lockout rule:** a fighter with a "charged" flag can't Move/Attack/Guard again until all friendly fighters share that flag (a soft round-level restriction, not a permanent one).
@@ -231,9 +265,18 @@ the distance for accuracy, which is the decision Charge should present.
 > `[critical, melee, ranged, melee, opening, advantage]`: a melee attack
 > succeeded on 3 of 6 faces, which is target 4+; a ranged attack on 2 of 6,
 > which is target 5+; flanking unlocked one further face and surrounding two,
-> which are −1 and −2 to the target. Those numbers are preserved below, and the
-> old ranged accuracy survives exactly as a long-range shot: 4+ penalized by
-> +1 is 5+, the 2-in-6 it always was.
+> which are −1 and −2 to the target. The **attack** chart preserves those
+> numbers exactly, and the old ranged accuracy survives as a long-range shot:
+> 4+ penalized by +1 is 5+, the 2-in-6 it always was.
+>
+> **The save chart deliberately does not preserve them.** Revised again
+> 2026-09-08, in the same pass: its baseline moved from 4+ to 5+, its flanking
+> rows from −1/−2 to −2/−3, and Guard was given a number (−1) where §6 had only
+> promised it "improves save results." This is a balance change, not a
+> translation — a neutral save drops from 3-in-6 to 2-in-6, making the game
+> markedly more lethal, while a defender whose attacker is boxed in saves better
+> than the old model ever allowed. It widens the gap between a good position and
+> a bad one on both sides of the roll.
 
 ### 7.1 Declare ability tags
 
@@ -259,17 +302,47 @@ hexes. It is not a pathfinding question.
 Both sides roll plain **d6**. A die is a success when its result is greater
 than or equal to that side's **effective target number**.
 
-Each side starts from a baseline target — `attackTarget` and `saveTarget` in
-§3.1's `CombatProfile`, both 4 — and applies every modifier that currently
-holds. Modifiers are additive, and a lower target is easier:
+Each side starts from a baseline target in §3.1's `CombatProfile` and applies
+every modifier that currently holds. Modifiers are additive, and a **lower
+target is easier**.
 
-| Modifier | Applies to | Effect |
+**The two charts are not the same chart.** They share a structure — a baseline
+and a set of modifiers — but neither their baselines nor their magnitudes
+match, and an implementation must not collapse them into one shared set of
+dials.
+
+**Attack — baseline `attackTarget`, 4+**
+
+| Condition | Effect | Target |
 | --- | --- | --- |
-| Target is flanked (§8) | attack | −1 |
-| Target is surrounded (§8) | attack | −2 |
-| Attacker is flanked (§8) | save | −1 |
-| Attacker is surrounded (§8) | save | −2 |
-| Distance ≥ `longRangeThreshold` (3) | attack | +1 |
+| *(none)* | — | 4+ |
+| Target is flanked (§8) | −1 | 3+ |
+| Target is surrounded (§8) | −2 | 2+ |
+| Distance ≥ `longRangeThreshold` (3) | +1 | *(added to the above)* |
+
+**Save — baseline `saveTarget`, 5+**
+
+| Condition | Effect | Target |
+| --- | --- | --- |
+| *(none)* | — | 5+ |
+| Defender is guarded (§6) | −1 | 4+ |
+| **Attacker** is flanked (§8) | −2 | 3+ |
+| **Attacker** is surrounded (§8) | −3 | 2+ |
+
+**Read the save chart's flanking rows carefully: they key on the *attacker's*
+adjacency, not the defender's.** A defender who is flanked does not save worse
+— that same board state is already priced on the attack chart, and charging it
+twice would count one fact on both sides of one comparison. What the save chart
+prices is the *attacker* being boxed in: a fighter swinging while surrounded is
+easier to turn aside.
+
+Guard stacks with the flanking rows. A guarded defender whose attacker is
+surrounded is at `5 − 1 − 3 = 1`, which the clamp below raises to 2+ — the one
+case where the clamp binds today. Flanked and surrounded remain alternatives,
+never cumulative with each other (§8).
+
+Nothing in the game currently raises a save target, so a save is always in the
+range 2+ to 5+.
 
 **The long-range penalty is a property of the shot, not of the fighter.** It is
 measured against the distance actually being attacked across, not against the
@@ -334,11 +407,24 @@ that is why both it and `longRangeThreshold` are authored values in
 
 ## 8. Flanking / Surrounding
 
-- **Flanked:** exactly one enemy fighter (other than the active attacker/target) is adjacent to the target → **−1 to the attack roll's target number** (§7.3). The same check applies symmetrically to the save roll if the *attacker* is flanked.
-- **Surrounded:** two or more such enemies are adjacent → **−2 to the target number**, and also counts as flanked.
+- **Flanked:** exactly one enemy fighter (other than the active attacker/target) is adjacent to the fighter in question.
+- **Surrounded:** two or more such enemies are adjacent. Also counts as flanked.
 
-The two are alternatives, not cumulative: a surrounded target is flanked as
-well, but the modifier applied is −2, not −3.
+The condition is symmetric — it is asked of the attacker and of the target
+alike — but **what it is worth is not**, and the two must be read off §7.3's
+two charts rather than assumed equal:
+
+| Who is flanked | Which roll it modifies | Flanked | Surrounded |
+| --- | --- | --- | --- |
+| The **target** | attack | −1 | −2 |
+| The **attacker** | save | −2 | −3 |
+
+A flanked attacker hands its victim a bigger gift than a flanked target hands
+the attacker. That asymmetry is deliberate: it makes stepping into a crowd to
+land a hit a real cost, not just a slightly worse position.
+
+The two are alternatives, not cumulative: a surrounded fighter is flanked as
+well, but only the surrounded row applies.
 
 Adjacency is the only input. Nothing here reads a stat, and neither condition
 depends on which fighter is attacking beyond excluding the two fighters in the
@@ -353,9 +439,21 @@ number.)*
 
 ## 9. Damage, Status, and Defeat
 
+> **Revised 2026-09-08.** A defeat previously awarded the defeated fighter's
+> `pointValue`, a per-fighter stat. That stat is gone (§3.2) and a defeat now
+> awards a flat 1 point.
+>
+> `pointValue` existed to price fighters against each other, which a roster of
+> unequal fighters needs. This game has no such roster: every fighter is built
+> from the same 15 points, draws its special ability from the same library and
+> its cards from the same pool, and the two sides field equal numbers. A
+> per-fighter cost that is the same for every fighter is not a cost, and
+> carrying it as an authored number invited it to drift away from the budget
+> that actually governs. §11's third tiebreaker was rewritten with it.
+
 - Each fighter tracks a damage counter.
 - **Damaged** = counter > 0. **Vulnerable** = one more point of damage would defeat them. **Undamaged** = counter is 0.
-- **Defeated** when the counter reaches or exceeds Health: remove the fighter and its tokens from the board, discard its attachments, award its point value to the opponent.
+- **Defeated** when the counter reaches or exceeds Health: remove the fighter and its tokens from the board, discard its attachments, award **1 point** to the opponent.
 - Most per-round status flags (moved, charged, guarded, hazard-triggered) clear at end of round.
 - An "enhanced" state (better stats) can be defined to trigger on a fighter meeting a condition (e.g. successfully attacking from an enemy-held zone), and reverts on a separate condition if you want that nuance.
 
@@ -377,7 +475,13 @@ number.)*
 ## 11. Victory Determination
 
 1. Highest total score wins outright.
-2. Tiebreakers, in order: only-surviving-player wins → highest value of held objective tokens wins → highest combined point-value of surviving fighters wins → draw.
+2. Tiebreakers, in order: only-surviving-player wins → highest value of held objective tokens wins → **most surviving fighters** wins → draw.
+
+*(Third tiebreaker revised 2026-09-08: it was "highest combined point-value of
+surviving fighters," which `pointValue`'s removal in §3.2 left with nothing to
+sum. A count is what that measure becomes once every fighter is built from the
+same budget — it was already asking "who has more left," and with equal
+fighters the sum and the count order the same way.)*
 
 ---
 
@@ -398,10 +502,11 @@ number.)*
   what comes back and never mutates state itself. That chokepoint is what
   later makes AI opponents, undo, and networking additive rather than
   rewrites.
-- **Numbers are data; rules are code.** Dice counts, damage values, health,
-  saves, point values, ranges, card effects, and every field of §3.1's
-  `CombatProfile` — baseline target numbers, the flank and surround modifiers,
-  the long-range threshold and modifier, the clamp — belong in data files the
+- **Numbers are data; rules are code.** All six fighter stats, card effects, and
+  every field of §3.1's `CombatProfile` and `ConstructionBudget` — the two
+  baseline target numbers, the attack and save flanking modifiers *as separate
+  dials*, the guard modifier, the long-range threshold and modifier, the clamp,
+  the point total and the per-stat floor and ceiling — belong in data files the
   resolver reads. The numbers will be tuned, and tuning should never mean
   editing the combat resolver. §7.8 names the dial most likely to move first.
 - **Distance and movement are different problems.** Section 2 distance counts
