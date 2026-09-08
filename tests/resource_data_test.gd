@@ -519,11 +519,10 @@ static func _test_fighter_from_warrior_reports_template_stats() -> Array[String]
 			"a Fighter built from warrior.tres must report save() equal to the template's save"
 		)
 	)
-	(
-		violations
-		. append_array(
-			_expect(
-				fighter.range_hexes() == template.range_hexes,
+	violations.append_array(
+		_expect(
+			fighter.range_hexes() == template.range_hexes,
+			(
 				"a Fighter built from warrior.tres must report "
 				+ "range_hexes() equal to the template's range_hexes"
 			)
@@ -541,11 +540,10 @@ static func _test_fighter_from_warrior_reports_template_stats() -> Array[String]
 			"a Fighter built from warrior.tres must report damage() equal to the template's damage"
 		)
 	)
-	(
-		violations
-		. append_array(
-			_expect(
-				fighter.ability_tags() == template.ability_tags,
+	violations.append_array(
+		_expect(
+			fighter.ability_tags() == template.ability_tags,
+			(
 				"a Fighter built from warrior.tres must report "
 				+ "ability_tags() equal to the template's ability_tags"
 			)

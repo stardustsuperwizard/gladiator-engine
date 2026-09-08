@@ -377,10 +377,13 @@ static func _test_ability_tags_returns_a_copy() -> Array[String]:
 	var returned := fighter.ability_tags()
 	returned.append("new_tag")
 
-	violations.append_array(
-		_expect(
-			fighter.ability_tags() == template.ability_tags,
-			"appending to the array ability_tags() returned must not change what a second call returns"
+	(
+		violations
+		. append_array(
+			_expect(
+				fighter.ability_tags() == template.ability_tags,
+				"appending to the array ability_tags() returned must not change what a second call returns"
+			)
 		)
 	)
 
