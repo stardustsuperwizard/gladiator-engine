@@ -144,3 +144,47 @@ internal identifiers moved (`classify_feature` → `classify_epic`, the
 `features` model key → `epics`), which is where a comprehension variable was
 left dangling and would have raised `NameError` at render time — caught by
 running the renderer against a synthetic model rather than by reading it.
+
+## 2026-09-08 — The weapon entity was an error; §7 rebuilt on target numbers
+
+Owner decision, taken in a review session with no originating Issue. Spec §3,
+§6 and §7 revised, with §8 and §12 reworded to match. No code changed — the
+tree still holds the model these rows reject, which `AGENTS.md` now records as
+the next work.
+
+**The problem.** The spec modelled a fighter's combat profile as a `Fighter`
+plus a separate, swappable `Weapon` carrying range, dice, damage and a
+`type`. Nothing in the source tabletop game works that way: a fighter's attack
+profile is printed on its card and is part of what the fighter *is*. The split
+was invented here, not inherited, and it put balance-bearing numbers on the
+presentation side of the line the project otherwise holds carefully.
+
+`type` made it worse by hiding a balance dial inside a category label. The
+authored die was `[critical, melee, ranged, melee, opening, advantage]`, so
+`melee` succeeded on 3 faces of 6 and `ranged` on 2 — a permanent 17-point
+accuracy gap that read as a description. Range and accuracy were welded
+together by an authoring accident rather than by a rule anyone wrote.
+
+| # | Item | Verdict | Rationale |
+| --- | --- | --- | --- |
+| 47 | The `Weapon` entity as a mechanical model | reject | Never in the source tabletop game; invented in this spec. Range, dice and damage are now fighter stats (§3.2), and weapons carry no mechanical weight at all (§3.3). Stated in the spec as a negative on purpose, so an implementer hunting for where range lives finds the paragraph rather than assuming an omission. |
+| 48 | `melee`/`ranged` as an attack type | reject | Not a category — a hit-probability dial wearing a category's name. Replaced by a distance-keyed penalty (§7.3) that applies to the *shot*, not the fighter, so a Range-5 fighter shooting two hexes is as accurate as a swordsman and positioning stays a live decision. Nothing else in the rules ever read the field; §6 notes that Charge, the rule most likely to be thought to depend on it, never did. |
+| 49 | Symbol-faced dice — `DiceProfile.faces`, `DicePool` success sets | rebuild | A success set is membership, not magnitude, so it cannot express a modifier: "−1 to this attack" had no representation, and the only way to make an attack harder was to author a different die. That blocked #48's penalty outright. Now d6 against a target number, clamped to `[2, 6]`. Probabilities preserved exactly — 3-of-6 is target 4+, flank and surround are −1 and −2, and the old 2-of-6 ranged survives as a long-range shot at 5+. |
+| 50 | Entry #7's description of our §7 | note | #7 rejected the source repo's real-time combat partly because "our spec §7 is discrete dice-pool + symbol matching." The rejection stands — the reason it gives is a different *resolution model*, which is still true — but that clause no longer describes §7. Corrected here rather than edited above, per the newest-at-the-bottom rule. |
+| 51 | Entry #9 / `AUDIT_NOTES.md` Q3 — the source repo's character system | note | #9 rejected it as a different data model: a respecable stat pool, free weapon choice, editable between matches, against our fixed roster. **That rejection stands for this engine and nothing here reopens it.** Recorded again because a design for a layer built on top of this engine is close to what #9 describes, and a session reading #9 alone would conclude the whole concept is dead. It is out of scope for the rules engine, which is not the same as out of scope forever. One substantive difference: #9's source system had weapon choice that carried stats, where §3.3 makes it purely cosmetic — which is precisely what lets a fighter be reskinned without touching resolution. |
+
+**What this costs.** The hand-worked combat tests are the bill, not the
+resolver. Their expectations were derived from which symbols sit on which
+face, and every one has to be re-derived against a target number:
+`attack_action_test.gd` (908 lines), `dice_pool_test.gd` (418),
+`attack_action_push_test.gd` (618), plus the field changes in
+`fighter_template_test.gd` and `resource_data_test.gd`. The draw-order
+contract survives untouched, which is the part that would have been genuinely
+expensive to move.
+
+**What it buys.** Range gained a cost that is felt in play rather than only at
+character creation, and the tuning surface collapsed from symbol arrays spread
+across two `.tres` files — where "make ranged slightly better" was not
+expressible at all — into one `CombatProfile` of plain integers. Spec §7.8
+records the risk that came with it: inside the long-range threshold, Range now
+costs no accuracy, so the point budget is the only thing pricing it.
