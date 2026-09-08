@@ -27,7 +27,7 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 ## Create a test profile with standard values and verify attack ladder.
 static func _test_attack_ladder() -> Array[String]:
 	var violations: Array[String] = []
-	var profile = CombatProfile.new()
+	var profile := CombatProfile.new()
 	profile.profile_id = "test"
 	profile.die_sides = 6
 	profile.attack_target = 5
@@ -70,7 +70,7 @@ static func _test_attack_ladder() -> Array[String]:
 ## Save ladder: guarded, attacker flanked, attacker surrounded, guarded+surrounded.
 static func _test_save_ladder() -> Array[String]:
 	var violations: Array[String] = []
-	var profile = CombatProfile.new()
+	var profile := CombatProfile.new()
 	profile.profile_id = "test"
 	profile.die_sides = 6
 	profile.attack_target = 5
@@ -115,7 +115,7 @@ static func _test_save_ladder() -> Array[String]:
 ## The ceiling and floor clamps work correctly.
 static func _test_clamped_target_floor_and_ceiling() -> Array[String]:
 	var violations: Array[String] = []
-	var profile = CombatProfile.new()
+	var profile := CombatProfile.new()
 	profile.profile_id = "test"
 	profile.die_sides = 6
 	profile.attack_target = 5
