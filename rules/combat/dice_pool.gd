@@ -1,6 +1,7 @@
-## The one module for dice-pool math: rolling, symbol matching, and outcome
-## comparison (spec §7 steps 2-5). Pure static functions over plain values and
-## a `DiceProfile` -- no board, no fighters, no `GameState`, no `TurnAction`.
+## The one module for dice-pool math: rolling, symbol matching, outcome
+## comparison, and target-number resolution (spec §7 steps 2-5). Pure static
+## functions over plain values and a `DiceProfile` -- no board, no fighters,
+## no `GameState`, no `TurnAction`.
 ## If another file needs this math, it calls this module; a second copy
 ## anywhere else is the primary correctness risk in this project.
 ##
@@ -13,9 +14,11 @@
 ## `profile.symbol_at(index)` to the result each time. Nothing else in this
 ## module touches the generator.
 ##
-## `bonus_count` is a plain `int` (0, 1 or 2) supplied by the caller. This
-## module does not know what flanking or surrounding is, does not compute
-## either, and never reads a board -- sibling task #43 produces that integer.
+## `bonus_count` in success_symbols() is a plain `int` (0, 1 or 2) supplied
+## by the caller. In target_modifier(), it is a Flanking enum constant
+## (NONE/FLANKED/SURROUNDED) also supplied by the caller, which decides
+## whether the condition holds -- this module receives the decision and
+## applies the resulting magnitude, never reads a board itself.
 class_name DicePool
 extends RefCounted
 
