@@ -121,16 +121,16 @@ jobs:
           gh issue view "$ISSUE_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,milestone,url,labels \
-            > issue.json
+            > "$RUNNER_TEMP"/issue.json
 
           # Comments carry clarifications and corrections that amend the
           # original body. --paginate merges the pages into one array.
           gh api \
             --paginate \
             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
-            > comments.json
+            > "$RUNNER_TEMP"/comments.json
 
-          echo "Planning Issue #$ISSUE_NUMBER with $(jq 'length' comments.json) comment(s)"
+          echo "Planning Issue #$ISSUE_NUMBER with $(jq 'length' "$RUNNER_TEMP"/comments.json) comment(s)"
 
       - name: Stop if Already Planned
         id: duplicate_check
@@ -176,6 +176,9 @@ jobs:
           import re
           import subprocess
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           # Budgets, in bytes unless named otherwise. These exist so the
           # prompt cannot silently grow back: every inlined section is capped,
           # and anything clipped is announced to the model rather than
@@ -210,7 +213,7 @@ jobs:
           ]
 
           root = pathlib.Path(".")
-          issue = json.loads(pathlib.Path("issue.json").read_text())
+          issue = json.loads((SCRATCH / "issue.json").read_text())
 
           sections = []
 
@@ -283,7 +286,7 @@ jobs:
           # Comments amend the Issue body. Skip this workflow's own output so
           # a forced re-plan does not read back its previous plan as a
           # requirement.
-          comments_path = pathlib.Path("comments.json")
+          comments_path = SCRATCH / "comments.json"
 
           if comments_path.exists():
               comments = json.loads(comments_path.read_text())
@@ -714,7 +717,7 @@ jobs:
           {context}
           """
 
-          prompt_path = pathlib.Path("planner-prompt.txt")
+          prompt_path = SCRATCH / "planner-prompt.txt"
           prompt_path.write_text(prompt)
 
           # Size is worth surfacing: the prompt grows with the Issue body, its
@@ -776,7 +779,7 @@ jobs:
         uses: ./.github/actions/run-agent-session
         with:
           vendor: ${{ steps.route.outputs.vendor }}
-          prompt-file: planner-prompt.txt
+          prompt-file: ${{ runner.temp }}/planner-prompt.txt
           models: ${{ steps.route.outputs.models }}
           max-ai-credits: ${{ env.PLANNER_MAX_AI_CREDITS }}
           max-turns: ${{ env.PLANNER_MAX_TURNS }}
@@ -814,9 +817,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -f "$SESSION_FAILURE" ] && [ ! -f planner-failure.json ]; then
-            cp "$SESSION_FAILURE" planner-failure.json
-            echo "Bridged $SESSION_FAILURE to planner-failure.json."
+          PLANNER_FAILURE="$RUNNER_TEMP/planner-failure.json"
+
+          if [ -f "$SESSION_FAILURE" ] && [ ! -f "$PLANNER_FAILURE" ]; then
+            cp "$SESSION_FAILURE" "$PLANNER_FAILURE"
+            echo "Bridged $SESSION_FAILURE to $PLANNER_FAILURE."
           fi
 
       - name: Extract and Validate Planner JSON
@@ -834,6 +839,9 @@ jobs:
           import os
           import pathlib
           import sys
+
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
 
           # How much model output to quote back when the parse fails. Enough
           # to see what went wrong, not so much that the Issue comment becomes
@@ -859,7 +867,7 @@ jobs:
           def fail(kind, headline, guidance, evidence=""):
               """Record a classified failure and stop the job."""
 
-              pathlib.Path("planner-failure.json").write_text(
+              (SCRATCH / "planner-failure.json").write_text(
                   json.dumps(
                       {
                           "reason": kind,
@@ -1185,7 +1193,7 @@ jobs:
                   if dependency == task["id"]:
                       schema_fail(f"{task['id']} depends on itself")
 
-          pathlib.Path("plan.json").write_text(
+          (SCRATCH / "plan.json").write_text(
               json.dumps(plan, indent=2) + "\n"
           )
 
@@ -1306,6 +1314,9 @@ jobs:
           import sys
           import tempfile
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           # The same module `agent-02-implement.yml`'s guard and
           # render-dashboard.py read, so the planner's promise and the
           # implementer's refusal cannot disagree about which paths are
@@ -1333,11 +1344,11 @@ jobs:
           parent = os.environ["ISSUE_NUMBER"]
 
           plan = json.loads(
-              pathlib.Path("plan.json").read_text()
+              (SCRATCH / "plan.json").read_text()
           )
 
           issue = json.loads(
-              pathlib.Path("issue.json").read_text()
+              (SCRATCH / "issue.json").read_text()
           )
 
           milestone = None
@@ -1877,11 +1888,14 @@ jobs:
           import subprocess
           import tempfile
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           repo = os.environ["GITHUB_REPOSITORY"]
           parent = os.environ["ISSUE_NUMBER"]
 
           plan = json.loads(
-              pathlib.Path("plan.json").read_text()
+              (SCRATCH / "plan.json").read_text()
           )
 
           created = json.loads(
@@ -2046,11 +2060,14 @@ jobs:
           import pathlib
           import subprocess
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           repo = os.environ["GITHUB_REPOSITORY"]
           issue_number = os.environ["ISSUE_NUMBER"]
           run_url = os.environ["RUN_URL"]
 
-          failure_path = pathlib.Path("planner-failure.json")
+          failure_path = SCRATCH / "planner-failure.json"
 
           failure = {}
 

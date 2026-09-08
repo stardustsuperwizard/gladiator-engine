@@ -132,10 +132,10 @@ jobs:
           gh pr view "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,url,body,comments \
-            > pr.json
+            > "$RUNNER_TEMP"/pr.json
 
-          echo "url=$(jq -r '.url' pr.json)" >> "$GITHUB_OUTPUT"
-          echo "title=$(jq -r '.title' pr.json)" >> "$GITHUB_OUTPUT"
+          echo "url=$(jq -r '.url' "$RUNNER_TEMP"/pr.json)" >> "$GITHUB_OUTPUT"
+          echo "title=$(jq -r '.title' "$RUNNER_TEMP"/pr.json)" >> "$GITHUB_OUTPUT"
 
       # Cheap and exact: a marker comment this same workflow posted earlier,
       # searched by literal string. Guards a re-run of the automatic trigger
@@ -165,7 +165,7 @@ jobs:
             ]
             | map(select(. == "<!-- agent-triage-complete -->"))
             | length > 0
-          ' pr.json > /dev/null; then
+          ' "$RUNNER_TEMP"/pr.json > /dev/null; then
             echo "already=true" >> "$GITHUB_OUTPUT"
             echo "PR #$PR_NUMBER already carries an" \
                  "<!-- agent-triage-complete --> comment. Skipping."
@@ -191,6 +191,9 @@ jobs:
           import re
           import sys
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           # Both modules live in the checkout and both document themselves as
           # importable from a workflow step, with no network, no `gh` and no
           # third-party dependencies. Imported rather than re-typed here: a
@@ -208,7 +211,7 @@ jobs:
           import issue_dependencies
           import model_response
 
-          pr = json.loads(pathlib.Path("pr.json").read_text())
+          pr = json.loads((SCRATCH / "pr.json").read_text())
 
           # A bullet naming the Issue it was already filed under is done, not
           # a new finding. The keyword has to sit immediately before the
@@ -373,7 +376,7 @@ jobs:
               for bullet in findings(latest_review, "Deferred Findings")
           ]
 
-          pathlib.Path("triage-items.json").write_text(json.dumps(items, indent=2))
+          (SCRATCH / "triage-items.json").write_text(json.dumps(items, indent=2))
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
               handle.write(f"has-items={'true' if items else 'false'}\n")
@@ -411,7 +414,10 @@ jobs:
           import os
           import pathlib
 
-          items = json.loads(pathlib.Path("triage-items.json").read_text())
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          items = json.loads((SCRATCH / "triage-items.json").read_text())
           pr_url = os.environ["PR_URL"]
 
           numbered = "\n".join(
@@ -453,7 +459,7 @@ jobs:
           {numbered}
           """
 
-          pathlib.Path("triage-prompt.txt").write_text(prompt)
+          (SCRATCH / "triage-prompt.txt").write_text(prompt)
           print(f"Prompt built: {len(prompt)} chars, {len(items)} finding(s)")
         env:
           PR_URL: ${{ steps.pr.outputs.url }}
@@ -464,7 +470,7 @@ jobs:
         uses: ./.github/actions/run-agent-session
         with:
           vendor: ${{ env.TRIAGE_VENDOR }}
-          prompt-file: triage-prompt.txt
+          prompt-file: ${{ runner.temp }}/triage-prompt.txt
           models: ${{ env.TRIAGE_MODELS }}
           max-ai-credits: ${{ env.TRIAGE_MAX_AI_CREDITS }}
           max-turns: ${{ env.TRIAGE_MAX_TURNS }}
@@ -495,6 +501,9 @@ jobs:
           import pathlib
           import sys
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           sys.path.insert(
               0,
               os.path.join(
@@ -504,7 +513,7 @@ jobs:
 
           import model_response
 
-          items = json.loads(pathlib.Path("triage-items.json").read_text())
+          items = json.loads((SCRATCH / "triage-items.json").read_text())
 
           outcome_path = pathlib.Path(os.environ["OUTCOME_FILE"])
           outcome = json.loads(outcome_path.read_text()) if outcome_path.exists() else {}
@@ -516,7 +525,7 @@ jobs:
           )
 
           def fail(headline, guidance):
-              pathlib.Path("triage-failure.json").write_text(
+              (SCRATCH / "triage-failure.json").write_text(
                   json.dumps({"headline": headline, "guidance": guidance, "evidence": text[:1500]}, indent=2)
               )
               print(f"::error::{headline}")
@@ -573,7 +582,7 @@ jobs:
                       f"Malformed element: {draft!r}",
                   )
 
-          pathlib.Path("triage-drafts.json").write_text(json.dumps(drafts, indent=2))
+          (SCRATCH / "triage-drafts.json").write_text(json.dumps(drafts, indent=2))
           print(f"Parsed {len(drafts)} draft(s).")
 
       # Everything from here on is plain gh/jq/python again -- the model's
@@ -599,8 +608,11 @@ jobs:
           import subprocess
           import sys
 
-          items = json.loads(pathlib.Path("triage-items.json").read_text())
-          drafts = json.loads(pathlib.Path("triage-drafts.json").read_text())
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          items = json.loads((SCRATCH / "triage-items.json").read_text())
+          drafts = json.loads((SCRATCH / "triage-drafts.json").read_text())
           pr_url = os.environ["PR_URL"]
           pr_number = os.environ["PR_NUMBER"]
           repo = os.environ["GITHUB_REPOSITORY"]
@@ -630,7 +642,7 @@ jobs:
           )
 
           if create.returncode != 0 and not already_exists:
-              pathlib.Path("triage-failure.json").write_text(json.dumps({
+              (SCRATCH / "triage-failure.json").write_text(json.dumps({
                   "headline": "Failed to ensure the deferred-finding label exists",
                   "guidance": create.stderr.strip(),
               }, indent=2))
@@ -650,18 +662,18 @@ jobs:
                   f"> {item['text']}"
               )
 
-              pathlib.Path("issue-body.md").write_text(body)
+              (SCRATCH / "issue-body.md").write_text(body)
 
               result = subprocess.run(
                   ["gh", "issue", "create", "--repo", repo,
                    "--title", draft["title"],
-                   "--body-file", "issue-body.md",
+                   "--body-file", SCRATCH / "issue-body.md",
                    "--label", "deferred-finding"],
                   capture_output=True, text=True,
               )
 
               if result.returncode != 0:
-                  pathlib.Path("triage-failure.json").write_text(json.dumps({
+                  (SCRATCH / "triage-failure.json").write_text(json.dumps({
                       "headline": f"Failed to file an Issue for: {draft['title']}",
                       "guidance": result.stderr.strip(),
                       "filed_before_failure": filed,
@@ -673,7 +685,7 @@ jobs:
               filed.append({"title": draft["title"], "url": url})
               print(f"Filed: {url}  ({draft['title']})")
 
-          pathlib.Path("filed-issues.json").write_text(json.dumps(filed, indent=2))
+          (SCRATCH / "filed-issues.json").write_text(json.dumps(filed, indent=2))
 
       # Runs whenever nothing above failed -- including when there was
       # nothing to triage at all, so the marker still lands and a re-run
@@ -694,10 +706,13 @@ jobs:
           import pathlib
           import subprocess
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           repo = os.environ["GITHUB_REPOSITORY"]
           pr_number = os.environ["PR_NUMBER"]
 
-          filed_path = pathlib.Path("filed-issues.json")
+          filed_path = SCRATCH / "filed-issues.json"
           filed = json.loads(filed_path.read_text()) if filed_path.exists() else []
 
           lines = [
@@ -767,7 +782,11 @@ jobs:
               os.environ["RUNNER_TEMP"], "agent-session-failure.json"
           )
 
-          for candidate in ("triage-failure.json", session_failure):
+          triage_failure = os.path.join(
+              os.environ["RUNNER_TEMP"], "triage-failure.json"
+          )
+
+          for candidate in (triage_failure, session_failure):
               path = pathlib.Path(candidate)
 
               if path.exists():

@@ -157,10 +157,10 @@ jobs:
           gh pr view "${{ github.event.pull_request.number }}" \
             --repo "$GITHUB_REPOSITORY" \
             --json headRefName,isCrossRepository \
-            > pr-meta.json
+            > "$RUNNER_TEMP"/pr-meta.json
 
-          echo "head_ref=$(jq -r '.headRefName' pr-meta.json)" >> "$GITHUB_OUTPUT"
-          echo "fork=$(jq -r '.isCrossRepository' pr-meta.json)" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$(jq -r '.headRefName' "$RUNNER_TEMP"/pr-meta.json)" >> "$GITHUB_OUTPUT"
+          echo "fork=$(jq -r '.isCrossRepository' "$RUNNER_TEMP"/pr-meta.json)" >> "$GITHUB_OUTPUT"
 
       - name: List Changed GDScript Files
         shell: bash
@@ -172,10 +172,10 @@ jobs:
             --json files \
             --jq '.files[].path' \
             | grep -E '\.gd$' \
-            > changed-gd-files.txt || true
+            > "$RUNNER_TEMP"/changed-gd-files.txt || true
 
           echo "Changed GDScript files:"
-          cat changed-gd-files.txt || echo "(none)"
+          cat "$RUNNER_TEMP"/changed-gd-files.txt || echo "(none)"
 
       - name: Check Out Pull Request Branch
         if: steps.pr.outputs.fork != 'true'
@@ -201,7 +201,7 @@ jobs:
         uses: ./.github/actions/lint-gdscript
         with:
           mode: check
-          files-list-file: changed-gd-files.txt
+          files-list-file: ${{ runner.temp }}/changed-gd-files.txt
 
       - name: Format and Lint
         if: steps.pr.outputs.fork != 'true'
@@ -209,7 +209,7 @@ jobs:
         uses: ./.github/actions/lint-gdscript
         with:
           mode: fix
-          files-list-file: changed-gd-files.txt
+          files-list-file: ${{ runner.temp }}/changed-gd-files.txt
 
       - name: Combine Lint Outputs
         id: lint
@@ -221,8 +221,8 @@ jobs:
       - name: Show Report
         shell: bash
         run: |
-          cat gdscript-lint-report.md >> "$GITHUB_STEP_SUMMARY"
-          cat gdscript-lint-report.md
+          cat "$RUNNER_TEMP"/gdscript-lint-report.md >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP"/gdscript-lint-report.md
 
       # Mechanical and deterministic -- no model call. Mirrors
       # agent-02-implement.yml's pre-PR formatting pass: commit, validate,
@@ -239,10 +239,10 @@ jobs:
           git add -u -- '*.gd'
           git commit -m "style: apply gdformat"
 
-          if ! .github/scripts/validate-godot.sh > format-validate-output.txt 2>&1; then
+          if ! .github/scripts/validate-godot.sh > "$RUNNER_TEMP"/format-validate-output.txt 2>&1; then
             echo "::warning::Validation failed after applying gdformat." \
                  "Reverting the formatting commit and continuing unformatted."
-            tail -c 4000 format-validate-output.txt
+            tail -c 4000 "$RUNNER_TEMP"/format-validate-output.txt
             git reset --hard HEAD~1
             echo "pushed=false" >> "$GITHUB_OUTPUT"
           else
@@ -269,6 +269,9 @@ jobs:
           import os
           import pathlib
           import re
+
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
 
           # `path:line: Error: message (rule-name)`, as gdlint emits it. The
           # rule group is optional on purpose: a finding whose shape this
@@ -299,7 +302,7 @@ jobs:
                   handle.write(text + "\n")
 
 
-          gdlint_output = pathlib.Path("gdlint-output.txt")
+          gdlint_output = SCRATCH / "gdlint-output.txt"
           raw = gdlint_output.read_text(errors="replace") if gdlint_output.exists() else ""
 
           fixable = {}
@@ -321,7 +324,7 @@ jobs:
               else:
                   fixable.setdefault(match["path"], []).append(line)
 
-          files_list = pathlib.Path("changed-gd-files.txt")
+          files_list = SCRATCH / "changed-gd-files.txt"
           changed = [
               line.strip()
               for line in files_list.read_text().splitlines()
@@ -417,7 +420,7 @@ jobs:
           {chr(10).join(sections)}
           """
 
-          pathlib.Path("lint-fix-prompt.txt").write_text(prompt)
+          (SCRATCH / "lint-fix-prompt.txt").write_text(prompt)
           print(f"Prompt built: {len(prompt)} chars, {len(paths)} file(s)")
 
       - name: Run Lint Fix Session
@@ -435,7 +438,7 @@ jobs:
           # Was relying on the old action's "task,write_agent" default. That
           # default is gone: capability is stated, not inherited.
           capability: write
-          prompt-file: lint-fix-prompt.txt
+          prompt-file: ${{ runner.temp }}/lint-fix-prompt.txt
           models: ${{ env.LINT_FIXER_MODELS }}
           max-ai-credits: ${{ env.LINT_FIXER_MAX_AI_CREDITS }}
           max-turns: ${{ env.LINT_FIXER_MAX_TURNS }}
@@ -462,7 +465,7 @@ jobs:
           set -euo pipefail
 
           # Collect all modified tracked files
-          git diff --name-only > changed-after-fix.txt
+          git diff --name-only > "$RUNNER_TEMP"/changed-after-fix.txt
 
           # Collect any untracked files created by the session.
           # --exclude-standard is what keeps this workflow's own scratch
@@ -471,18 +474,18 @@ jobs:
           # for exactly that reason. A new scratch file added to this job
           # must be added to .gitignore too, or every run reports itself
           # out of scope.
-          git ls-files --others --exclude-standard > untracked-after-fix.txt || true
+          git ls-files --others --exclude-standard > "$RUNNER_TEMP"/untracked-after-fix.txt || true
 
           # Combine tracked and untracked changes
-          cat changed-after-fix.txt untracked-after-fix.txt | sort -u > all-changes-after-fix.txt || true
+          cat "$RUNNER_TEMP"/changed-after-fix.txt "$RUNNER_TEMP"/untracked-after-fix.txt | sort -u > "$RUNNER_TEMP"/all-changes-after-fix.txt || true
 
           # Check if any changes are outside the targeted list
-          if [ -s all-changes-after-fix.txt ] && \
-             comm -23 <(sort all-changes-after-fix.txt) <(sort changed-gd-files.txt) | grep -q .; then
+          if [ -s "$RUNNER_TEMP"/all-changes-after-fix.txt ] && \
+             comm -23 <(sort "$RUNNER_TEMP"/all-changes-after-fix.txt) <(sort "$RUNNER_TEMP"/changed-gd-files.txt) | grep -q .; then
             echo "::error::The lint-fix session changed files outside the" \
                  "targeted list. Discarding all changes -- this needs a" \
                  "human, not another automated attempt."
-            comm -23 <(sort all-changes-after-fix.txt) <(sort changed-gd-files.txt)
+            comm -23 <(sort "$RUNNER_TEMP"/all-changes-after-fix.txt) <(sort "$RUNNER_TEMP"/changed-gd-files.txt)
 
             # Undo only the session's own changes -- the tracked files it
             # modified and the untracked files it created -- not the whole
@@ -491,12 +494,12 @@ jobs:
             # tracked paths and `git clean -fd --` only acts on untracked
             # ones, so mixing them makes the whole command fail closed
             # instead of restoring anything.
-            if [ -s changed-after-fix.txt ]; then
-              mapfile -t TRACKED_CHANGES < changed-after-fix.txt
+            if [ -s "$RUNNER_TEMP"/changed-after-fix.txt ]; then
+              mapfile -t TRACKED_CHANGES < "$RUNNER_TEMP"/changed-after-fix.txt
               git checkout -- "${TRACKED_CHANGES[@]}"
             fi
-            if [ -s untracked-after-fix.txt ]; then
-              mapfile -t UNTRACKED_CHANGES < untracked-after-fix.txt
+            if [ -s "$RUNNER_TEMP"/untracked-after-fix.txt ]; then
+              mapfile -t UNTRACKED_CHANGES < "$RUNNER_TEMP"/untracked-after-fix.txt
               git clean -fd -- "${UNTRACKED_CHANGES[@]}"
             fi
             echo "in_scope=false" >> "$GITHUB_OUTPUT"
@@ -516,7 +519,7 @@ jobs:
         uses: ./.github/actions/lint-gdscript
         with:
           mode: fix
-          files-list-file: changed-gd-files.txt
+          files-list-file: ${{ runner.temp }}/changed-gd-files.txt
 
       # The re-check reports every finding gdlint still sees, withheld ones
       # included -- so its `clean` output is false for exactly the findings
@@ -537,6 +540,9 @@ jobs:
           import pathlib
           import re
 
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
           # Same shape as `Build Lint Fix Prompt` above; kept in step with it.
           FINDING = re.compile(
               r"^(?P<path>.+?):(?P<line>\d+): Error: "
@@ -549,7 +555,7 @@ jobs:
               if rule.strip()
           }
 
-          gdlint_output = pathlib.Path("gdlint-output.txt")
+          gdlint_output = SCRATCH / "gdlint-output.txt"
           raw = gdlint_output.read_text(errors="replace") if gdlint_output.exists() else ""
 
           outstanding = []
@@ -595,7 +601,7 @@ jobs:
           # Stage the targeted changes first, then validate that exact set.
           # This ensures the tree that gets validated is the tree that gets
           # committed -- nothing slips in or drops out between the two.
-          mapfile -t FILES < changed-gd-files.txt
+          mapfile -t FILES < "$RUNNER_TEMP"/changed-gd-files.txt
 
           # An empty pathspec would make `git add -u` stage the whole work
           # tree -- the exact "committed more than was validated" failure
@@ -603,7 +609,7 @@ jobs:
           # runs when gdlint reported findings in these files), so treat it
           # as a broken precondition rather than something to work around.
           if [ "${#FILES[@]}" -eq 0 ]; then
-            echo "::error::changed-gd-files.txt is empty but the tree is" \
+            echo "::error::The changed-file list is empty but the tree is" \
                  "dirty. Refusing to stage an unbounded set."
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -611,10 +617,10 @@ jobs:
 
           git add -u -- "${FILES[@]}"
 
-          if ! .github/scripts/validate-godot.sh > lint-fix-validate-output.txt 2>&1; then
+          if ! .github/scripts/validate-godot.sh > "$RUNNER_TEMP"/lint-fix-validate-output.txt 2>&1; then
             echo "::error::Validation failed after the lint-fix session." \
                  "Discarding its changes."
-            tail -c 4000 lint-fix-validate-output.txt
+            tail -c 4000 "$RUNNER_TEMP"/lint-fix-validate-output.txt
 
             # Undo only the targeted files just staged above -- the scope
             # check already guarantees nothing else in the work tree was
@@ -651,8 +657,8 @@ jobs:
           steps.build-prompt.outputs.has-fixable == 'true'
         shell: bash
         run: |
-          cat gdscript-lint-report.md >> "$GITHUB_STEP_SUMMARY"
-          cat gdscript-lint-report.md
+          cat "$RUNNER_TEMP"/gdscript-lint-report.md >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP"/gdscript-lint-report.md
 
       # A withheld finding is never resolved by anything this job does, so
       # it fails the check on its own terms -- independent of whether an

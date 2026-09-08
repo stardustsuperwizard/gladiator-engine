@@ -46,7 +46,7 @@ inputs:
 outputs:
   prompt-file:
     description: Path to the built reviewer prompt
-    value: reviewer-prompt.txt
+    value: ${{ runner.temp }}/reviewer-prompt.txt
   task-number:
     description: The resolved Implementation Task Issue number, if any
     value: ${{ steps.resolve-pr.outputs.task_number || inputs.issue-number }}
@@ -66,11 +66,11 @@ runs:
         gh pr view "$PR_NUMBER" \
           --repo "$GITHUB_REPOSITORY" \
           --json number,title,body,url,headRefName,isDraft,files \
-          > pr.json
+          > "$RUNNER_TEMP"/pr.json
 
         gh pr diff "$PR_NUMBER" \
           --repo "$GITHUB_REPOSITORY" \
-          > review-diff.txt
+          > "$RUNNER_TEMP"/review-diff.txt
 
         OWNER="${GITHUB_REPOSITORY%%/*}"
         NAME="${GITHUB_REPOSITORY##*/}"
@@ -91,21 +91,21 @@ runs:
             }
           ' \
           --jq '.data.repository.pullRequest.closingIssuesReferences.nodes' \
-          > closing-issues.json
+          > "$RUNNER_TEMP"/closing-issues.json
 
-        TASK_NUMBER=$(jq -r '.[0].number // empty' closing-issues.json)
+        TASK_NUMBER=$(jq -r '.[0].number // empty' "$RUNNER_TEMP"/closing-issues.json)
 
         if [ -z "$TASK_NUMBER" ]; then
           echo "::warning::PR #$PR_NUMBER does not close any Issue. There is" \
                "no acceptance-criteria contract to review against."
-          echo '{}' > task.json
+          echo '{}' > "$RUNNER_TEMP"/task.json
         else
           echo "task_number=$TASK_NUMBER" >> "$GITHUB_OUTPUT"
 
           gh issue view "$TASK_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,url,parent \
-            > task.json
+            > "$RUNNER_TEMP"/task.json
         fi
 
     - name: Resolve Diff Context
@@ -119,19 +119,19 @@ runs:
       run: |
         set -euo pipefail
 
-        cp "$DIFF_FILE" review-diff.txt
+        cp "$DIFF_FILE" "$RUNNER_TEMP"/review-diff.txt
 
         gh issue view "$ISSUE_NUMBER" \
           --repo "$GITHUB_REPOSITORY" \
           --json number,title,body,url \
-          > task.json
+          > "$RUNNER_TEMP"/task.json
 
         jq -n \
           --arg title "$PR_TITLE" \
           --arg branch "$PR_BRANCH" \
           '{number: null, title: $title, headRefName: $branch,
             body: "(not yet opened -- reviewed before the pull request exists)"}' \
-          > pr.json
+          > "$RUNNER_TEMP"/pr.json
 
     - name: Build Prompt
       shell: python
@@ -143,11 +143,14 @@ runs:
         import os
         import pathlib
 
+        # Scratch lives in $RUNNER_TEMP, never the working tree.
+        SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
         root = pathlib.Path(".")
         max_diff = int(os.environ["MAX_DIFF_CHARS"])
 
-        pr = json.loads(pathlib.Path("pr.json").read_text())
-        task = json.loads(pathlib.Path("task.json").read_text())
+        pr = json.loads((SCRATCH / "pr.json").read_text())
+        task = json.loads((SCRATCH / "task.json").read_text())
 
         sections = []
 
@@ -219,7 +222,7 @@ runs:
                 + pathlib.Path(lint_report_path).read_text(errors="replace")
             )
 
-        diff = pathlib.Path("review-diff.txt").read_text(errors="replace")
+        diff = (SCRATCH / "review-diff.txt").read_text(errors="replace")
         truncated = len(diff) > max_diff
 
         if truncated:
@@ -335,6 +338,6 @@ runs:
         {context}
         """
 
-        pathlib.Path("reviewer-prompt.txt").write_text(prompt)
+        (SCRATCH / "reviewer-prompt.txt").write_text(prompt)
 
         print(f"Prompt built: {len(prompt)} chars, truncated={truncated}")

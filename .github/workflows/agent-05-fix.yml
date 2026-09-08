@@ -206,10 +206,10 @@ jobs:
           gh pr view "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,url,headRefName,isCrossRepository \
-            > pr-meta.json
+            > "$RUNNER_TEMP"/pr-meta.json
 
-          echo "head_ref=$(jq -r '.headRefName' pr-meta.json)" >> "$GITHUB_OUTPUT"
-          echo "pr_url=$(jq -r '.url' pr-meta.json)" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$(jq -r '.headRefName' "$RUNNER_TEMP"/pr-meta.json)" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$(jq -r '.url' "$RUNNER_TEMP"/pr-meta.json)" >> "$GITHUB_OUTPUT"
 
           # Both checks below are about *this workflow's credentials*, not
           # about whether the pull request deserves a fix. Both are cheap,
@@ -226,7 +226,7 @@ jobs:
           # uses for the identical restriction on the Issue side.
 
           # A fork PR's branch cannot be pushed to with this token.
-          if [ "$(jq -r '.isCrossRepository' pr-meta.json)" = "true" ]; then
+          if [ "$(jq -r '.isCrossRepository' "$RUNNER_TEMP"/pr-meta.json)" = "true" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "reason=fork" >> "$GITHUB_OUTPUT"
             exit 0
@@ -262,21 +262,21 @@ jobs:
           # would read as "nothing restricted" -- the failure that hides.
           if ! gh api --paginate \
                  "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
-                 --jq '.[].filename' > pr-files.txt \
+                 --jq '.[].filename' > "$RUNNER_TEMP"/pr-files.txt \
               || ! python3 .github/scripts/task_scope.py \
-                   --paths-file pr-files.txt > pr-scope.json
+                   --paths-file "$RUNNER_TEMP"/pr-files.txt > "$RUNNER_TEMP"/pr-scope.json
           then
             echo "::warning::Could not read this pull request's changed" \
               "files; treating it as pushable."
-            echo '{"pushable": true, "restricted_paths": []}' > pr-scope.json
+            echo '{"pushable": true, "restricted_paths": []}' > "$RUNNER_TEMP"/pr-scope.json
           fi
 
-          if [ "$(jq -r '.pushable' pr-scope.json)" = "false" ]; then
+          if [ "$(jq -r '.pushable' "$RUNNER_TEMP"/pr-scope.json)" = "false" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "reason=workflow_scope" >> "$GITHUB_OUTPUT"
             echo "restricted_paths=$(
               jq -r '[.restricted_paths[] | "`\(.)`"] | join(", ")' \
-                pr-scope.json
+                "$RUNNER_TEMP"/pr-scope.json
             )" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -322,11 +322,11 @@ jobs:
             echo "## Fix cycle not started"
             echo ""
             echo "$MSG"
-          } > skip-comment.md
+          } > "$RUNNER_TEMP"/skip-comment.md
 
           gh pr comment "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file skip-comment.md
+            --body-file "$RUNNER_TEMP"/skip-comment.md
 
           # Release the button that was pressed. Empty on a
           # workflow_dispatch run, which pressed none.
@@ -336,7 +336,7 @@ jobs:
               --remove-label "$TRIGGER_LABEL" || true
           fi
 
-          cat skip-comment.md >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP"/skip-comment.md >> "$GITHUB_STEP_SUMMARY"
 
       # No model call -- pure gh/jq/python -- so it is cheap to run
       # unconditionally just to learn the current verdict, before deciding
@@ -395,11 +395,11 @@ jobs:
             echo "## Fix cycle not started"
             echo ""
             echo "$MSG"
-          } > skip-comment.md
+          } > "$RUNNER_TEMP"/skip-comment.md
 
           gh pr comment "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file skip-comment.md
+            --body-file "$RUNNER_TEMP"/skip-comment.md
 
           # Release the button that was pressed. Empty on a
           # workflow_dispatch run, which pressed none.
@@ -409,7 +409,7 @@ jobs:
               --remove-label "$TRIGGER_LABEL" || true
           fi
 
-          cat skip-comment.md >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP"/skip-comment.md >> "$GITHUB_STEP_SUMMARY"
 
       # Two inputs decide the fixer's model: how much model the planner
       # thought this task needed, and how many times fixing it has already
@@ -497,16 +497,16 @@ jobs:
           gh pr view "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json body,closingIssuesReferences \
-            > fixer-pr-meta.json
+            > "$RUNNER_TEMP"/fixer-pr-meta.json
 
           ISSUE="$(
             jq -r '.closingIssuesReferences[0].number // empty' \
-              fixer-pr-meta.json
+              "$RUNNER_TEMP"/fixer-pr-meta.json
           )"
 
           if [ -z "$ISSUE" ]; then
             ISSUE="$(
-              jq -r '.body // ""' fixer-pr-meta.json \
+              jq -r '.body // ""' "$RUNNER_TEMP"/fixer-pr-meta.json \
                 | grep -oiE 'closes[[:space:]]+#[0-9]+' \
                 | head -1 \
                 | grep -oE '[0-9]+' \
@@ -677,7 +677,7 @@ jobs:
             echo '{"reason":"uncommitted_changes",' \
                  '"headline":"The fixer left uncommitted changes instead of committing or making no changes",' \
                  '"guidance":"This is a session-behavior fault, not a budget or availability one. Re-adding the same label retries from a clean branch."}' \
-              > fixer-failure.json
+              > "$RUNNER_TEMP"/fixer-failure.json
 
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             echo "reason=uncommitted_changes" >> "$GITHUB_OUTPUT"
@@ -730,11 +730,11 @@ jobs:
             echo ""
             echo "This does not change the \`review:fix\` label. Re-review" \
                  "with the \`agent:reviewer:copilot\` label when ready."
-          } > fix-comment.md
+          } > "$RUNNER_TEMP"/fix-comment.md
 
           gh pr comment "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file fix-comment.md
+            --body-file "$RUNNER_TEMP"/fix-comment.md
 
           # Release the button that was pressed. Empty on a
           # workflow_dispatch run, which pressed none.
@@ -744,7 +744,7 @@ jobs:
               --remove-label "$TRIGGER_LABEL" || true
           fi
 
-          cat fix-comment.md >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP"/fix-comment.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report No Commit Pushed
         if: >-
@@ -766,11 +766,11 @@ jobs:
             echo "a human to decide. Check the session log:"
             echo ""
             echo "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          } > no-commit-comment.md
+          } > "$RUNNER_TEMP"/no-commit-comment.md
 
           gh pr comment "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file no-commit-comment.md
+            --body-file "$RUNNER_TEMP"/no-commit-comment.md
 
           # Release the button that was pressed. Empty on a
           # workflow_dispatch run, which pressed none.
@@ -815,7 +815,11 @@ jobs:
               os.environ["RUNNER_TEMP"], "agent-session-failure.json"
           )
 
-          for candidate in ("fixer-failure.json", session_failure):
+          fixer_failure = os.path.join(
+              os.environ["RUNNER_TEMP"], "fixer-failure.json"
+          )
+
+          for candidate in (fixer_failure, session_failure):
               path = pathlib.Path(candidate)
 
               if path.exists():

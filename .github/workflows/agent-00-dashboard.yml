@@ -171,8 +171,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          .github/scripts/render-dashboard.py > dashboard.md
-          wc -c dashboard.md
+          .github/scripts/render-dashboard.py > "$RUNNER_TEMP"/dashboard.md
+          wc -c "$RUNNER_TEMP"/dashboard.md
 
       - name: Publish
         shell: bash
@@ -185,7 +185,7 @@ jobs:
           # as it likes without becoming noise.
           gh issue edit "$NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            --body-file dashboard.md
+            --body-file "$RUNNER_TEMP"/dashboard.md
 
           echo "Published to #$NUMBER"
 
@@ -239,7 +239,7 @@ jobs:
             echo
             echo "Rendered to issue #${NUMBER:-?}."
             echo
-            if [ -f dashboard.md ]; then
-              cat dashboard.md
+            if [ -f "$RUNNER_TEMP"/dashboard.md ]; then
+              cat "$RUNNER_TEMP"/dashboard.md
             fi
           } >> "$GITHUB_STEP_SUMMARY"

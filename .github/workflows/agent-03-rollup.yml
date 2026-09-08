@@ -59,14 +59,14 @@ jobs:
           gh issue view "$ISSUE_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,url,state,parent,subIssues \
-            > issue.json
+            > "$RUNNER_TEMP"/issue.json
 
-          STATE=$(jq -r '.state' issue.json)
-          OWN_SUBS=$(jq -r '.subIssues.totalCount // 0' issue.json)
+          STATE=$(jq -r '.state' "$RUNNER_TEMP"/issue.json)
+          OWN_SUBS=$(jq -r '.subIssues.totalCount // 0' "$RUNNER_TEMP"/issue.json)
 
           {
             echo "state=$STATE"
-            echo "url=$(jq -r '.url' issue.json)"
+            echo "url=$(jq -r '.url' "$RUNNER_TEMP"/issue.json)"
             echo "own_subs=$OWN_SUBS"
           } >> "$GITHUB_OUTPUT"
 
@@ -80,7 +80,7 @@ jobs:
             exit 0
           fi
 
-          PARENT=$(jq -r '.parent.number // empty' issue.json)
+          PARENT=$(jq -r '.parent.number // empty' "$RUNNER_TEMP"/issue.json)
 
           if [ -z "$PARENT" ]; then
             echo "has_parent=false" >> "$GITHUB_OUTPUT"
@@ -110,10 +110,10 @@ jobs:
           gh issue view "$PARENT" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,url,state,subIssues \
-            > parent.json
+            > "$RUNNER_TEMP"/parent.json
 
-          PARENT_STATE=$(jq -r '.state' parent.json)
-          TOTAL=$(jq -r '.subIssues.totalCount // 0' parent.json)
+          PARENT_STATE=$(jq -r '.state' "$RUNNER_TEMP"/parent.json)
+          TOTAL=$(jq -r '.subIssues.totalCount // 0' "$RUNNER_TEMP"/parent.json)
 
           # Read the child states directly rather than trusting the cached
           # subIssuesSummary counters, which can lag the close event.
@@ -121,17 +121,17 @@ jobs:
             jq -r '
               [.subIssues.nodes[]? | select(.state == "OPEN") | "#\(.number)"]
               | join(", ")
-            ' parent.json
+            ' "$RUNNER_TEMP"/parent.json
           )
 
           OPEN_COUNT=$(
             jq -r '[.subIssues.nodes[]? | select(.state == "OPEN")] | length' \
-              parent.json
+              "$RUNNER_TEMP"/parent.json
           )
 
           {
-            echo "url=$(jq -r '.url' parent.json)"
-            echo "title=$(jq -r '.title' parent.json)"
+            echo "url=$(jq -r '.url' "$RUNNER_TEMP"/parent.json)"
+            echo "title=$(jq -r '.title' "$RUNNER_TEMP"/parent.json)"
             echo "total=$TOTAL"
             echo "open_count=$OPEN_COUNT"
             echo "open_subs=$OPEN_SUBS"

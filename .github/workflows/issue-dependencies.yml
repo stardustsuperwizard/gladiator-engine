@@ -126,22 +126,22 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --json \
             "${ARGS[@]}" \
-            > report.json
+            > "$RUNNER_TEMP"/report.json
           STATUS=$?
           set -e
 
-          if [ ! -s report.json ]; then
+          if [ ! -s "$RUNNER_TEMP"/report.json ]; then
             echo "::error::The sync produced no report."
             exit 1
           fi
 
-          jq -r '.markdown' report.json >> "$GITHUB_STEP_SUMMARY"
-          jq -r '.markdown' report.json
+          jq -r '.markdown' "$RUNNER_TEMP"/report.json >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.markdown' "$RUNNER_TEMP"/report.json
 
           {
             echo "status=$STATUS"
-            echo "needs_attention=$(jq -r '.needs_attention' report.json)"
-            echo "created=$(jq -r '.created | length' report.json)"
+            echo "needs_attention=$(jq -r '.needs_attention' "$RUNNER_TEMP"/report.json)"
+            echo "created=$(jq -r '.created | length' "$RUNNER_TEMP"/report.json)"
           } >> "$GITHUB_OUTPUT"
 
       # Only when a person has to do something about it. A clean sync is
@@ -173,11 +173,11 @@ jobs:
             echo "acted on. Some rows could not be turned into a GitHub"
             echo "dependency:"
             echo
-            jq -r '.markdown' report.json
+            jq -r '.markdown' "$RUNNER_TEMP"/report.json
             echo
             echo "Fix the table and this comment updates itself on the next"
             echo "edit. The rest of the chain was wired regardless."
-          } > sync-comment.md
+          } > "$RUNNER_TEMP"/sync-comment.md
 
           EXISTING=$(
             gh api \
@@ -189,7 +189,7 @@ jobs:
             # `jq -Rs` wraps the whole file as one JSON string, which is the
             # only escaping-proof way to send a markdown body containing
             # backticks, quotes and newlines through `gh api`.
-            jq -Rs '{body: .}' sync-comment.md \
+            jq -Rs '{body: .}' "$RUNNER_TEMP"/sync-comment.md \
               | gh api \
                   --method PATCH \
                   "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING" \
@@ -198,7 +198,7 @@ jobs:
           else
             gh issue comment "$ISSUE_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
-              --body-file sync-comment.md
+              --body-file "$RUNNER_TEMP"/sync-comment.md
             echo "Commented on #$ISSUE_NUMBER."
           fi
 
