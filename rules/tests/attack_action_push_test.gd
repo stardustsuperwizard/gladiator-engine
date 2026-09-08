@@ -14,10 +14,17 @@
 ## approaches the limit, split it" -- rather than raising the ceiling or
 ## thinning the acceptance coverage to fit.
 ##
-## **No fixture is redefined.** Every helper below -- `_weapon()`, `_place()`,
-## `_build_state()`, `ATTACKER_HEX` and the rest -- is a one-line forward onto
-## `AttackActionTest`'s own, so this file carries no second copy of a fixture
-## the parent suite already defines and whose tests already exercise it.
+## **No fixture is redefined.** Every helper below -- `_fighter_template()`,
+## `_place()`, `_build_state()`, `ATTACKER_HEX` and the rest -- is a one-line
+## forward onto `AttackActionTest`'s own, so this file carries no second copy
+## of a fixture the parent suite already defines and whose tests already
+## exercise it.
+##
+## **The outcome is forced, never rolled for.** Every case that needs a
+## specific Hit, Drawn or Miss builds its `CombatProfile` through
+## `_forced_profile()`, whose targets of `ALWAYS_TARGET` and `NEVER_TARGET`
+## count every die or none. Nothing here depends on what a seed produced, and
+## nothing here pins a captured dice sequence.
 class_name AttackActionPushTest
 extends RefCounted
 
@@ -52,30 +59,28 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 	return AttackActionTest._expect(condition, message)
 
 
-static func _fighter_template(save: int, health: int) -> FighterTemplate:
-	return AttackActionTest._fighter_template(save, health)
+static func _fighter_template(
+	save: int, health: int, range_hexes: int = 1, attack: int = 3, damage: int = 1
+) -> FighterTemplate:
+	return AttackActionTest.fighter_template(save, health, range_hexes, attack, damage)
 
 
-static func _weapon(
-	range_hexes: int, dice_count: int, damage_value: int, weapon_type: String = WeaponTemplate.MELEE
-) -> WeaponTemplate:
-	return AttackActionTest._weapon(range_hexes, dice_count, damage_value, weapon_type)
+static func _standard_profile() -> CombatProfile:
+	return AttackActionTest.standard_profile()
 
 
-static func _always_profile() -> DiceProfile:
-	return AttackActionTest._always_profile()
+static func _forced_profile(attack_target: int, save_target: int) -> CombatProfile:
+	return AttackActionTest.forced_profile(attack_target, save_target)
 
 
-static func _never_profile() -> DiceProfile:
-	return AttackActionTest._never_profile()
+## Every die counts on this roll.
+static func _always() -> int:
+	return AttackActionTest.ALWAYS_TARGET
 
 
-static func _attack_profile() -> DiceProfile:
-	return AttackActionTest._attack_profile()
-
-
-static func _save_profile() -> DiceProfile:
-	return AttackActionTest._save_profile()
+## No die counts on this roll.
+static func _never() -> int:
+	return AttackActionTest.NEVER_TARGET
 
 
 static func _build_state(seed_value: int, blocked: Array[Vector3i] = []) -> GameState:
@@ -126,7 +131,7 @@ static func _test_push_back_hit_moves_the_target_away() -> Array[String]:
 	_place(state, "b1", "p2", TARGET_HEX, template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 1), template, _always_profile(), _never_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _never()), true
 	)
 	var result := action.resolve(state)
 
@@ -181,7 +186,7 @@ static func _test_pushed_target_gains_no_status_flag() -> Array[String]:
 	_place(state, "b1", "p2", TARGET_HEX, template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 1), template, _always_profile(), _never_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _never()), true
 	)
 	action.resolve(state)
 
@@ -201,14 +206,16 @@ static func _test_pushed_target_gains_no_status_flag() -> Array[String]:
 ## target still takes none.
 static func _test_push_back_drawn_moves_the_target_and_spares_damage() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 5)
+
+	# Two attack dice against two save dice, so ALWAYS against ALWAYS ties.
+	var template := _fighter_template(2, 5, 1, 2, 2)
 	var state := _build_state(13)
 	_place(state, "a1", "p1", ATTACKER_HEX, template)
 	_place(state, "b1", "p2", TARGET_HEX, template)
 
-	# Two attack dice, two save dice, every face a critical on both: 2 and 2.
+	# Two attack dice, two save dice, every die counting on both: 2 and 2.
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 2, 2), template, _always_profile(), _always_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _always()), true
 	)
 	var result := action.resolve(state)
 
@@ -246,7 +253,7 @@ static func _test_push_back_miss_does_not_move_the_target() -> Array[String]:
 	_place(state, "b1", "p2", TARGET_HEX, template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 2), template, _never_profile(), _always_profile(), true
+		"a1", "b1", template, template, _forced_profile(_never(), _always()), true
 	)
 	var result := action.resolve(state)
 
@@ -272,19 +279,22 @@ static func _test_push_back_miss_does_not_move_the_target() -> Array[String]:
 ## asserted here directly and for all three at once.
 static func _test_push_back_false_never_moves_the_target() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 5)
 
-	# label, attack profile, save profile, expected outcome
+	# Two attack dice against two save dice, so ALWAYS against ALWAYS is the
+	# Drawn case rather than a Hit.
+	var template := _fighter_template(2, 5, 1, 2, 1)
+
+	# label, attack target, save target, expected outcome
 	var cases := [
-		["Hit", _always_profile(), _never_profile(), DicePool.Outcome.HIT],
-		["Drawn", _always_profile(), _always_profile(), DicePool.Outcome.DRAWN],
-		["Miss", _never_profile(), _always_profile(), DicePool.Outcome.MISS],
+		["Hit", _always(), _never(), DicePool.Outcome.HIT],
+		["Drawn", _always(), _always(), DicePool.Outcome.DRAWN],
+		["Miss", _never(), _always(), DicePool.Outcome.MISS],
 	]
 
 	for entry in cases:
 		var label: String = entry[0]
-		var attack_profile: DiceProfile = entry[1]
-		var save_profile: DiceProfile = entry[2]
+		var attack_target: int = entry[1]
+		var save_target: int = entry[2]
 		var expected: DicePool.Outcome = entry[3]
 
 		var state := _build_state(13)
@@ -292,7 +302,7 @@ static func _test_push_back_false_never_moves_the_target() -> Array[String]:
 		_place(state, "b1", "p2", TARGET_HEX, template)
 
 		var action := AttackAction.new(
-			"a1", "b1", _weapon(1, 2, 1), template, attack_profile, save_profile, false
+			"a1", "b1", template, template, _forced_profile(attack_target, save_target), false
 		)
 		action.resolve(state)
 
@@ -325,7 +335,7 @@ static func _test_a_defeated_target_is_not_pushed() -> Array[String]:
 	_place(state, "b1", "p2", TARGET_HEX, template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 1), template, _always_profile(), _never_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _never()), true
 	)
 	var result := action.resolve(state)
 
@@ -353,7 +363,7 @@ static func _test_push_destination_blocked_leaves_the_target_in_place() -> Array
 	_place(state, "b1", "p2", TARGET_HEX, template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 1), template, _always_profile(), _never_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _never()), true
 	)
 	var result := action.resolve(state)
 
@@ -392,7 +402,7 @@ static func _test_push_destination_occupied_leaves_the_target_in_place() -> Arra
 	_place(state, "c1", "p1", FAR_HEX, template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 1), template, _always_profile(), _never_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _never()), true
 	)
 	var result := action.resolve(state)
 
@@ -444,7 +454,7 @@ static func _test_push_destination_off_board_leaves_the_target_in_place() -> Arr
 	)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 1), template, _always_profile(), _never_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _never()), true
 	)
 	var result := action.resolve(state)
 
@@ -505,7 +515,7 @@ static func _test_push_destination_tie_break_uses_directions_order() -> Array[St
 	_place(state, "b1", "p2", TARGET_HEX, template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 1), template, _always_profile(), _never_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _never()), true
 	)
 	action.resolve(state)
 
@@ -538,8 +548,7 @@ static func _test_push_destination_tie_break_uses_directions_order() -> Array[St
 ## documents, one ring further out.
 static func _test_ranged_push_moves_the_target_one_hex_directly_away() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 5)
-	var weapon := _weapon(2, 3, 1, WeaponTemplate.RANGED)
+	var template := _fighter_template(2, 5, 2)
 	var state := _build_state(13)
 	_place(state, "a1", "p1", ATTACKER_HEX, template)
 	_place(state, "b1", "p2", FAR_HEX, template)
@@ -552,7 +561,7 @@ static func _test_ranged_push_moves_the_target_one_hex_directly_away() -> Array[
 	)
 
 	var action := AttackAction.new(
-		"a1", "b1", weapon, template, _always_profile(), _never_profile(), true
+		"a1", "b1", template, template, _forced_profile(_always(), _never()), true
 	)
 	var result := action.resolve(state)
 
@@ -591,15 +600,11 @@ static func _test_equal_seeds_produce_identical_digest_with_a_push() -> Array[St
 	var template := _fighter_template(3, 3)
 
 	var first_state := _happy_path_state(13, template)
-	var first := AttackAction.new(
-		"a1", "b1", _weapon(1, 4, 1), template, _attack_profile(), _save_profile(), true
-	)
+	var first := AttackAction.new("a1", "b1", template, template, _standard_profile(), true)
 	first.resolve(first_state)
 
 	var second_state := _happy_path_state(13, template)
-	var second := AttackAction.new(
-		"a1", "b1", _weapon(1, 4, 1), template, _attack_profile(), _save_profile(), true
-	)
+	var second := AttackAction.new("a1", "b1", template, template, _standard_profile(), true)
 	second.resolve(second_state)
 
 	violations.append_array(
