@@ -2,6 +2,7 @@
 ## Resource loading and field verification happens in tests/resource_data_test.gd.
 class_name CombatProfileTest
 
+
 static func run() -> bool:
 	var violations: Array[String] = []
 
@@ -42,17 +43,11 @@ static func _test_attack_ladder() -> Array[String]:
 	profile.max_target = 6
 
 	violations.append_array(
-		_expect(
-			profile.clamped_target(5, 0) == 5,
-			"clamped_target(5, 0) must be 5"
-		)
+		_expect(profile.clamped_target(5, 0) == 5, "clamped_target(5, 0) must be 5")
 	)
 
 	violations.append_array(
-		_expect(
-			profile.clamped_target(5, -1) == 4,
-			"clamped_target(5, -1) must be 4 (engaged)"
-		)
+		_expect(profile.clamped_target(5, -1) == 4, "clamped_target(5, -1) must be 4 (engaged)")
 	)
 
 	violations.append_array(
@@ -91,16 +86,12 @@ static func _test_save_ladder() -> Array[String]:
 	profile.max_target = 6
 
 	violations.append_array(
-		_expect(
-			profile.clamped_target(5, -1) == 4,
-			"clamped_target(5, -1) must be 4 (guarded)"
-		)
+		_expect(profile.clamped_target(5, -1) == 4, "clamped_target(5, -1) must be 4 (guarded)")
 	)
 
 	violations.append_array(
 		_expect(
-			profile.clamped_target(5, -2) == 3,
-			"clamped_target(5, -2) must be 3 (attacker flanked)"
+			profile.clamped_target(5, -2) == 3, "clamped_target(5, -2) must be 3 (attacker flanked)"
 		)
 	)
 
@@ -140,10 +131,7 @@ static func _test_clamped_target_floor_and_ceiling() -> Array[String]:
 	profile.max_target = 6
 
 	violations.append_array(
-		_expect(
-			profile.clamped_target(5, 1) == 6,
-			"clamped_target(5, 1) must be 6 (ceiling)"
-		)
+		_expect(profile.clamped_target(5, 1) == 6, "clamped_target(5, 1) must be 6 (ceiling)")
 	)
 
 	violations.append_array(
@@ -154,4 +142,3 @@ static func _test_clamped_target_floor_and_ceiling() -> Array[String]:
 	)
 
 	return violations
-

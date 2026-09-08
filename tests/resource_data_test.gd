@@ -649,15 +649,9 @@ static func _test_combat_profile_loads_correctly() -> Array[String]:
 		violations.append_array(
 			_expect(profile.profile_id == "standard", "profile_id must be 'standard'")
 		)
-		violations.append_array(
-			_expect(profile.die_sides == 6, "die_sides must be 6")
-		)
-		violations.append_array(
-			_expect(profile.attack_target == 5, "attack_target must be 5")
-		)
-		violations.append_array(
-			_expect(profile.save_target == 5, "save_target must be 5")
-		)
+		violations.append_array(_expect(profile.die_sides == 6, "die_sides must be 6"))
+		violations.append_array(_expect(profile.attack_target == 5, "attack_target must be 5"))
+		violations.append_array(_expect(profile.save_target == 5, "save_target must be 5"))
 		violations.append_array(
 			_expect(profile.engagement_range == 1, "engagement_range must be 1")
 		)
@@ -676,15 +670,9 @@ static func _test_combat_profile_loads_correctly() -> Array[String]:
 		violations.append_array(
 			_expect(profile.save_surround_modifier == 3, "save_surround_modifier must be 3")
 		)
-		violations.append_array(
-			_expect(profile.guard_modifier == 1, "guard_modifier must be 1")
-		)
-		violations.append_array(
-			_expect(profile.min_target == 2, "min_target must be 2")
-		)
-		violations.append_array(
-			_expect(profile.max_target == 6, "max_target must be 6")
-		)
+		violations.append_array(_expect(profile.guard_modifier == 1, "guard_modifier must be 1"))
+		violations.append_array(_expect(profile.min_target == 2, "min_target must be 2"))
+		violations.append_array(_expect(profile.max_target == 6, "max_target must be 6"))
 		violations.append_array(
 			_expect(
 				profile.attack_flank_modifier != profile.save_flank_modifier,
