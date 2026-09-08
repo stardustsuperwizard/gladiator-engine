@@ -1,7 +1,8 @@
-## Game-side data suite for the six authored `.tres` files under `resources/`:
+## Game-side data suite for the seven authored `.tres` files under `resources/`:
 ## `resources/weapons/sword.tres`, `resources/weapons/bow.tres`,
 ## `resources/fighters/warrior.tres`, `resources/fighters/archer.tres`,
-## `resources/dice/attack_die.tres`, and `resources/dice/save_die.tres`.
+## `resources/dice/attack_die.tres`, `resources/dice/save_die.tres`, and
+## `resources/combat/combat_profile.tres`.
 ##
 ## This suite lives under `tests/`, not `rules/tests/`, because
 ## `rules/tests/extraction_contract_test.gd` fails the build on any file under
@@ -12,7 +13,7 @@
 ## Every number pinned here is authored content, not a balance decision:
 ## `AGENTS.md` says outright that dice counts, damage values, and point costs
 ## are expected to be tuned. Only `_test_field_values_match_authored_content()`
-## names those numbers as literals -- it exists to pin what the six files
+## names those numbers as literals -- it exists to pin what the files
 ## contain. Every other test below reads its expected values back off a
 ## loaded resource and compares runtime behaviour against them, never against
 ## a second literal, so retuning a `.tres` cannot silently break a test that
@@ -25,6 +26,7 @@ const WARRIOR_PATH := "res://resources/fighters/warrior.tres"
 const ARCHER_PATH := "res://resources/fighters/archer.tres"
 const ATTACK_DIE_PATH := "res://resources/dice/attack_die.tres"
 const SAVE_DIE_PATH := "res://resources/dice/save_die.tres"
+const COMBAT_PROFILE_PATH := "res://resources/combat/combat_profile.tres"
 
 ## Where the "retuning is a file edit" test saves its duplicated, retuned
 ## sword. Never a path under `res://resources/` -- no test may write there.
@@ -48,6 +50,7 @@ static func run() -> bool:
 	violations.append_array(
 		_test_dice_profile_invariants(load(SAVE_DIE_PATH) as DiceProfile, "save_die.tres")
 	)
+	violations.append_array(_test_combat_profile_loads_correctly())
 
 	if violations.is_empty():
 		return true
@@ -630,6 +633,71 @@ static func _test_retuning_is_a_file_edit() -> Array[String]:
 	)
 
 	_cleanup_retuned_sword()
+	return violations
+
+
+## The combat profile loads as a CombatProfile with correct authored values.
+static func _test_combat_profile_loads_correctly() -> Array[String]:
+	var violations: Array[String] = []
+
+	var profile: Variant = load(COMBAT_PROFILE_PATH)
+	violations.append_array(
+		_expect(profile is CombatProfile, "combat_profile.tres must load as a CombatProfile")
+	)
+
+	if profile is CombatProfile:
+		violations.append_array(
+			_expect(profile.profile_id == "standard", "profile_id must be 'standard'")
+		)
+		violations.append_array(
+			_expect(profile.die_sides == 6, "die_sides must be 6")
+		)
+		violations.append_array(
+			_expect(profile.attack_target == 5, "attack_target must be 5")
+		)
+		violations.append_array(
+			_expect(profile.save_target == 5, "save_target must be 5")
+		)
+		violations.append_array(
+			_expect(profile.engagement_range == 1, "engagement_range must be 1")
+		)
+		violations.append_array(
+			_expect(profile.engagement_modifier == 1, "engagement_modifier must be 1")
+		)
+		violations.append_array(
+			_expect(profile.attack_flank_modifier == 1, "attack_flank_modifier must be 1")
+		)
+		violations.append_array(
+			_expect(profile.attack_surround_modifier == 2, "attack_surround_modifier must be 2")
+		)
+		violations.append_array(
+			_expect(profile.save_flank_modifier == 2, "save_flank_modifier must be 2")
+		)
+		violations.append_array(
+			_expect(profile.save_surround_modifier == 3, "save_surround_modifier must be 3")
+		)
+		violations.append_array(
+			_expect(profile.guard_modifier == 1, "guard_modifier must be 1")
+		)
+		violations.append_array(
+			_expect(profile.min_target == 2, "min_target must be 2")
+		)
+		violations.append_array(
+			_expect(profile.max_target == 6, "max_target must be 6")
+		)
+		violations.append_array(
+			_expect(
+				profile.attack_flank_modifier != profile.save_flank_modifier,
+				"attack_flank_modifier (1) must differ from save_flank_modifier (2)"
+			)
+		)
+		violations.append_array(
+			_expect(
+				profile.attack_surround_modifier != profile.save_surround_modifier,
+				"attack_surround_modifier (2) must differ from save_surround_modifier (3)"
+			)
+		)
+
 	return violations
 
 
