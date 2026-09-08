@@ -38,21 +38,43 @@ build order and architecture live in
 
 ## 3. Data Model
 
+> **Revised 2026-09-08.** This section previously split a fighter's combat
+> profile across a `Fighter` and a separate `Weapon` entity, and gave each
+> weapon a `type: melee | ranged` that selected which die symbols counted as
+> successes. That was wrong on both counts, and §6 and §7 were revised with it.
+>
+> The source tabletop game has no selectable weapons — a fighter's attack
+> profile is printed on its card and is part of what the fighter *is*. Modelling
+> a weapon as a separate, swappable entity imported an equipment system the
+> rules never had, and put balance-bearing numbers (range, dice, damage) on the
+> wrong side of the mechanics/presentation line. `melee | ranged` compounded it:
+> it read as a descriptive category but was really a hit-probability dial, so
+> range and accuracy were welded together where no rule said they should be.
+>
+> Weapons are now presentation only (§3.3), the six combat stats belong to the
+> fighter, and symbol-matched dice are replaced by a d6 against a target number
+> (§7).
+
+### 3.1 Entities
+
 ```
 Fighter {
   id, owner, position
-  stats: { move, save, health, pointValue }
-  weapons: [Weapon]
+  stats: { move, save, health, range, attack, damage, pointValue }
   statusFlags: [moved, charged, guarded, hazard, ...]
   damageCounter: int
   tags: [ ]            // used to gate which abilities/cards apply
+  abilityTags: [ ]     // optional special rules usable during combat
   enhanced: bool        // "powered up" state, see Section 9
 }
 
-Weapon {
-  name, range, diceCount, damageValue
-  type: melee | ranged
-  abilityTags: [ ]      // optional special rules usable during combat
+CombatProfile {                    // one per game; every tuning dial in §7
+  dieSides                          // 6
+  attackTarget, saveTarget          // baseline target numbers
+  flankModifier, surroundModifier   // subtracted from the target number
+  longRangeThreshold                // distance at which the penalty applies
+  longRangeModifier                 // added to the target number
+  minTarget, maxTarget              // the clamp, see §7.3
 }
 
 Hex {
@@ -72,6 +94,53 @@ GameState {
   rngSeed, rngState      // see Section 12 — dice are part of the state
 }
 ```
+
+### 3.2 The six combat stats
+
+Every fighter is described by six numbers, which pair off across the table —
+each is answered by something the opponent could have bought instead:
+
+| Stat | What it does | Answered by |
+| --- | --- | --- |
+| **Move** | Hexes this fighter may cross in a Move (§6) | opponent's Range |
+| **Range** | Furthest distance at which it may attack (§7.2) | opponent's Move |
+| **Attack** | Dice rolled when attacking (§7.3) | opponent's Save |
+| **Save** | Dice rolled when defending (§7.3) | opponent's Attack |
+| **Damage** | Points added to the target's counter on a Hit (§7.5) | opponent's Health |
+| **Health** | Counter value at which this fighter is defeated (§9) | opponent's Damage |
+
+`pointValue` sits alongside them as the costing number — what the opponent
+scores for defeating this fighter (§9) — not as a seventh combat stat.
+
+Two cautions for implementers:
+
+- **`damage` is not `damageCounter`.** The stat is what this fighter *deals*
+  per Hit; the counter is what has been *dealt to* it. They are different
+  numbers on the same record.
+- **The pairing table is not symmetric in practice.** Move buys objective play
+  as well as combat play — it reaches feature tokens (§10) and it feeds §11's
+  tiebreakers — while Range buys only combat. Expect Move to be the first stat
+  that needs repricing.
+
+### 3.3 Weapons are presentation, not mechanics
+
+A fighter's weapon carries **no mechanical weight whatsoever**. It has no
+range, no dice, no damage, no type, and no ability tags. Nothing in resolution
+reads it, and no entity for it appears above.
+
+What a fighter can do is described entirely by §3.2's six stats. What that
+looks like — sword, spear, bow, rifle, staff — is a presentation choice made
+over an already-settled combat profile, and two fighters with identical stats
+and different weapons are mechanically identical. An implementation is free to
+constrain the *choice* for readability (a fighter with Range 1 should probably
+not appear to be holding a bow), but that is a presentation-layer rule and does
+not belong in this document.
+
+This is stated as a negative because it is load-bearing: an implementer looking
+for where range or damage lives should find this paragraph rather than conclude
+the spec forgot something.
+
+### 3.4 Serialization and visibility
 
 The whole of `GameState` must be serializable. Combat is stochastic
 (Section 7), so the generator's seed *and* its current position belong in the
@@ -125,37 +194,160 @@ game.
 One per Action Step, targeting one friendly fighter:
 
 - **Move** — step through adjacent empty hexes up to the fighter's Move stat; must end in a different hex than it started; gain a "moved" flag.
-- **Attack** — pick a weapon, pick a valid visible target in range, run the Combat Resolution algorithm (Section 7).
+- **Attack** — pick a valid visible target within the fighter's Range, run the Combat Resolution algorithm (Section 7). There is no weapon to choose: an attack is fully described by the acting fighter's stats and the distance to the target.
 - **Charge** — combined Move + Attack on the same fighter in one action, only usable if the fighter has no "moved"/"charged" flag yet this round; produces a distinct "charged" flag instead of "moved."
 - **Guard** — apply a defensive flag that improves save results and prevents being pushed, until cleared at end of round.
 - **Focus/Mulligan** — discard any number of cards from hand, draw replacements of the same type, plus one bonus card.
 
 **Lockout rule:** a fighter with a "charged" flag can't Move/Attack/Guard again until all friendly fighters share that flag (a soft round-level restriction, not a permanent one).
 
+**Charge carries no attack-type restriction, and never did.** Any fighter may
+Charge, including one with a long Range. This is worth stating because the
+`melee | ranged` field deleted in §3 is the field a reader might expect to
+gate it — but no rule here ever consulted that field outside resolution, so
+nothing is lost. The attack half of a Charge resolves exactly as a standalone
+Attack does, §7's long-range penalty included, measured from wherever the move
+half ended. A long-ranged fighter that charges is therefore choosing to close
+the distance for accuracy, which is the decision Charge should present.
+
 ---
 
 ## 7. Combat Resolution
 
-1. If the chosen weapon has ability tags, the attacker may pick one to apply for this attack.
-2. Attacker rolls a number of attack dice equal to the weapon's dice stat. Dice faces produce a few symbol types (e.g. a universal "critical" symbol, plus 1–2 weapon-type-specific symbols).
-3. Defender rolls save dice equal to their Save stat, with an analogous symbol set.
-4. **Count successes:**
-   - Attack roll: criticals always count, plus symbols matching the weapon's type, plus bonus symbol types unlocked if the target is flanked/surrounded (Section 8).
-   - Save roll: criticals always count, plus symbols matching the defender's save type, plus bonus symbol types unlocked if the attacker is flanked/surrounded.
-5. **Compare totals:**
-   - Attacker's successes > defender's → **Hit**
-   - Equal → **Drawn**
-   - Defender's successes > attacker's → **Miss**
-6. **On Hit:** apply the weapon's damage value (+ any modifiers) to the target's damage counter; check for defeat (Section 9); if not defeated, optionally push the target back one hex, away from the attacker.
-7. **On Drawn:** no damage, but a push-back may still apply.
-8. **On Miss:** nothing happens by default, though a large success margin on either side can unlock a small bonus (e.g. attacker steps into the vacated hex; defender negates part of the damage or the push).
+> **Revised 2026-09-08.** This section previously resolved combat by rolling
+> dice with named symbol faces and counting the symbols that appeared in a
+> success set — criticals, plus the weapon's `type` symbol, plus symbol types
+> unlocked by flanking. It now rolls plain d6 against a target number.
+>
+> The symbol model was replaced because it could not express a modifier. A
+> success set is membership, not magnitude, so "−1 to this attack" had no
+> representation at all; the only way to make an attack harder was to author a
+> different die. That blocked §7.3's long-range penalty outright, and it meant
+> the game's accuracy dial had exactly as many settings as someone had painted
+> faces. A target number gives the same probabilities, every value between
+> them, and modifiers as plain arithmetic.
+>
+> The translation is deliberate rather than approximate. The old die was
+> `[critical, melee, ranged, melee, opening, advantage]`: a melee attack
+> succeeded on 3 of 6 faces, which is target 4+; a ranged attack on 2 of 6,
+> which is target 5+; flanking unlocked one further face and surrounding two,
+> which are −1 and −2 to the target. Those numbers are preserved below, and the
+> old ranged accuracy survives exactly as a long-range shot: 4+ penalized by
+> +1 is 5+, the 2-in-6 it always was.
+
+### 7.1 Declare ability tags
+
+If the attacking fighter has ability tags (§3.1), the attacker may pick one to
+apply for this attack. Tags are opt-in and declared before any die is rolled.
+
+### 7.2 Establish a legal target
+
+An attack requires all of the following. Any failure refuses the action
+outright, changing nothing:
+
+- the target is an enemy fighter, and not the attacker itself;
+- the distance from attacker to target (§2) is **less than or equal to the
+  attacker's Range**, the boundary inclusive;
+- the two hexes have line of sight (§2);
+- the target is not already defeated (§9).
+
+Range is measured in hexes by §2's distance rule, which counts through blocked
+hexes. It is not a pathfinding question.
+
+### 7.3 Roll both pools
+
+Both sides roll plain **d6**. A die is a success when its result is greater
+than or equal to that side's **effective target number**.
+
+Each side starts from a baseline target — `attackTarget` and `saveTarget` in
+§3.1's `CombatProfile`, both 4 — and applies every modifier that currently
+holds. Modifiers are additive, and a lower target is easier:
+
+| Modifier | Applies to | Effect |
+| --- | --- | --- |
+| Target is flanked (§8) | attack | −1 |
+| Target is surrounded (§8) | attack | −2 |
+| Attacker is flanked (§8) | save | −1 |
+| Attacker is surrounded (§8) | save | −2 |
+| Distance ≥ `longRangeThreshold` (3) | attack | +1 |
+
+**The long-range penalty is a property of the shot, not of the fighter.** It is
+measured against the distance actually being attacked across, not against the
+attacker's Range stat. A fighter with Range 5 shooting a target two hexes away
+takes no penalty; the same fighter shooting across four hexes does. Range buys
+reach; accuracy is decided by where you choose to stand. This is what makes
+positioning a live decision for a ranged fighter every turn rather than a
+consequence settled at character creation.
+
+**The effective target is then clamped to `[minTarget, maxTarget]` — `[2, 6]`.**
+The clamp is what preserves the old model's two absolutes: a natural 6 always
+succeeds, and a natural 1 always fails, no matter how modifiers stack. It also
+reserves the two results for the critical and fumble concepts, which no rule
+consumes yet.
+
+The attacker rolls **Attack** dice; the defender rolls **Save** dice. Count the
+successes in each pool.
+
+**Draw order is part of the rules, not an implementation detail.** The attack
+pool is rolled in full before the save pool, one draw per die. Combat is a
+function of state and action (§12), and a hand-checkable result depends on both
+players agreeing which die came off the generator first.
+
+### 7.4 Compare totals
+
+- Attacker's successes > defender's → **Hit**
+- Equal → **Drawn**
+- Defender's successes > attacker's → **Miss**
+
+### 7.5 On Hit
+
+Apply the attacker's **Damage** stat (+ any modifiers) to the target's damage
+counter; check for defeat (§9); if not defeated, optionally push the target
+back one hex, away from the attacker.
+
+### 7.6 On Drawn
+
+No damage, but a push-back may still apply.
+
+### 7.7 On Miss
+
+Nothing happens by default, though a large success margin on either side can
+unlock a small bonus (e.g. attacker steps into the vacated hex; defender
+negates part of the damage or the push).
+
+### 7.8 Balance note: Range is priced by the budget, not by the penalty
+
+Under the old model a ranged attack was permanently less accurate than a melee
+one — 2 of 6 against 3 of 6, at every distance. That is no longer true: inside
+`longRangeThreshold` a fighter with Range 5 attacks at exactly the same target
+number as one with Range 1, while remaining out of reach.
+
+Range therefore has no intrinsic cost in the resolution rules, and the
+single-step penalty above does not supply one — Range 8 and Range 3 are equally
+accurate at long distance. **Whatever prices Range must be the point budget**,
+not §7.3's modifier. If long range proves oppressive in play, the first dial to
+turn is `longRangeModifier` scaling with distance rather than applying once;
+that is why both it and `longRangeThreshold` are authored values in
+`CombatProfile` rather than constants in this document.
 
 ---
 
 ## 8. Flanking / Surrounding
 
-- **Flanked:** exactly one enemy fighter (other than the active attacker/target) is adjacent to the target → unlocks one extra success symbol type on the attack roll. The same check applies symmetrically to the defense roll if the *attacker* is flanked.
-- **Surrounded:** two or more such enemies are adjacent → unlocks two extra symbol types, and also counts as flanked.
+- **Flanked:** exactly one enemy fighter (other than the active attacker/target) is adjacent to the target → **−1 to the attack roll's target number** (§7.3). The same check applies symmetrically to the save roll if the *attacker* is flanked.
+- **Surrounded:** two or more such enemies are adjacent → **−2 to the target number**, and also counts as flanked.
+
+The two are alternatives, not cumulative: a surrounded target is flanked as
+well, but the modifier applied is −2, not −3.
+
+Adjacency is the only input. Nothing here reads a stat, and neither condition
+depends on which fighter is attacking beyond excluding the two fighters in the
+attack from counting as each other's neighbours.
+
+*(Wording revised 2026-09-08 with §7: these were previously described as
+unlocking extra success symbol types on a symbol-faced die. The probabilities
+are unchanged — one unlocked face out of six is the same as one step of target
+number.)*
 
 ---
 
@@ -191,7 +383,7 @@ One per Action Step, targeting one friendly fighter:
 
 ## 12. Implementation Notes
 
-- The dice-pool + symbol-matching combat resolution is the core loop worth getting right first; everything else (cards, tokens, phases) layers on top of it.
+- The dice-pool + target-number combat resolution is the core loop worth getting right first; everything else (cards, tokens, phases) layers on top of it.
 - **Make the dice an explicit input, not a hidden one.** Resolution should be a
   function of state and action only: same state + same action + same generator
   position → same result, every time, in a fresh process. Never read a global
@@ -207,10 +399,11 @@ One per Action Step, targeting one friendly fighter:
   later makes AI opponents, undo, and networking additive rather than
   rewrites.
 - **Numbers are data; rules are code.** Dice counts, damage values, health,
-  saves, point values, ranges, and card effects belong in data files the
-  resolver reads. These mechanics are inherited from a settled tabletop game,
-  but the numbers will still be tuned — and tuning should never mean editing
-  the combat resolver.
+  saves, point values, ranges, card effects, and every field of §3.1's
+  `CombatProfile` — baseline target numbers, the flank and surround modifiers,
+  the long-range threshold and modifier, the clamp — belong in data files the
+  resolver reads. The numbers will be tuned, and tuning should never mean
+  editing the combat resolver. §7.8 names the dial most likely to move first.
 - **Distance and movement are different problems.** Section 2 distance counts
   blocked hexes, so it is a direct coordinate calculation with no pathfinding.
   Movement (Section 6) must actually route *around* blocked and occupied
@@ -220,7 +413,7 @@ One per Action Step, targeting one friendly fighter:
   boundary between two hexes needs a consistent tie-break rule, or you get
   cases where A can see B but B cannot see A — a confusing bug to meet in
   play and an easy one to prevent with a test.
-- Ability tags on fighters/weapons/cards are best modeled as a simple string/enum set with a small rules engine checking "does fighter X have tag Y" rather than hardcoding interactions — that mirrors how the tabletop original scales its own complexity.
+- Ability tags on fighters and cards are best modeled as a simple string/enum set with a small rules engine checking "does fighter X have tag Y" rather than hardcoding interactions — that mirrors how the tabletop original scales its own complexity.
 - Push/move distinction matters: pushes shouldn't set a "moved" flag, since some effects key off of it.
 - Suggested build order: board + fighter placement → Move/Attack core actions → combat resolution math → status effects (flank/surround/guard) → card system → scoring/end phase → win conditions.
 - Before that full build order, prove the smallest slice that can be checked
