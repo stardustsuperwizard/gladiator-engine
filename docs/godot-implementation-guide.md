@@ -41,7 +41,7 @@ structurally prevents `rules/` from referencing game code — the compiler will
 not stop you.
 
 The contract test (extraction plan §3.3) is therefore a **lint-style script**,
-not a compiler guarantee. Three of them now exist, separate files on purpose
+not a compiler guarantee. Five of them now exist, separate files on purpose
 and none an edit to another:
 
 | Test | Fails the build when |
@@ -49,6 +49,8 @@ and none an edit to another:
 | `rules/tests/extraction_contract_test.gd` | a `.gd`, `.json` or `.tres` file under `rules/` names `res://scripts/`, `res://scenes/` or `res://resources/` |
 | `rules/tests/ambient_rng_contract_test.gd` | a `.gd` file under `rules/` calls global `randi`, `randf`, `randi_range`, `randf_range`, `randfn` or `randomize` |
 | `tests/gate_bypass_contract_test.gd` | a `.gd` or `.tscn` under `scripts/` or `scenes/` names `res://rules/`, or calls `.resolve(` itself |
+| `tests/inbound_type_contract_test.gd` | a `.gd` file under `rules/` names a global `class_name` declared under `scripts/` or `scenes/`, in code |
+| `rules/tests/base_class_contract_test.gd` | a `.gd` file under `rules/` declares a file-scope `extends` outside `RefCounted`, `Resource`, or a `class_name` declared under `rules/` |
 
 Each is quote-aware, so a `#` inside a string literal does not hide the rest of
 the line, and each has a scanner self-test proving it can actually fail — a
@@ -61,6 +63,12 @@ contract test that cannot fail is worse than none.
 > type by global `class_name`, or extends `Node`, passes every scanner above.
 > They hold by review, not by the build. Said plainly here because a guarantee
 > a contributor believes in but does not have is worse than a known gap.
+
+> **Revised 2026-09-08.** Both gaps documented above are now closed. Issues #77
+> and #78 landed under epic #54, adding `tests/inbound_type_contract_test.gd`
+> and `rules/tests/base_class_contract_test.gd` respectively. The table above
+> now includes them. A `rules/` file that names a game-side type by global
+> `class_name`, or extends `Node`, fails the build.
 
 Know the limits generally: these catch the obvious violation, not a clever one.
 

@@ -13,11 +13,13 @@ dependency arrow: **the game depends on `rules/`, never the reverse.**
   `randi()`/`randf()` here.
 - **No inward dependencies either.** Unlike the repo this pattern was adapted
   from, `rules/` does not use game-side types at all — not even by global
-  `class_name`. See *Why `TurnAction` lives here* below. Note that no test
-  enforces this one: the scanners above match paths, so a game-side type named
-  by `class_name` would pass them. It holds by review.
+  `class_name`. See *Why `TurnAction` lives here* below. Enforced by
+  `tests/inbound_type_contract_test.gd`, which lives in `tests/` because
+  deriving the forbidden set means reading `res://scripts/` and `res://scenes/`,
+  which a `rules/` file may not name.
 - **Off the scene tree.** `RefCounted` or `Resource`, never `Node`. No
-  autoloads, no `await`, no `_process`, no timers. See
+  autoloads, no `await`, no `_process`, no timers. Enforced by
+  `rules/tests/base_class_contract_test.gd`. See
   `docs/godot-implementation-guide.md` §1.
 - **Deterministic.** Resolution is a function of state and action only. The
   RNG seed and generator position are part of the game state; nothing here
