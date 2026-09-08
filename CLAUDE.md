@@ -19,6 +19,7 @@ pointer to it, not a copy.
 | Anything sourced from `mikeys_game_bones-rules-moba` | `AUDIT_NOTES.md`, then log the decision in `EXTRACTION_LOG.md` |
 | Anything in `rules/` | `.github/instructions/rules.instructions.md` |
 | `.github/workflows/`, `.github/agents/`, `.github/actions/` | `docs/AGENT_WORKFLOW.md` |
+| Adding, splitting, or removing an agent role | `docs/AGENT_ROLE_DESIGN.md` |
 | Opening a PR | `.github/pull_request_template.md`, `CONTRIBUTING.md` |
 
 ## Working without an Issue
