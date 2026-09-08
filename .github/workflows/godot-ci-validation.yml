@@ -48,9 +48,16 @@ on:
       - '.github/scripts/classify-claude-outcome.py'
       # Issue bookkeeping. These read Issue bodies and call `gh`; they have
       # their own check in `test-issue-dependencies.sh`, which needs no Godot.
+      # That check is now actually RUN, by `control-plane-tests.yml` -- until
+      # that workflow existed the sentence above was true of the file and
+      # false of CI, which is the whole reason #68 and #99 were filed.
       - '.github/scripts/issue_dependencies.py'
       - '.github/scripts/sync-issue-dependencies.py'
       - '.github/scripts/test-issue-dependencies.sh'
+      # The control plane's own test harness and the workflow that runs it.
+      # Neither loads the Godot project.
+      - '.github/scripts/test-workflow-logic.sh'
+      - '.github/workflows/control-plane-tests.yml'
       # Label bootstrap. Creates the labels every trigger is keyed on; it calls
       # `gh` and never touches the Godot project. Listed individually like the
       # rest -- this block names scripts rather than the directory, because
