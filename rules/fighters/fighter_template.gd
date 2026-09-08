@@ -9,6 +9,10 @@
 ## copies out of this rather than writing back onto it, since Godot caches and
 ## shares `Resource` instances across every fighter built from the same
 ## template.
+##
+## `range_hexes`, not `range`: `range()` is a GDScript global, and a member
+## shadowing it is at best a warning -- the same trap `WeaponTemplate.range_hexes`
+## was named around.
 class_name FighterTemplate
 extends Resource
 

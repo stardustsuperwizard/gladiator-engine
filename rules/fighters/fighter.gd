@@ -9,7 +9,7 @@
 # The public surface is this task's contract, and every alternative gdlint's
 # threshold points at is forbidden by that same contract: the four damage
 # predicates may not collapse into one `damage_state()` or a `DamageState`
-# enum, and the nine stat readers may not move behind a stat-bag object,
+# enum, and the eight stat readers may not move behind a stat-bag object,
 # because reading through to the shared template is the design. Twenty-five
 # methods, of which twenty-three are a single-expression read. The waiver is
 # local rather than a raised threshold in `.gdlintrc`, so no other file's shape

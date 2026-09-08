@@ -45,6 +45,7 @@ static func run() -> bool:
 	violations.append_array(_test_mutation_leaves_every_template_field_unchanged())
 	violations.append_array(_test_weapons_returns_a_shallow_copy())
 	violations.append_array(_test_status_flags_returns_a_copy())
+	violations.append_array(_test_ability_tags_returns_a_copy())
 	violations.append_array(_test_damage_truth_table_at_every_boundary())
 	violations.append_array(_test_damage_truth_table_for_one_health())
 	violations.append_array(_test_defeated_fighter_is_also_vulnerable())
@@ -362,6 +363,24 @@ static func _test_status_flags_returns_a_copy() -> Array[String]:
 		_expect(
 			not fighter.has_status_flag("charged"),
 			"appending to the array status_flags() returned must not set a flag"
+		)
+	)
+
+	return violations
+
+
+static func _test_ability_tags_returns_a_copy() -> Array[String]:
+	var violations: Array[String] = []
+	var template := make_template(3)
+	var fighter := Fighter.new("fighter-1", template, "player-1", Vector3i.ZERO)
+
+	var returned := fighter.ability_tags()
+	returned.append("new_tag")
+
+	violations.append_array(
+		_expect(
+			fighter.ability_tags() == template.ability_tags,
+			"appending to the array ability_tags() returned must not change what a second call returns"
 		)
 	)
 
