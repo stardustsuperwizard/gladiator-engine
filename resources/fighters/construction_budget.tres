@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="ConstructionBudget" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://rules/fighters/construction_budget.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+budget_id = "standard"
+total_points = 15
+min_per_stat = 1
+max_per_stat = 5

@@ -29,6 +29,7 @@ class_name ResourceDataTest
 const WARRIOR_PATH := "res://resources/fighters/warrior.tres"
 const ARCHER_PATH := "res://resources/fighters/archer.tres"
 const COMBAT_PROFILE_PATH := "res://resources/combat/combat_profile.tres"
+const CONSTRUCTION_BUDGET_PATH := "res://resources/fighters/construction_budget.tres"
 
 ## Where the "retuning is a file edit" test saves its duplicated, retuned
 ## warrior. Never a path under `res://resources/` -- no test may write there.
@@ -46,6 +47,7 @@ static func run() -> bool:
 	violations.append_array(_test_fighter_from_archer_reports_template_stats())
 	violations.append_array(_test_retuning_is_a_file_edit())
 	violations.append_array(_test_combat_profile_loads_correctly())
+	violations.append_array(_test_all_fighters_satisfy_construction_budget())
 
 	if violations.is_empty():
 		return true
@@ -478,6 +480,38 @@ static func _test_combat_profile_loads_correctly() -> Array[String]:
 				"attack_surround_modifier (2) must differ from save_surround_modifier (3)"
 			)
 		)
+
+	return violations
+
+
+## Every authored fighter satisfies the construction budget, so a future
+## fighter cannot be added illegally without a red test.
+static func _test_all_fighters_satisfy_construction_budget() -> Array[String]:
+	var violations: Array[String] = []
+
+	var budget: Variant = load(CONSTRUCTION_BUDGET_PATH)
+	violations.append_array(
+		_expect(budget is ConstructionBudget, "construction_budget.tres must load as a ConstructionBudget")
+	)
+	if not (budget is ConstructionBudget):
+		return violations
+
+	var warrior := load(WARRIOR_PATH) as FighterTemplate
+	var archer := load(ARCHER_PATH) as FighterTemplate
+
+	var budget_resource: ConstructionBudget = budget
+	violations.append_array(
+		_expect(
+			budget_resource.is_satisfied_by(warrior),
+			"the authored warrior fighter must satisfy the construction budget"
+		)
+	)
+	violations.append_array(
+		_expect(
+			budget_resource.is_satisfied_by(archer),
+			"the authored archer fighter must satisfy the construction budget"
+		)
+	)
 
 	return violations
 
