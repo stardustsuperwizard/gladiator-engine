@@ -95,7 +95,7 @@ between the two repos.
   `MobaEffectContainer`, `MobaCrowdControlTracker`, `MobaStateMachine`,
   `MobaDeathHandler`. All of this is real-time, cooldown/tick-driven combat
   with skillshot/projectile targeting. The hex-skirmish spec's combat is a
-  discrete dice-pool + symbol-matching resolution with flanking bonuses
+  discrete dice-pool with target numbers and flanking bonuses
   (spec §7–8) — a different resolution model, not a reskin of this one.
   **Rebuild.**
 - **Movement / pathing** — note the MOBA repo currently has *no* navigation
@@ -237,7 +237,7 @@ gladiator-engine/
     README.md
     board/                # hex coords, distance, LOS, occupancy (spec §2)
     combat/               # dice-pool resolution, flanking (spec §7-8)
-    fighters/             # runtime fighter/weapon model (spec §3, §9)
+    fighters/             # runtime fighter model, combat profiles (spec §3, §9)
     actions/              # one TurnAction subclass per command (spec §6)
     cards/                # scoring/ability decks (spec §4, §10) — NOT BUILT
     state/                # GameState, TurnAction, TurnResult, RNG (spec §3)
@@ -245,7 +245,7 @@ gladiator-engine/
   scripts/                # game side: Authority, ActionRunner (3.1)
                           # session layer (3.2) NOT BUILT
   scenes/                 # views; main.tscn placeholder for now
-  resources/              # .tres templates: fighters, weapons, cards
+  resources/              # .tres templates: fighters, cards, combat profiles
   tests/
     test_bootstrap.gd     # headless suite runner; result becomes exit code
   .github/
@@ -276,6 +276,10 @@ not a parallel track to build alongside it.
 
 ### 5.1 Slice 0 — the smallest proof (build this first)
 
+> **Revised 2026-09-08.** The weapon entity was removed; fighters now carry
+> six combat stats in a `CombatProfile`. The bullet below previously read "Two
+> fighters, one weapon each" and has been corrected.
+
 5.2 is the right first *milestone*, but it is not the smallest *slice*: a full
 three-round match with cards, scoring, and victory conditions is a lot of
 surface to build before anything is proven. Build this first, ideally in one
@@ -283,7 +287,7 @@ sitting:
 
 - A hex board with blocked hexes, cube-coordinate distance, and line of sight
   (spec §2).
-- Two fighters, one weapon each.
+- Two fighters with combat profiles.
 - Exactly one action — **Attack** — routed through the authority object (5.2)
   and returning a `TurnResult`.
 - Unit tests that deal a known board state and a known seed, resolve the
@@ -505,8 +509,8 @@ in 5.3 is actually being built.
   seed reproduces the identical final state, in a fresh process.
 - **Serialization:** a match can be saved mid-round, reloaded, and continue
   with behaviour identical to the unsaved run.
-- **Data-driven balance:** changing a weapon's dice count or a fighter's
-  health is an edit to a data file, not to a script.
+- **Data-driven balance:** changing a fighter's combat stats or health is an
+  edit to a data file, not to a script.
 - **Single chokepoint:** no code path outside the authority object calls into
   `rules/`, and a test asserts it.
 
@@ -532,7 +536,7 @@ being built:**
 - **Rules identity:** a client whose rules-code hash does not match the
   server's is refused at connect with a stated reason, rather than admitted
   and allowed to diverge.
-- **Balance without a release:** changing a weapon's dice count for a running
-  league is a server-side data change, with no client build shipped.
+- **Balance without a release:** changing a fighter's combat stats for a
+  running league is a server-side data change, with no client build shipped.
 - **Authority location:** a ranked match is resolved by an operator-run
   server; `LISTEN_SERVER` cannot produce a result that counts.

@@ -33,8 +33,8 @@ dependency arrow: **the game depends on `rules/`, never the reverse.**
 | Directory | Holds | Spec |
 | --- | --- | --- |
 | `board/` | Hex coordinates, distance, line of sight, occupancy | §2 |
-| `combat/` | Dice-pool resolution, symbol matching, flanking | §7–8 |
-| `fighters/` | Runtime fighter and weapon model, status flags, damage | §3, §9 |
+| `combat/` | Dice-pool resolution, flanking, status effects | §7–8, §9 |
+| `fighters/` | Runtime fighter model, status flags, damage, combat stats | §3, §9 |
 | `cards/` | Scoring and ability decks, hands, draw/discard — **not built yet** | §4, §10 |
 | `state/` | `GameState`, `TurnAction`, `TurnResult`, serialization, RNG | §3 |
 | `actions/` | One `TurnAction` subclass per player command | §6 |

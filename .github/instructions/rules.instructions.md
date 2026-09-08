@@ -72,11 +72,11 @@ holds the Godot mechanics behind these rules.
 
 ## Data
 
-- **No fighter, weapon, or card number is written in GDScript.** Values load
+- **No fighter or card number is written in GDScript.** Values load
   from `resources/`. Dice counts, damage, health, saves, ranges, point values,
-  card effects — all data.
+  card effects, target numbers, modifiers — all data.
 - **Game content is authored as `.tres`** in the Godot inspector. The
-  mechanics are inherited from a settled tabletop game, but the numbers will be
+  mechanics are settled in the spec; see `AGENTS.md`'s *The spec is the authority on mechanics* to avoid drift. The numbers will be
   tuned, and tuning must never mean editing the resolver.
 - **Templates are immutable; runtime state is not.** Godot caches and shares
   `Resource` instances, so a runtime fighter writing a damage counter onto its
@@ -85,9 +85,9 @@ holds the Godot mechanics behind these rules.
 
 ## Combat math
 
-- **One module contains the dice-pool resolution.** If another file needs it,
-  it calls that module. A second copy of the resolution math is the primary
-  correctness risk in this project.
+- **One module contains the dice-pool resolution.** The `DicePool` class holds
+  this logic. If another file needs it, it calls that module. A second copy of
+  the resolution math is the primary correctness risk in this project.
 - Formulas are `static`, take plain values, return plain values, and touch no
   node and no scene tree. That is what makes them unit-testable headless.
 - **Percentages are fractions** — `0.05`, never `5.0`.
