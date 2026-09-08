@@ -11,12 +11,21 @@
 ## template.
 ##
 ## `range_hexes`, not `range`: `range()` is a GDScript global, and a member
-## shadowing it is at best a warning -- the same trap `WeaponTemplate.range_hexes`
-## was named around.
+## shadowing it is at best a warning -- the same trap `GameState.round_number`
+## and `DeterministicRng.get_seed()` were named around.
+##
+## **There is no weapon here.** Spec §3 as revised 2026-09-08 collapsed the
+## fighter/weapon split into the six combat stats below, and `AttackAction`
+## resolves entirely from them; a weapon is presentation, and the `Weapon`
+## entity that once carried `range_hexes`, a dice count and a damage value is
+## gone from the tree. Do not reintroduce one here without revising the spec
+## first.
 class_name FighterTemplate
 extends Resource
 
-## Opaque, author-assigned. Never a resource path -- see `WeaponTemplate`.
+## Opaque, author-assigned. Never a resource path -- see
+## `docs/hex-skirmish-game-spec.md` §3 for why nothing in `rules/` may embed a
+## `res://resources/` path.
 @export var template_id: String = ""
 @export var display_name: String = ""
 @export var move: int = 0
@@ -25,13 +34,12 @@ extends Resource
 @export var range_hexes: int = 0
 @export var attack: int = 0
 @export var damage: int = 0
-@export var weapons: Array[WeaponTemplate] = []
 @export var tags: PackedStringArray = PackedStringArray()
 @export var ability_tags: PackedStringArray = PackedStringArray()
 
 
-## True when `tag` is present in `tags`, by exact string match -- same rule as
-## `WeaponTemplate.has_ability_tag()`.
+## True when `tag` is present in `tags`, by exact string match -- no
+## normalisation, no case folding.
 func has_tag(tag: String) -> bool:
 	return tag in tags
 

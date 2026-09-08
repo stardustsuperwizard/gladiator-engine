@@ -9,9 +9,9 @@
 # The public surface is this task's contract, and every alternative gdlint's
 # threshold points at is forbidden by that same contract: the four damage
 # predicates may not collapse into one `damage_state()` or a `DamageState`
-# enum, and the eight stat readers may not move behind a stat-bag object,
-# because reading through to the shared template is the design. Twenty-five
-# methods, of which twenty-three are a single-expression read. The waiver is
+# enum, and the seven stat readers may not move behind a stat-bag object,
+# because reading through to the shared template is the design. Twenty-four
+# methods, of which twenty-two are a single-expression read. The waiver is
 # local rather than a raised threshold in `.gdlintrc`, so no other file's shape
 # changes because of this one's.
 ##
@@ -31,15 +31,12 @@
 ## about their stats once a `.tres` is retuned, and it throws away the "what it
 ## is" / "what has happened to it" split this class exists to draw. Hold the
 ## shared reference, and never write through it: not `template.health`, not
-## `template.tags`, not an element of `template.weapons`.
+## `template.tags`.
 ##
-## `weapons()` and `status_flags()` hand back copies for the same reason.
-## `template.weapons` is a shared `Array` on a shared `Resource`, so returning
-## the live array would be that same bug with one extra step -- `append()` on
-## the value handed back would mutate the template. The weapons copy is
-## *shallow*, and deliberately: the `WeaponTemplate` elements stay shared,
-## because they are immutable authored data and duplicating them per fighter
-## would reintroduce the divergence above.
+## `ability_tags()` and `status_flags()` hand back copies for the same reason.
+## `template.ability_tags` is a shared array on a shared `Resource`, so
+## returning the live value would be that same bug with one extra step --
+## appending to what was handed back would mutate the template.
 ##
 ## **Damage -- spec §9.** Four predicates over the damage counter `c` and the
 ## template's `health` `H`:
@@ -190,14 +187,6 @@ func damage() -> int:
 ## docstring.
 func ability_tags() -> PackedStringArray:
 	return _template.ability_tags.duplicate()
-
-
-## The template's weapons, as a **shallow** copy: a new `Array` holding the
-## same `WeaponTemplate` objects. Appending to the value returned here cannot
-## reach the template; the elements are shared on purpose. See the class
-## docstring.
-func weapons() -> Array[WeaponTemplate]:
-	return _template.weapons.duplicate()
 
 
 ## Total damage points accumulated. Starts at 0 and only ever rises.

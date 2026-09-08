@@ -1,12 +1,15 @@
-## Tests WeaponTemplate and FighterTemplate: default zero-valued fields, the
-## MELEE/RANGED discriminator, has_ability_tag()/has_tag() exact-match
-## membership, weapon ordering on a FighterTemplate, and .tres round-trip
-## serialization via user://.
+## Tests FighterTemplate: default zero-valued fields, the six combat stats
+## spec §3 gives a fighter, has_tag()/has_ability_tag() exact-match membership,
+## and .tres round-trip serialization via user://.
+##
+## There is no weapon resource here and no `weapons` field to test. Spec §3 as
+## revised 2026-09-08 collapsed the fighter/weapon split into the stats below,
+## and the `Weapon` entity was deleted from the tree with it.
 ##
 ## Every template here is constructed in memory with .new() -- this suite
 ## lives under rules/ and extraction_contract_test.gd forbids naming a
-## res://resources/ path, so it may not load an authored .tres. Authored
-## resources/fighters/ content is sibling task #32.
+## res://resources/ path, so it may not load an authored .tres. The authored
+## resources/fighters/ content is exercised by tests/resource_data_test.gd.
 class_name FighterTemplateTest
 
 const TEST_TRES_PATH := "user://fighter_template_test.tres"
@@ -15,12 +18,9 @@ const TEST_TRES_PATH := "user://fighter_template_test.tres"
 static func run() -> bool:
 	var violations: Array[String] = []
 
-	violations.append_array(_test_weapon_template_defaults())
 	violations.append_array(_test_fighter_template_defaults())
-	violations.append_array(_test_weapon_type_default_and_constants())
 	violations.append_array(_test_has_ability_tag_exact_match())
 	violations.append_array(_test_has_tag_exact_match())
-	violations.append_array(_test_fighter_template_holds_weapons_in_order())
 	violations.append_array(_test_tres_round_trip_via_user_dir())
 
 	if violations.is_empty():
@@ -37,22 +37,6 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 	return [] if condition else [message] as Array[String]
 
 
-static func _test_weapon_template_defaults() -> Array[String]:
-	var violations: Array[String] = []
-	var weapon := WeaponTemplate.new()
-
-	violations.append_array(_expect(weapon.template_id == "", 'template_id must default to ""'))
-	violations.append_array(_expect(weapon.display_name == "", 'display_name must default to ""'))
-	violations.append_array(_expect(weapon.range_hexes == 0, "range_hexes must default to 0"))
-	violations.append_array(_expect(weapon.dice_count == 0, "dice_count must default to 0"))
-	violations.append_array(_expect(weapon.damage_value == 0, "damage_value must default to 0"))
-	violations.append_array(
-		_expect(weapon.ability_tags.is_empty(), "ability_tags must default to an empty array")
-	)
-
-	return violations
-
-
 static func _test_fighter_template_defaults() -> Array[String]:
 	var violations: Array[String] = []
 	var fighter := FighterTemplate.new()
@@ -65,32 +49,9 @@ static func _test_fighter_template_defaults() -> Array[String]:
 	violations.append_array(_expect(fighter.range_hexes == 0, "range_hexes must default to 0"))
 	violations.append_array(_expect(fighter.attack == 0, "attack must default to 0"))
 	violations.append_array(_expect(fighter.damage == 0, "damage must default to 0"))
-	violations.append_array(
-		_expect(fighter.weapons.is_empty(), "weapons must default to an empty array")
-	)
 	violations.append_array(_expect(fighter.tags.is_empty(), "tags must default to an empty array"))
 	violations.append_array(
 		_expect(fighter.ability_tags.is_empty(), "ability_tags must default to an empty array")
-	)
-
-	return violations
-
-
-static func _test_weapon_type_default_and_constants() -> Array[String]:
-	var violations: Array[String] = []
-	var weapon := WeaponTemplate.new()
-
-	violations.append_array(
-		_expect(
-			weapon.weapon_type == WeaponTemplate.MELEE,
-			"weapon_type must default to WeaponTemplate.MELEE"
-		)
-	)
-	violations.append_array(
-		_expect(WeaponTemplate.MELEE == "melee", 'WeaponTemplate.MELEE must equal "melee"')
-	)
-	violations.append_array(
-		_expect(WeaponTemplate.RANGED == "ranged", 'WeaponTemplate.RANGED must equal "ranged"')
 	)
 
 	return violations
@@ -101,32 +62,32 @@ static func _test_has_ability_tag_exact_match() -> Array[String]:
 	var present_tag := "present-ability-tag"
 	var absent_tag := "absent-ability-tag"
 
-	var empty_weapon := WeaponTemplate.new()
+	var empty_fighter := FighterTemplate.new()
 	violations.append_array(
 		_expect(
-			not empty_weapon.has_ability_tag(present_tag),
+			not empty_fighter.has_ability_tag(present_tag),
 			"has_ability_tag() must return false on an empty ability_tags set"
 		)
 	)
 
-	var weapon := WeaponTemplate.new()
-	weapon.ability_tags = PackedStringArray([present_tag])
+	var fighter := FighterTemplate.new()
+	fighter.ability_tags = PackedStringArray([present_tag])
 
 	violations.append_array(
 		_expect(
-			weapon.has_ability_tag(present_tag),
+			fighter.has_ability_tag(present_tag),
 			"has_ability_tag() must return true for a tag present in ability_tags"
 		)
 	)
 	violations.append_array(
 		_expect(
-			not weapon.has_ability_tag(absent_tag),
+			not fighter.has_ability_tag(absent_tag),
 			"has_ability_tag() must return false for a tag absent from ability_tags"
 		)
 	)
 	violations.append_array(
 		_expect(
-			not weapon.has_ability_tag(present_tag.to_upper()),
+			not fighter.has_ability_tag(present_tag.to_upper()),
 			"has_ability_tag() must return false for a case-differing spelling of a present tag"
 		)
 	)
@@ -171,56 +132,8 @@ static func _test_has_tag_exact_match() -> Array[String]:
 	return violations
 
 
-static func _test_fighter_template_holds_weapons_in_order() -> Array[String]:
-	var violations: Array[String] = []
-	var first_weapon := WeaponTemplate.new()
-	first_weapon.template_id = "weapon-a"
-	var second_weapon := WeaponTemplate.new()
-	second_weapon.template_id = "weapon-b"
-
-	var fighter := FighterTemplate.new()
-	fighter.weapons = [first_weapon, second_weapon] as Array[WeaponTemplate]
-
-	violations.append_array(
-		_expect(fighter.weapons.size() == 2, "weapons must hold both assigned WeaponTemplates")
-	)
-	if fighter.weapons.size() == 2:
-		violations.append_array(
-			_expect(
-				fighter.weapons[0] == first_weapon,
-				"weapons[0] must be the first WeaponTemplate assigned"
-			)
-		)
-		violations.append_array(
-			_expect(
-				fighter.weapons[1] == second_weapon,
-				"weapons[1] must be the second WeaponTemplate assigned"
-			)
-		)
-
-	return violations
-
-
 static func _test_tres_round_trip_via_user_dir() -> Array[String]:
 	var violations: Array[String] = []
-
-	var melee_weapon := WeaponTemplate.new()
-	melee_weapon.template_id = "melee-weapon"
-	melee_weapon.display_name = "Test Blade"
-	melee_weapon.range_hexes = 1
-	melee_weapon.dice_count = 3
-	melee_weapon.damage_value = 2
-	melee_weapon.weapon_type = WeaponTemplate.MELEE
-	melee_weapon.ability_tags = PackedStringArray(["reach"])
-
-	var ranged_weapon := WeaponTemplate.new()
-	ranged_weapon.template_id = "ranged-weapon"
-	ranged_weapon.display_name = "Test Bow"
-	ranged_weapon.range_hexes = 4
-	ranged_weapon.dice_count = 2
-	ranged_weapon.damage_value = 1
-	ranged_weapon.weapon_type = WeaponTemplate.RANGED
-	ranged_weapon.ability_tags = PackedStringArray(["piercing", "long-shot"])
 
 	var fighter := FighterTemplate.new()
 	fighter.template_id = "test-fighter"
@@ -231,7 +144,6 @@ static func _test_tres_round_trip_via_user_dir() -> Array[String]:
 	fighter.range_hexes = 2
 	fighter.attack = 3
 	fighter.damage = 1
-	fighter.weapons = [melee_weapon, ranged_weapon] as Array[WeaponTemplate]
 	fighter.tags = PackedStringArray(["elite"])
 	fighter.ability_tags = PackedStringArray(["special"])
 
@@ -301,79 +213,6 @@ static func _test_tres_round_trip_via_user_dir() -> Array[String]:
 		_expect(
 			loaded.ability_tags == fighter.ability_tags,
 			"ability_tags must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded.weapons.size() == 2,
-			"both nested WeaponTemplates must survive the .tres round trip"
-		)
-	)
-	if loaded.weapons.size() != 2:
-		return violations
-
-	var loaded_melee := loaded.weapons[0]
-	var loaded_ranged := loaded.weapons[1]
-
-	violations.append_array(
-		_expect(
-			loaded_melee.template_id == melee_weapon.template_id,
-			"weapons[0].template_id must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded_melee.display_name == melee_weapon.display_name,
-			"weapons[0].display_name must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded_melee.range_hexes == melee_weapon.range_hexes,
-			"weapons[0].range_hexes must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded_melee.dice_count == melee_weapon.dice_count,
-			"weapons[0].dice_count must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded_melee.damage_value == melee_weapon.damage_value,
-			"weapons[0].damage_value must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded_melee.weapon_type == melee_weapon.weapon_type,
-			"weapons[0].weapon_type must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded_melee.ability_tags == melee_weapon.ability_tags,
-			"weapons[0].ability_tags must survive the .tres round trip"
-		)
-	)
-
-	violations.append_array(
-		_expect(
-			loaded_ranged.template_id == ranged_weapon.template_id,
-			"weapons[1].template_id must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded_ranged.weapon_type == ranged_weapon.weapon_type,
-			"weapons[1].weapon_type must survive the .tres round trip"
-		)
-	)
-	violations.append_array(
-		_expect(
-			loaded_ranged.ability_tags == ranged_weapon.ability_tags,
-			"weapons[1].ability_tags must survive the .tres round trip"
 		)
 	)
 

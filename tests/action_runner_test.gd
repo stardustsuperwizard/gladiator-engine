@@ -319,22 +319,21 @@ static func _test_permitted_attack_resolves_through_the_runner() -> Array[String
 	template.template_id = "action-runner-test-fighter"
 	template.save = 2
 	template.health = 5
+	template.range_hexes = 1
+	template.attack = 3
+	template.damage = 1
 
-	var weapon := WeaponTemplate.new()
-	weapon.template_id = "action-runner-test-weapon"
-	weapon.range_hexes = 1
-	weapon.dice_count = 3
-	weapon.damage_value = 1
-	weapon.weapon_type = WeaponTemplate.MELEE
-
-	# Every face a critical on the attack die and a symbol in no success set on
-	# the save die, so the outcome is the rule under test rather than the seed.
-	var attack_profile := DiceProfile.new()
-	attack_profile.faces = PackedStringArray([DicePool.CRITICAL])
-	attack_profile.match_symbol = WeaponTemplate.MELEE
-	var save_profile := DiceProfile.new()
-	save_profile.faces = PackedStringArray(["blank"])
-	save_profile.match_symbol = "guard"
+	# An attack target every face of the die meets and a save target no face
+	# meets, so the outcome is the rule under test rather than the seed. Every
+	# modifier is 0 and the clamp is widened past both, so no adjacency and no
+	# clamping can move either target.
+	var profile := CombatProfile.new()
+	profile.profile_id = "action-runner-test-profile"
+	profile.die_sides = 6
+	profile.attack_target = 1
+	profile.save_target = 7
+	profile.min_target = 1
+	profile.max_target = 7
 
 	var attacker_hex := Vector3i(0, 0, 0)
 	var target_hex := Vector3i(1, -1, 0)
@@ -351,7 +350,7 @@ static func _test_permitted_attack_resolves_through_the_runner() -> Array[String
 	board.place_occupant(attacker_hex, &"f1")
 	board.place_occupant(target_hex, &"f2")
 
-	var action := AttackAction.new("f1", "f2", weapon, template, attack_profile, save_profile)
+	var action := AttackAction.new("f1", "f2", template, template, profile)
 	var result := ActionRunner.new(Authority.new(state)).run(action, "p1")
 
 	violations.append_array(
@@ -367,12 +366,12 @@ static func _test_permitted_attack_resolves_through_the_runner() -> Array[String
 	var stored := Fighter.from_dict(state.fighter("f2"), template)
 	violations.append_array(
 		_expect(
-			stored != null and stored.damage_counter() == weapon.damage_value,
+			stored != null and stored.damage_counter() == template.damage,
 			"an attack resolved through the runner must have applied its damage to the state"
 		)
 	)
 
-	var refused := AttackAction.new("f2", "f1", weapon, template, attack_profile, save_profile)
+	var refused := AttackAction.new("f2", "f1", template, template, profile)
 	var refusal := ActionRunner.new(Authority.new(state)).run(refused, "p2")
 	violations.append_array(
 		_expect(

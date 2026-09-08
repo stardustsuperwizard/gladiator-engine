@@ -32,9 +32,6 @@ const ATTACK := 3
 const DAMAGE := 1
 const TAG := "elite"
 const ABILITY_TAG := "special"
-const MELEE_WEAPON_ID := "test-blade"
-const MELEE_DAMAGE := 2
-const RANGED_WEAPON_ID := "test-bow"
 
 
 static func run() -> bool:
@@ -43,7 +40,6 @@ static func run() -> bool:
 	violations.append_array(_test_accessors_report_construction_and_template())
 	violations.append_array(_test_two_fighters_share_one_template())
 	violations.append_array(_test_mutation_leaves_every_template_field_unchanged())
-	violations.append_array(_test_weapons_returns_a_shallow_copy())
 	violations.append_array(_test_status_flags_returns_a_copy())
 	violations.append_array(_test_ability_tags_returns_a_copy())
 	violations.append_array(_test_damage_truth_table_at_every_boundary())
@@ -73,21 +69,6 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 ## template rather than keeping a second, drifting copy of these values -- the
 ## same reason ExtractionContractTest.files_recursive() is public.
 static func make_template(health: int) -> FighterTemplate:
-	var blade := WeaponTemplate.new()
-	blade.template_id = MELEE_WEAPON_ID
-	blade.range_hexes = 1
-	blade.dice_count = 3
-	blade.damage_value = MELEE_DAMAGE
-	blade.weapon_type = WeaponTemplate.MELEE
-	blade.ability_tags = PackedStringArray(["reach"])
-
-	var bow := WeaponTemplate.new()
-	bow.template_id = RANGED_WEAPON_ID
-	bow.range_hexes = 4
-	bow.dice_count = 2
-	bow.damage_value = 1
-	bow.weapon_type = WeaponTemplate.RANGED
-
 	var template := FighterTemplate.new()
 	template.template_id = TEMPLATE_ID
 	template.display_name = DISPLAY_NAME
@@ -97,7 +78,6 @@ static func make_template(health: int) -> FighterTemplate:
 	template.range_hexes = RANGE_HEXES
 	template.attack = ATTACK
 	template.damage = DAMAGE
-	template.weapons = [blade, bow] as Array[WeaponTemplate]
 	template.tags = PackedStringArray([TAG])
 	template.ability_tags = PackedStringArray([ABILITY_TAG])
 	return template
@@ -142,30 +122,6 @@ static func expect_template_unchanged(
 			"%s must leave template.ability_tags" % context
 		)
 	)
-	violations.append_array(
-		_expect(template.weapons.size() == 2, "%s must leave template.weapons' size" % context)
-	)
-	if template.weapons.size() != 2:
-		return violations
-
-	violations.append_array(
-		_expect(
-			template.weapons[0].template_id == MELEE_WEAPON_ID,
-			"%s must leave template.weapons[0]" % context
-		)
-	)
-	violations.append_array(
-		_expect(
-			template.weapons[1].template_id == RANGED_WEAPON_ID,
-			"%s must leave template.weapons[1]" % context
-		)
-	)
-	violations.append_array(
-		_expect(
-			template.weapons[0].damage_value == MELEE_DAMAGE,
-			"%s must leave template.weapons[0].damage_value" % context
-		)
-	)
 
 	return violations
 
@@ -201,9 +157,6 @@ static func _test_accessors_report_construction_and_template() -> Array[String]:
 			fighter.ability_tags() == PackedStringArray([ABILITY_TAG]),
 			"ability_tags() must read through"
 		)
-	)
-	violations.append_array(
-		_expect(fighter.weapons().size() == 2, "weapons() must report the template's weapons")
 	)
 	violations.append_array(
 		_expect(fighter.damage_counter() == 0, "a new fighter must start on damage counter 0")
@@ -268,11 +221,6 @@ static func _test_two_fighters_share_one_template() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			a.weapons() == b.weapons(), "both fighters must still agree on the weapons they carry"
-		)
-	)
-	violations.append_array(
-		_expect(
 			a.range_hexes() == b.range_hexes(), "both fighters must still agree on range_hexes()"
 		)
 	)
@@ -300,43 +248,6 @@ static func _test_mutation_leaves_every_template_field_unchanged() -> Array[Stri
 	violations.append_array(
 		expect_template_unchanged(
 			template, 2, "moving, flagging and damaging a fighter (all of it together)"
-		)
-	)
-
-	return violations
-
-
-static func _test_weapons_returns_a_shallow_copy() -> Array[String]:
-	var violations: Array[String] = []
-	var template := make_template(3)
-	var fighter := Fighter.new("fighter-1", template, "player-1", Vector3i.ZERO)
-
-	var returned := fighter.weapons()
-	returned.append(WeaponTemplate.new())
-
-	violations.append_array(
-		_expect(
-			fighter.template().weapons.size() == 2,
-			"appending to the array weapons() returned must not reach the template's array"
-		)
-	)
-	violations.append_array(
-		_expect(fighter.weapons().size() == 2, "a second weapons() call must not see the append")
-	)
-
-	# Shallow, and deliberately: the elements are the template's own immutable
-	# WeaponTemplates, shared rather than copied.
-	var fresh := fighter.weapons()
-	violations.append_array(
-		_expect(
-			fresh[0] == template.weapons[0],
-			"weapons()[0] must be the identical WeaponTemplate object the template holds"
-		)
-	)
-	violations.append_array(
-		_expect(
-			fresh[1] == template.weapons[1],
-			"weapons()[1] must be the identical WeaponTemplate object the template holds"
 		)
 	)
 

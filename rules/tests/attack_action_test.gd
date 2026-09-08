@@ -7,27 +7,28 @@
 ## assertion that an attack resolves through `ActionRunner.run()` cannot live
 ## here. It lives in `tests/action_runner_test.gd`, which is game-side.
 ##
-## Every fixture `WeaponTemplate`, `FighterTemplate` and `DiceProfile` here is
-## built in memory with faces and numbers chosen for this suite, never loaded
-## from `resources/`: `extraction_contract_test.gd` forbids naming a
-## `res://resources/` path under `rules/`, and retuning the authored provisional
-## content must never be able to break this suite.
+## Every fixture `FighterTemplate` and `CombatProfile` here is built in memory
+## with numbers chosen for this suite, never loaded from `resources/`:
+## `extraction_contract_test.gd` forbids naming a `res://resources/` path under
+## `rules/`, and retuning the authored provisional content must never be able
+## to break this suite.
 ##
 ## **Two fixture styles, on purpose.**
 ##
-## `_attack_profile()` and `_save_profile()` are ordinary multi-face dice, used
-## by `_test_hand_worked_attack_matches_worked_sequence()` -- the specification
-## test the parent Feature requires -- and by the draw-order and determinism
-## tests. Their expected face-index sequence for a fixed seed is recorded in a
-## comment at that test, captured once from a real run and then worked by hand
-## against spec §7.
+## `standard_profile()` restates the authored combat dials, and is what the
+## target-number suite works spec §7.3's chart against -- there, the effective
+## target numbers are the assertion and the dice are irrelevant.
 ##
-## Everywhere else the profiles are `_one_face_profile()`: a die whose every
-## face shows the same symbol, so the roll is fixed no matter where the
-## generator stands. That makes Hit / Drawn / Miss, the flanking tiers and
-## defeat assertable on the *rule* rather than on a recorded dice sequence, so
-## those tests cannot rot the way a pinned sequence can and cannot pass by
-## accident of the seed.
+## Everywhere an *outcome* is under test the profile is `forced_profile()`: a
+## target of `ALWAYS_TARGET` counts every face of the die and one of
+## `NEVER_TARGET` counts none, so Hit / Drawn / Miss, damage and defeat are
+## assertable on the *rule* rather than on a recorded dice sequence. Nothing
+## here pins a captured sequence of die results; an expectation captured from a
+## real run would pin Godot's generator rather than spec §7, and would go red
+## on an engine upgrade that changed nothing about the rules. What is pinned
+## instead is the draw *order*, replayed against an independently seeded
+## generator -- see
+## `_test_attack_pool_is_drawn_entirely_before_the_save_pool()`.
 class_name AttackActionTest
 
 const ATTACKER_HEX := Vector3i(0, 0, 0)
@@ -43,10 +44,34 @@ const TARGET_FLANK_B := Vector3i(0, -1, 1)
 ## here flanks the attacker without also flanking itself into the attack roll.
 const ATTACKER_FLANK := Vector3i(-1, 1, 0)
 
+## The second such hex, for the surrounded tier on the save chart. Also
+## adjacent to the attacker and two hexes from the target.
+const ATTACKER_FLANK_B := Vector3i(-1, 0, 1)
+
 ## Two hexes from the attacker, with `TARGET_HEX` on the line between them.
 const FAR_HEX := Vector3i(2, -2, 0)
 
-const BOARD_RADIUS := 3
+## Four hexes from the attacker along the same line -- the archer's reach in
+## the target-number suite.
+const LONG_HEX := Vector3i(4, -4, 0)
+
+## Adjacent to `LONG_HEX` and four hexes from the attacker, so a fighter here
+## flanks a target standing at long range without flanking the attacker.
+const LONG_FLANK_A := Vector3i(4, -3, -1)
+
+## The second neighbour of `LONG_HEX`, for the surrounded tier.
+const LONG_FLANK_B := Vector3i(3, -4, 1)
+
+## Wide enough to hold `LONG_HEX` and both of its flankers with a ring to
+## spare, so a push at long range still has somewhere to land.
+const BOARD_RADIUS := 5
+
+## A target number no face of the die can fail. Every roll counts.
+const ALWAYS_TARGET := 1
+
+## A target number no face of the die can meet, for a `die_sides` of 6. No roll
+## counts.
+const NEVER_TARGET := 7
 
 
 static func run() -> bool:
@@ -55,23 +80,21 @@ static func run() -> bool:
 	violations.append_array(_test_every_refusal_leaves_the_state_identical())
 	violations.append_array(_test_target_at_exactly_range_is_allowed())
 	violations.append_array(_test_missing_injected_data_is_refused())
-	violations.append_array(_test_hand_worked_attack_matches_worked_sequence())
 	violations.append_array(_test_attack_pool_is_drawn_entirely_before_the_save_pool())
-	violations.append_array(_test_hit_applies_the_weapons_damage())
+	violations.append_array(_test_hit_applies_the_attackers_damage())
 	violations.append_array(_test_drawn_leaves_the_damage_counter_alone())
 	violations.append_array(_test_miss_resolves_successfully_and_deals_nothing())
-	violations.append_array(_test_flanked_target_unlocks_the_first_bonus_symbol())
-	violations.append_array(_test_surrounded_target_unlocks_the_second_bonus_symbol())
-	violations.append_array(_test_flanked_attacker_unlocks_a_bonus_on_the_save_roll())
-	violations.append_array(_test_happy_path_from_the_parent_feature())
+	violations.append_array(_test_flanking_tiers_are_read_off_each_fighters_own_neighbours())
+	violations.append_array(_test_a_defeated_flanker_no_longer_counts())
 	violations.append_array(_test_defeat_clears_the_hex_and_keeps_the_payload())
 	violations.append_array(_test_equal_seeds_produce_identical_outcome_and_digest())
 
-	# Spec §7.6-7.7's push-back tests live in attack_action_push_test.gd, not
-	# here: see that file's docstring for why the split exists and why it is
-	# not a second suite. Folded into this class's own violations, so a
-	# failure still reports as "FAIL Attack Action Test", the one suite of
-	# record.
+	# Spec §7.3's target-number chart and spec §7.6-7.7's push-back live in
+	# attack_action_target_test.gd and attack_action_push_test.gd, not here:
+	# see those files' docstrings for why the split exists and why neither is
+	# a second suite. Folded into this class's own violations, so a failure
+	# still reports as "FAIL Attack Action Test", the one suite of record.
+	violations.append_array(AttackActionTargetTest.run())
 	violations.append_array(AttackActionPushTest.run())
 
 	if violations.is_empty():
@@ -91,72 +114,69 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 # --- Fixtures -----------------------------------------------------------
 
 
-## A weapon built for one test. Every number is an argument, so no test reads a
-## balance value it did not choose.
-static func _weapon(
-	range_hexes: int, dice_count: int, damage_value: int, weapon_type: String = WeaponTemplate.MELEE
-) -> WeaponTemplate:
-	var weapon := WeaponTemplate.new()
-	weapon.template_id = "fixture-weapon"
-	weapon.range_hexes = range_hexes
-	weapon.dice_count = dice_count
-	weapon.damage_value = damage_value
-	weapon.weapon_type = weapon_type
-	return weapon
-
-
-static func _fighter_template(save: int, health: int) -> FighterTemplate:
+## A fighter built for one test. Every stat is an argument, so no test reads a
+## balance value it did not choose. `range_hexes`, `attack` and `damage`
+## default to the adjacent-melee shape most tests below want.
+##
+## Public, alongside the two profile builders, because the target-number and
+## push suites build their fixtures through these rather than keeping a second,
+## drifting copy.
+static func fighter_template(
+	save: int, health: int, range_hexes: int = 1, attack: int = 3, damage: int = 1
+) -> FighterTemplate:
 	var template := FighterTemplate.new()
 	template.template_id = "fixture-fighter"
 	template.move = 1
 	template.save = save
 	template.health = health
+	template.range_hexes = range_hexes
+	template.attack = attack
+	template.damage = damage
 	return template
 
 
-## A four-face attack die: index 0 critical, 1 melee, 2 ranged, 3 opening.
-static func _attack_profile() -> DiceProfile:
-	var profile := DiceProfile.new()
-	profile.profile_id = "fixture-attack-die"
-	profile.faces = PackedStringArray(["critical", "melee", "ranged", "opening"])
-	profile.match_symbol = "melee"
-	profile.bonus_symbols = PackedStringArray(["opening", "advantage"])
+## The authored combat dials, restated in memory: spec §7.3's two baselines,
+## the engagement threshold and bonus, the attack and save charts' separate
+## flank and surround magnitudes, and the clamp.
+##
+## Restated rather than loaded, for the reason the class docstring gives. The
+## target-number suite hand-works every row of §7.3's chart off exactly these
+## values, so they are written out once, here.
+static func standard_profile() -> CombatProfile:
+	var profile := CombatProfile.new()
+	profile.profile_id = "fixture-standard"
+	profile.die_sides = 6
+	profile.attack_target = 5
+	profile.save_target = 5
+	profile.engagement_range = 1
+	profile.engagement_modifier = 1
+	profile.attack_flank_modifier = 1
+	profile.attack_surround_modifier = 2
+	profile.save_flank_modifier = 2
+	profile.save_surround_modifier = 3
+	profile.guard_modifier = 1
+	profile.min_target = 2
+	profile.max_target = 6
 	return profile
 
 
-## A six-face save die. Six faces rather than four so the two pools cannot be
-## confused for one another when a draw sequence is read back.
-static func _save_profile() -> DiceProfile:
-	var profile := DiceProfile.new()
-	profile.profile_id = "fixture-save-die"
-	profile.faces = PackedStringArray(["critical", "guard", "guard", "blank", "opening", "blank"])
-	profile.match_symbol = "guard"
-	profile.bonus_symbols = PackedStringArray(["opening", "advantage"])
+## A profile whose two target numbers are dictated outright, so a pool's
+## success count is fixed by the die rather than by the seed: `ALWAYS_TARGET`
+## counts every face and `NEVER_TARGET` counts none.
+##
+## Every modifier is 0 and the clamp is widened to `[ALWAYS_TARGET,
+## NEVER_TARGET]`, so no adjacency and no clamping can move either target back
+## into the rollable range. That is what makes the outcome tests below
+## assertions about the rule rather than about the generator.
+static func forced_profile(attack_target: int, save_target: int) -> CombatProfile:
+	var profile := CombatProfile.new()
+	profile.profile_id = "fixture-forced"
+	profile.die_sides = 6
+	profile.attack_target = attack_target
+	profile.save_target = save_target
+	profile.min_target = ALWAYS_TARGET
+	profile.max_target = NEVER_TARGET
 	return profile
-
-
-## A die every one of whose faces shows `symbol`, so its roll is fixed wherever
-## the generator stands. `match_symbol` is what this die counts by default;
-## `bonus_symbols` is the standard ordered pair, so `symbol` can be chosen to
-## land inside or outside the success set at a given bonus tier.
-static func _one_face_profile(symbol: String, match_symbol: String) -> DiceProfile:
-	var profile := DiceProfile.new()
-	profile.profile_id = "fixture-fixed-die"
-	profile.faces = PackedStringArray([symbol])
-	profile.match_symbol = match_symbol
-	profile.bonus_symbols = PackedStringArray(["opening", "advantage"])
-	return profile
-
-
-## Every face a critical, so every die is a success on either roll.
-static func _always_profile() -> DiceProfile:
-	return _one_face_profile(DicePool.CRITICAL, "guard")
-
-
-## Every face a symbol in no success set at any bonus tier, so no die ever
-## counts.
-static func _never_profile() -> DiceProfile:
-	return _one_face_profile("blank", "guard")
 
 
 ## A radius-`BOARD_RADIUS` board of NORMAL hexes, with `blocked` made BLOCKED.
@@ -212,10 +232,9 @@ static func _stored_position(
 	return fighter.position()
 
 
-## The scenario the parent Feature calls `happy_path`, and the one the
-## hand-worked test pins: attacker `a1` adjacent to target `b1`, with exactly
-## one other enemy of `b1` -- friendly `a2` -- also adjacent to it, so the
-## target is flanked and the attacker is not.
+## The scenario the parent Feature calls `happy_path`: attacker `a1` adjacent
+## to target `b1`, with exactly one other enemy of `b1` -- friendly `a2` --
+## also adjacent to it, so the target is flanked and the attacker is not.
 static func _happy_path_state(seed_value: int, template: FighterTemplate) -> GameState:
 	var state := _build_state(seed_value)
 	_place(state, "a1", "p1", ATTACKER_HEX, template)
@@ -230,20 +249,25 @@ static func _happy_path_state(seed_value: int, template: FighterTemplate) -> Gam
 ## Every refusal `resolve()` can give from a positioned scenario, one row each.
 ##
 ## The baseline roster is attacker `a1` (p1) at `ATTACKER_HEX` and target `b1`
-## (p2) adjacent at `TARGET_HEX`, with a melee weapon of range 1. Each row
-## changes exactly the one thing that produces its reason -- the actor or target
-## id, the target's hex, owner or damage, the weapon, or the hexes made BLOCKED
-## -- and each runs on a fresh state whose digest must be byte-identical
-## afterwards, because a refusal changes nothing at all.
+## (p2) adjacent at `TARGET_HEX`. Each row changes exactly the one thing that
+## produces its reason -- the actor or target id, the target's hex, owner or
+## damage, the attacker's reach, or the hexes made BLOCKED -- and each runs on
+## a fresh state whose digest must be byte-identical afterwards, because a
+## refusal changes nothing at all.
+##
+## Reach is the *attacker's* `range_hexes`, so the two attacker templates below
+## differ only in that stat.
 static func _test_every_refusal_leaves_the_state_identical() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 2)
-	var melee := _weapon(1, 3, 1)
-	var ranged := _weapon(3, 3, 1, WeaponTemplate.RANGED)
+	var target_template := fighter_template(2, 2)
+	var melee := fighter_template(2, 2, 1)
+	var ranged := fighter_template(2, 2, 3)
+	var profile := standard_profile()
 	var clear: Array[Vector3i] = []
 	var wall: Array[Vector3i] = [TARGET_HEX]
 
-	# reason, actor, target, target hex, target owner, target damage, weapon, blocked
+	# reason, actor, target, target hex, target owner, target damage,
+	# attacker template, blocked
 	var cases := [
 		[AttackAction.FAILURE_NO_SUCH_FIGHTER, "ghost", "b1", TARGET_HEX, "p2", 0, melee, clear],
 		[AttackAction.FAILURE_NO_SUCH_TARGET, "a1", "ghost", TARGET_HEX, "p2", 0, melee, clear],
@@ -270,17 +294,15 @@ static func _test_every_refusal_leaves_the_state_identical() -> Array[String]:
 		var target_hex: Vector3i = entry[3]
 		var target_owner: String = entry[4]
 		var target_damage: int = entry[5]
-		var weapon: WeaponTemplate = entry[6]
+		var attacker_template: FighterTemplate = entry[6]
 		var blocked: Array[Vector3i] = entry[7]
 
 		var state := _build_state(13, blocked)
-		_place(state, "a1", "p1", ATTACKER_HEX, template)
-		_place(state, "b1", target_owner, target_hex, template, target_damage)
+		_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+		_place(state, "b1", target_owner, target_hex, target_template, target_damage)
 		var before := state.digest()
 
-		var action := AttackAction.new(
-			actor, target, weapon, template, _attack_profile(), _save_profile()
-		)
+		var action := AttackAction.new(actor, target, attacker_template, target_template, profile)
 		var result := action.resolve(state)
 
 		violations.append_array(
@@ -299,23 +321,25 @@ static func _test_every_refusal_leaves_the_state_identical() -> Array[String]:
 	return violations
 
 
-## The range boundary is inclusive: distance 2 against `range_hexes` 2 resolves
-## rather than being refused.
+## The range boundary is inclusive: distance 2 against an attacker whose
+## `range_hexes` is 2 resolves rather than being refused.
 static func _test_target_at_exactly_range_is_allowed() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 3)
+	var attacker_template := fighter_template(2, 3, 2)
+	var target_template := fighter_template(2, 3)
 	var state := _build_state(13)
-	_place(state, "a1", "p1", ATTACKER_HEX, template)
-	_place(state, "b1", "p2", FAR_HEX, template)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "b1", "p2", FAR_HEX, target_template)
 
-	var weapon := _weapon(2, 3, 1, WeaponTemplate.RANGED)
-	var action := AttackAction.new("a1", "b1", weapon, template, _attack_profile(), _save_profile())
+	var action := AttackAction.new(
+		"a1", "b1", attacker_template, target_template, standard_profile()
+	)
 	var result := action.resolve(state)
 
 	violations.append_array(
 		_expect(
-			HexCoord.distance(ATTACKER_HEX, FAR_HEX) == weapon.range_hexes,
-			"this scenario must stand the target at exactly range_hexes"
+			HexCoord.distance(ATTACKER_HEX, FAR_HEX) == attacker_template.range_hexes,
+			"this scenario must stand the target at exactly the attacker's range_hexes"
 		)
 	)
 	violations.append_array(
@@ -325,17 +349,16 @@ static func _test_target_at_exactly_range_is_allowed() -> Array[String]:
 	return violations
 
 
-## Each of the four injected objects, nulled one at a time. A refusal, never a
+## Each of the three injected objects, nulled one at a time. A refusal, never a
 ## crash, and never a resolution against a guess.
 static func _test_missing_injected_data_is_refused() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 3)
+	var template := fighter_template(2, 3)
 
 	var cases := [
-		["weapon", null, template, _attack_profile(), _save_profile()],
-		["target template", _weapon(1, 3, 1), null, _attack_profile(), _save_profile()],
-		["attack profile", _weapon(1, 3, 1), template, null, _save_profile()],
-		["save profile", _weapon(1, 3, 1), template, _attack_profile(), null],
+		["attacker template", null, template, standard_profile()],
+		["target template", template, null, standard_profile()],
+		["combat profile", template, template, null],
 	]
 
 	for entry in cases:
@@ -345,14 +368,11 @@ static func _test_missing_injected_data_is_refused() -> Array[String]:
 		_place(state, "b1", "p2", TARGET_HEX, template)
 		var before := state.digest()
 
-		var weapon: WeaponTemplate = entry[1]
+		var attacker_template: FighterTemplate = entry[1]
 		var target_template: FighterTemplate = entry[2]
-		var attack_profile: DiceProfile = entry[3]
-		var save_profile: DiceProfile = entry[4]
+		var profile: CombatProfile = entry[3]
 
-		var action := AttackAction.new(
-			"a1", "b1", weapon, target_template, attack_profile, save_profile
-		)
+		var action := AttackAction.new("a1", "b1", attacker_template, target_template, profile)
 		var result := action.resolve(state)
 
 		violations.append_array(
@@ -370,137 +390,79 @@ static func _test_missing_injected_data_is_refused() -> Array[String]:
 	return violations
 
 
-# --- The hand-worked specification --------------------------------------
-
-
-## The specification test the parent Feature requires: a known board, a known
-## seed, fixture dice with explicitly chosen faces, and the expected face-index
-## sequence recorded here and worked by hand against spec §7.
-##
-## Board and roster: `_happy_path_state()` -- attacker `a1` at (0,0,0), friendly
-## `a2` at (1,0,-1), target `b1` at (1,-1,0). Weapon: melee, range 1, 4 dice,
-## 1 damage. Target template: save 3, health 3.
-##
-## Spec §8 first. `a2` is an enemy of `b1`, adjacent to it, and is not the
-## attacker, so the target is FLANKED: attack bonus 1. Nothing that is an enemy
-## of `a1` other than `b1` stands next to `a1`, so the save bonus is 0.
-##
-## Seed 13, attack pool drawn first: four draws of `next_int(0, 3)` giving face
-## indices **3, 2, 1, 3** -> opening, ranged, melee, opening. Then the save
-## pool: three draws of `next_int(0, 5)` giving face indices **2, 4, 0** ->
-## guard, opening, critical. (Captured once from a real run against this seed;
-## everything below it is worked by hand.)
-##
-## Attack successes, success set {critical, melee} + bonus_symbols[0] = opening,
-## because the target is flanked: opening counts, ranged does not, melee counts,
-## opening counts -> **3**.
-##
-## Save successes, success set {critical, guard} and no bonus, because the
-## attacker is not flanked: guard counts, opening does **not**, critical counts
-## -> **2**.
-##
-## 3 > 2, so spec §7.5 gives **HIT**.
-static func _test_hand_worked_attack_matches_worked_sequence() -> Array[String]:
-	var violations: Array[String] = []
-	var template := _fighter_template(3, 3)
-	var state := _happy_path_state(13, template)
-
-	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 4, 1), template, _attack_profile(), _save_profile()
-	)
-	var result := action.resolve(state)
-
-	violations.append_array(_expect(result.success, "the hand-worked attack must resolve"))
-	violations.append_array(
-		_expect(
-			action.attack_bonus_count() == Flanking.FLANKED,
-			"the hand-worked scenario must read the target as flanked"
-		)
-	)
-	violations.append_array(
-		_expect(
-			action.save_bonus_count() == Flanking.NONE,
-			"the hand-worked scenario must read the attacker as unflanked"
-		)
-	)
-	violations.append_array(
-		_expect(
-			action.attack_successes() == 3,
-			"the hand-worked attack roll must count 3 successes, not %d" % action.attack_successes()
-		)
-	)
-	violations.append_array(
-		_expect(
-			action.save_successes() == 2,
-			"the hand-worked save roll must count 2 successes, not %d" % action.save_successes()
-		)
-	)
-	violations.append_array(
-		_expect(
-			action.outcome() == DicePool.Outcome.HIT, "3 successes against 2 must resolve to HIT"
-		)
-	)
-
-	return violations
+# --- Draw order ---------------------------------------------------------
 
 
 ## Draw order is the contract: the attack pool entirely before the save pool,
 ## and nothing else in `resolve()` touching the generator.
 ##
 ## Asserted twice. The generator's position after resolution must equal a
-## generator stepped `weapon.dice_count + target_template.save` times, which
-## pins the count. And rolling the two pools by hand in that order on an
-## independent generator must reproduce the very success totals the action
-## reported, which pins the order -- the two profiles have different face
-## counts, so a swapped order draws different symbols.
+## generator stepped `attacker.attack + target.save` times through
+## `roll_die(die_sides)`, which pins the count. And rolling the two pools by
+## hand in that order on an independent generator, then counting each at the
+## target number the action itself reports, must reproduce the very success
+## totals it reported -- which pins the order, because the two pools differ in
+## size and are counted at different targets.
 static func _test_attack_pool_is_drawn_entirely_before_the_save_pool() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(3, 3)
-	var attack_profile := _attack_profile()
-	var save_profile := _save_profile()
-	var weapon := _weapon(1, 4, 1)
-	var state := _happy_path_state(13, template)
+	var attacker_template := fighter_template(3, 3, 1, 4, 1)
+	var target_template := fighter_template(3, 3)
+	var profile := standard_profile()
 
-	var action := AttackAction.new("a1", "b1", weapon, template, attack_profile, save_profile)
+	# The happy path's roster, placed by hand so each fighter is recorded over
+	# its own template: attacker `a1`, its friend `a2` flanking the target, and
+	# target `b1`. Flanked and engaged, so the attack target is 5 - 1 - 1 = 3
+	# against a save target of 5 -- two different targets over two differently
+	# sized pools, which is what makes a swapped draw order detectable.
+	var state := _build_state(13)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "a2", "p1", TARGET_FLANK_A, attacker_template)
+	_place(state, "b1", "p2", TARGET_HEX, target_template)
+
+	var action := AttackAction.new("a1", "b1", attacker_template, target_template, profile)
 	action.resolve(state)
 
 	var reference := DeterministicRng.new(13)
-	for _i in range(weapon.dice_count):
-		reference.next_int(0, attack_profile.face_count() - 1)
-	for _i in range(template.save):
-		reference.next_int(0, save_profile.face_count() - 1)
+	for _i in range(attacker_template.attack):
+		reference.roll_die(profile.die_sides)
+	for _i in range(target_template.save):
+		reference.roll_die(profile.die_sides)
 
 	violations.append_array(
 		_expect(
 			state.rng.get_state() == reference.get_state(),
 			(
-				"resolve() must advance the generator by exactly weapon.dice_count + "
-				+ "target_template.save draws and touch it nowhere else"
+				"resolve() must advance the generator by exactly attacker.attack + "
+				+ "target.save draws and touch it nowhere else"
 			)
 		)
 	)
 
 	var replay := DeterministicRng.new(13)
-	var attack_roll := DicePool.roll(attack_profile, weapon.dice_count, replay)
-	var save_roll := DicePool.roll(save_profile, template.save, replay)
-	var expected_attack := DicePool.count_successes(
-		attack_roll,
-		DicePool.success_symbols(attack_profile, weapon.weapon_type, action.attack_bonus_count())
-	)
-	var expected_save := DicePool.count_successes(
-		save_roll,
-		DicePool.success_symbols(save_profile, save_profile.match_symbol, action.save_bonus_count())
-	)
+	var attack_roll := DicePool.roll_dice(attacker_template.attack, profile.die_sides, replay)
+	var save_roll := DicePool.roll_dice(target_template.save, profile.die_sides, replay)
 
 	violations.append_array(
 		_expect(
-			action.attack_successes() == expected_attack,
+			action.attack_target() != action.save_target(),
+			(
+				"this scenario must count the two pools at different targets, or a swapped draw "
+				+ "order could pass unnoticed"
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			(
+				action.attack_successes()
+				== DicePool.count_at_or_above(attack_roll, action.attack_target())
+			),
 			"the attack pool must be the first draws taken from the generator"
 		)
 	)
 	violations.append_array(
 		_expect(
-			action.save_successes() == expected_save,
+			action.save_successes() == DicePool.count_at_or_above(save_roll, action.save_target()),
 			"the save pool must be drawn after the attack pool, from where it left the generator"
 		)
 	)
@@ -511,28 +473,40 @@ static func _test_attack_pool_is_drawn_entirely_before_the_save_pool() -> Array[
 # --- Outcomes -----------------------------------------------------------
 
 
-static func _test_hit_applies_the_weapons_damage() -> Array[String]:
+static func _test_hit_applies_the_attackers_damage() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 5)
-	var weapon := _weapon(1, 4, 2)
+	var attacker_template := fighter_template(2, 5, 1, 4, 2)
+	var target_template := fighter_template(2, 5)
 	var state := _build_state(13)
-	_place(state, "a1", "p1", ATTACKER_HEX, template)
-	_place(state, "b1", "p2", TARGET_HEX, template)
-	var before := _stored_damage(state, "b1", template)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "b1", "p2", TARGET_HEX, target_template)
+	var before := _stored_damage(state, "b1", target_template)
 
 	var action := AttackAction.new(
-		"a1", "b1", weapon, template, _always_profile(), _never_profile()
+		"a1", "b1", attacker_template, target_template, forced_profile(ALWAYS_TARGET, NEVER_TARGET)
 	)
 	var result := action.resolve(state)
 
 	violations.append_array(_expect(result.success, "a Hit must return a successful TurnResult"))
 	violations.append_array(
+		_expect(
+			action.attack_successes() == attacker_template.attack,
+			"a target of ALWAYS_TARGET must count every one of the attacker's dice"
+		)
+	)
+	violations.append_array(
+		_expect(
+			action.save_successes() == 0,
+			"a target of NEVER_TARGET must count none of the target's save dice"
+		)
+	)
+	violations.append_array(
 		_expect(action.outcome() == DicePool.Outcome.HIT, "4 successes against 0 must be a HIT")
 	)
 	violations.append_array(
 		_expect(
-			_stored_damage(state, "b1", template) == before + weapon.damage_value,
-			"a Hit must raise the stored damage_counter by exactly weapon.damage_value"
+			_stored_damage(state, "b1", target_template) == before + attacker_template.damage,
+			"a Hit must raise the stored damage_counter by exactly the attacker's damage"
 		)
 	)
 	violations.append_array(
@@ -544,14 +518,15 @@ static func _test_hit_applies_the_weapons_damage() -> Array[String]:
 
 static func _test_drawn_leaves_the_damage_counter_alone() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 5)
+	var attacker_template := fighter_template(2, 5, 1, 2, 2)
+	var target_template := fighter_template(2, 5)
 	var state := _build_state(13)
-	_place(state, "a1", "p1", ATTACKER_HEX, template)
-	_place(state, "b1", "p2", TARGET_HEX, template)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "b1", "p2", TARGET_HEX, target_template)
 
-	# Two attack dice, two save dice, every face a critical on both: 2 and 2.
+	# Two attack dice, two save dice, every die counting on both: 2 and 2.
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 2, 2), template, _always_profile(), _always_profile()
+		"a1", "b1", attacker_template, target_template, forced_profile(ALWAYS_TARGET, ALWAYS_TARGET)
 	)
 	var result := action.resolve(state)
 
@@ -561,7 +536,7 @@ static func _test_drawn_leaves_the_damage_counter_alone() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			_stored_damage(state, "b1", template) == 0,
+			_stored_damage(state, "b1", target_template) == 0,
 			"a Drawn attack must leave the stored damage_counter unchanged"
 		)
 	)
@@ -573,13 +548,14 @@ static func _test_drawn_leaves_the_damage_counter_alone() -> Array[String]:
 ## true, and `reason` is still empty.
 static func _test_miss_resolves_successfully_and_deals_nothing() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(1, 5)
+	var attacker_template := fighter_template(1, 5, 1, 3, 2)
+	var target_template := fighter_template(1, 5)
 	var state := _build_state(13)
-	_place(state, "a1", "p1", ATTACKER_HEX, template)
-	_place(state, "b1", "p2", TARGET_HEX, template)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "b1", "p2", TARGET_HEX, target_template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 2), template, _never_profile(), _always_profile()
+		"a1", "b1", attacker_template, target_template, forced_profile(NEVER_TARGET, ALWAYS_TARGET)
 	)
 	var result := action.resolve(state)
 
@@ -594,7 +570,7 @@ static func _test_miss_resolves_successfully_and_deals_nothing() -> Array[String
 	)
 	violations.append_array(
 		_expect(
-			_stored_damage(state, "b1", template) == 0,
+			_stored_damage(state, "b1", target_template) == 0,
 			"a Miss must leave the stored damage_counter unchanged"
 		)
 	)
@@ -605,21 +581,20 @@ static func _test_miss_resolves_successfully_and_deals_nothing() -> Array[String
 # --- Flanking and surrounding -------------------------------------------
 
 
-## The attack die shows only `bonus_symbols[0]`, which counts at the FLANKED
-## tier and at no lower one -- so the same roll scores nothing without a
-## flanker and every die with one.
-static func _test_flanked_target_unlocks_the_first_bonus_symbol() -> Array[String]:
+## Spec §8 applies the same adjacency check twice, on two different fighters:
+## the attack bonus counts the *target's* other adjacent enemies and the save
+## bonus the *attacker's*. Which magnitude each one then buys is spec §7.3's
+## business and is asserted in the target-number suite; what is asserted here
+## is that the two tiers are read off the right fighter.
+static func _test_flanking_tiers_are_read_off_each_fighters_own_neighbours() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(1, 5)
-	var weapon := _weapon(1, 3, 1)
-	var attack_profile := _one_face_profile("opening", "melee")
+	var template := fighter_template(1, 5)
+	var profile := standard_profile()
 
 	var alone := _build_state(13)
 	_place(alone, "a1", "p1", ATTACKER_HEX, template)
 	_place(alone, "b1", "p2", TARGET_HEX, template)
-	var unflanked := AttackAction.new(
-		"a1", "b1", weapon, template, attack_profile, _never_profile()
-	)
+	var unflanked := AttackAction.new("a1", "b1", template, template, profile)
 	unflanked.resolve(alone)
 
 	violations.append_array(
@@ -630,191 +605,79 @@ static func _test_flanked_target_unlocks_the_first_bonus_symbol() -> Array[Strin
 	)
 	violations.append_array(
 		_expect(
-			unflanked.attack_successes() == 0,
-			"bonus_symbols[0] must not count while the target is unflanked"
+			unflanked.save_bonus_count() == Flanking.NONE,
+			"an attacker with no adjacent enemy but the target must read as unflanked"
 		)
 	)
 
 	var flanked_state := _happy_path_state(13, template)
-	var flanked := AttackAction.new("a1", "b1", weapon, template, attack_profile, _never_profile())
+	var flanked := AttackAction.new("a1", "b1", template, template, profile)
 	flanked.resolve(flanked_state)
 
 	violations.append_array(
 		_expect(
 			flanked.attack_bonus_count() == Flanking.FLANKED,
-			"exactly one other adjacent enemy must give attack_bonus_count() of 1"
+			"exactly one other adjacent enemy must give attack_bonus_count() of FLANKED"
 		)
 	)
 	violations.append_array(
 		_expect(
-			flanked.attack_successes() == weapon.dice_count,
-			"a flanked target must put bonus_symbols[0] into the counted success set"
+			flanked.save_bonus_count() == Flanking.NONE,
+			"a friendly flanker of the target must not flank the attacker as well"
 		)
 	)
 
-	return violations
-
-
-## The attack die shows only `bonus_symbols[1]`, which counts at the SURROUNDED
-## tier alone -- so one flanker scores nothing and two score every die.
-static func _test_surrounded_target_unlocks_the_second_bonus_symbol() -> Array[String]:
-	var violations: Array[String] = []
-	var template := _fighter_template(1, 5)
-	var weapon := _weapon(1, 3, 1)
-	var attack_profile := _one_face_profile("advantage", "melee")
-
-	var one_state := _happy_path_state(13, template)
-	var one := AttackAction.new("a1", "b1", weapon, template, attack_profile, _never_profile())
-	one.resolve(one_state)
+	var surrounded_state := _happy_path_state(13, template)
+	_place(surrounded_state, "a3", "p1", TARGET_FLANK_B, template)
+	var surrounded := AttackAction.new("a1", "b1", template, template, profile)
+	surrounded.resolve(surrounded_state)
 
 	violations.append_array(
 		_expect(
-			one.attack_successes() == 0,
-			"bonus_symbols[1] must not count while the target is merely flanked"
+			surrounded.attack_bonus_count() == Flanking.SURROUNDED,
+			"two other adjacent enemies must give attack_bonus_count() of SURROUNDED"
 		)
 	)
 
-	var two_state := _happy_path_state(13, template)
-	_place(two_state, "a3", "p1", TARGET_FLANK_B, template)
-	var two := AttackAction.new("a1", "b1", weapon, template, attack_profile, _never_profile())
-	two.resolve(two_state)
+	var defended_state := _build_state(13)
+	_place(defended_state, "a1", "p1", ATTACKER_HEX, template)
+	_place(defended_state, "b1", "p2", TARGET_HEX, template)
+	_place(defended_state, "b2", "p2", ATTACKER_FLANK, template)
+	var defended := AttackAction.new("a1", "b1", template, template, profile)
+	defended.resolve(defended_state)
 
 	violations.append_array(
 		_expect(
-			two.attack_bonus_count() == Flanking.SURROUNDED,
-			"two other adjacent enemies must give attack_bonus_count() of 2"
-		)
-	)
-	violations.append_array(
-		_expect(
-			two.attack_successes() == weapon.dice_count,
-			"a surrounded target must put bonus_symbols[1] into the counted success set too"
-		)
-	)
-
-	# The same two flankers, but one of them already defeated and so already off
-	# the board: a fighter that is not standing there flanks nobody, and the
-	# target drops back to merely flanked.
-	var defeated_state := _happy_path_state(13, template)
-	_place(defeated_state, "a3", "p1", TARGET_FLANK_B, template, template.health)
-	defeated_state.board.remove_occupant(TARGET_FLANK_B)
-	var without := AttackAction.new("a1", "b1", weapon, template, attack_profile, _never_profile())
-	without.resolve(defeated_state)
-
-	violations.append_array(
-		_expect(
-			without.attack_bonus_count() == Flanking.FLANKED,
-			"a defeated fighter, already off the board, must not count towards surrounding"
-		)
-	)
-
-	return violations
-
-
-## Spec §8 applies the same check symmetrically. The save die shows only
-## `bonus_symbols[0]`, so the defence roll scores nothing until an enemy of the
-## attacker -- other than the target -- stands next to the attacker.
-static func _test_flanked_attacker_unlocks_a_bonus_on_the_save_roll() -> Array[String]:
-	var violations: Array[String] = []
-	var template := _fighter_template(3, 5)
-	var save_profile := _one_face_profile("opening", "guard")
-
-	var alone := _build_state(13)
-	_place(alone, "a1", "p1", ATTACKER_HEX, template)
-	_place(alone, "b1", "p2", TARGET_HEX, template)
-	var unflanked := AttackAction.new(
-		"a1", "b1", _weapon(1, 1, 1), template, _never_profile(), save_profile
-	)
-	unflanked.resolve(alone)
-
-	violations.append_array(
-		_expect(
-			unflanked.save_bonus_count() == Flanking.NONE,
-			"an attacker with no adjacent enemy but the target must read as unflanked"
-		)
-	)
-	violations.append_array(
-		_expect(
-			unflanked.save_successes() == 0,
-			"bonus_symbols[0] must not count on defence while the attacker is unflanked"
-		)
-	)
-
-	var flanked_state := _build_state(13)
-	_place(flanked_state, "a1", "p1", ATTACKER_HEX, template)
-	_place(flanked_state, "b1", "p2", TARGET_HEX, template)
-	_place(flanked_state, "b2", "p2", ATTACKER_FLANK, template)
-	var flanked := AttackAction.new(
-		"a1", "b1", _weapon(1, 1, 1), template, _never_profile(), save_profile
-	)
-	flanked.resolve(flanked_state)
-
-	violations.append_array(
-		_expect(
-			flanked.save_bonus_count() == Flanking.FLANKED,
+			defended.save_bonus_count() == Flanking.FLANKED,
 			"one enemy of the attacker other than the target must give save_bonus_count() of 1"
 		)
 	)
 	violations.append_array(
 		_expect(
-			flanked.attack_bonus_count() == Flanking.NONE,
+			defended.attack_bonus_count() == Flanking.NONE,
 			"a fighter two hexes from the target must not also flank the target"
 		)
 	)
-	violations.append_array(
-		_expect(
-			flanked.save_successes() == template.save,
-			"a flanked attacker must put bonus_symbols[0] into the defence success set"
-		)
-	)
-	violations.append_array(
-		_expect(
-			flanked.outcome() == DicePool.Outcome.MISS,
-			"0 attack successes against 3 save successes must be a MISS"
-		)
-	)
 
 	return violations
 
 
-## The parent Feature's `happy_path`, end to end and on the fixed seed the
-## hand-worked test uses: the attack lands and the damage is applied.
-static func _test_happy_path_from_the_parent_feature() -> Array[String]:
-	var violations: Array[String] = []
-	var template := _fighter_template(3, 3)
-	var weapon := _weapon(1, 4, 1)
+## A fighter the board no longer reports at its recorded position has been
+## defeated, and a fighter off the board flanks nobody: the target drops back
+## from surrounded to merely flanked.
+static func _test_a_defeated_flanker_no_longer_counts() -> Array[String]:
+	var template := fighter_template(1, 5)
 	var state := _happy_path_state(13, template)
+	_place(state, "a3", "p1", TARGET_FLANK_B, template, template.health)
+	state.board.remove_occupant(TARGET_FLANK_B)
 
-	var action := AttackAction.new("a1", "b1", weapon, template, _attack_profile(), _save_profile())
-	var result := action.resolve(state)
+	var action := AttackAction.new("a1", "b1", template, template, standard_profile())
+	action.resolve(state)
 
-	violations.append_array(_expect(result.success, "the happy path must resolve successfully"))
-	violations.append_array(
-		_expect(weapon.weapon_type == WeaponTemplate.MELEE, "the happy path uses a melee weapon")
+	return _expect(
+		action.attack_bonus_count() == Flanking.FLANKED,
+		"a defeated fighter, already off the board, must not count towards surrounding"
 	)
-	violations.append_array(
-		_expect(
-			action.attack_successes() > action.save_successes(),
-			"the happy path's attack successes must exceed the defender's"
-		)
-	)
-	violations.append_array(
-		_expect(action.outcome() == DicePool.Outcome.HIT, "the happy path must resolve to a HIT")
-	)
-	violations.append_array(
-		_expect(
-			_stored_damage(state, "b1", template) == weapon.damage_value,
-			"the happy path must apply the weapon's damage to the target"
-		)
-	)
-	violations.append_array(
-		_expect(
-			state.board.occupant_at(TARGET_HEX) == &"b1",
-			"a target that survives the happy path must still occupy its hex"
-		)
-	)
-
-	return violations
 
 
 # --- Defeat -------------------------------------------------------------
@@ -824,13 +687,14 @@ static func _test_happy_path_from_the_parent_feature() -> Array[String]:
 ## counter at or above health, so `Fighter.is_defeated()` keeps answering true.
 static func _test_defeat_clears_the_hex_and_keeps_the_payload() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(2, 1)
+	var attacker_template := fighter_template(2, 3)
+	var target_template := fighter_template(2, 1)
 	var state := _build_state(13)
-	_place(state, "a1", "p1", ATTACKER_HEX, template)
-	_place(state, "b1", "p2", TARGET_HEX, template)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "b1", "p2", TARGET_HEX, target_template)
 
 	var action := AttackAction.new(
-		"a1", "b1", _weapon(1, 3, 1), template, _always_profile(), _never_profile()
+		"a1", "b1", attacker_template, target_template, forced_profile(ALWAYS_TARGET, NEVER_TARGET)
 	)
 	var result := action.resolve(state)
 
@@ -839,7 +703,7 @@ static func _test_defeat_clears_the_hex_and_keeps_the_payload() -> Array[String]
 		_expect(action.target_defeated(), "a counter taken to health must report target_defeated()")
 	)
 
-	var stored := Fighter.from_dict(state.fighter("b1"), template)
+	var stored := Fighter.from_dict(state.fighter("b1"), target_template)
 	violations.append_array(
 		_expect(
 			stored != null and stored.is_defeated(),
@@ -868,18 +732,14 @@ static func _test_defeat_clears_the_hex_and_keeps_the_payload() -> Array[String]
 ## The same starting state and the same attack, from equal seeds, twice.
 static func _test_equal_seeds_produce_identical_outcome_and_digest() -> Array[String]:
 	var violations: Array[String] = []
-	var template := _fighter_template(3, 3)
+	var template := fighter_template(3, 3)
 
 	var first_state := _happy_path_state(13, template)
-	var first := AttackAction.new(
-		"a1", "b1", _weapon(1, 4, 1), template, _attack_profile(), _save_profile()
-	)
+	var first := AttackAction.new("a1", "b1", template, template, standard_profile())
 	first.resolve(first_state)
 
 	var second_state := _happy_path_state(13, template)
-	var second := AttackAction.new(
-		"a1", "b1", _weapon(1, 4, 1), template, _attack_profile(), _save_profile()
-	)
+	var second := AttackAction.new("a1", "b1", template, template, standard_profile())
 	second.resolve(second_state)
 
 	violations.append_array(

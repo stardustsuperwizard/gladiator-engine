@@ -1,14 +1,21 @@
 ## Spec §7: one fighter attacks another. The capstone of Slice 0.
 ##
-## `resolve()` validates the target, rolls both dice pools through the state's
-## seeded generator, applies spec §8's flanking and surrounding bonuses,
-## compares the two totals into Hit / Drawn / Miss, and on a Hit applies the
-## weapon's damage and checks defeat.
+## `resolve()` validates the target, resolves spec §7.3's two target numbers,
+## rolls both d6 pools through the state's seeded generator, counts each pool
+## at or above its own target, compares the two totals into Hit / Drawn / Miss,
+## and on a Hit applies the attacker's `damage()` and checks defeat.
 ##
 ## **It wires three modules together and reimplements none of them.** The
 ## dice-pool math lives in `DicePool`, the adjacency bonus in `Flanking`, and
 ## the fighter payload shape in `Fighter`. A second copy of any of that here is
 ## the primary correctness risk in this project.
+##
+## **Every number comes from data.** The two fighters' stats come from their
+## `FighterTemplate`s and every target, modifier and range from the
+## `CombatProfile`; no balance value may live in GDScript. There is no weapon
+## and no symbol-faced die -- spec §3 and §7 as revised 2026-09-08 deleted the
+## `Weapon` entity and the symbol-matched dice model alike, and the two
+## resource classes that carried them are gone from the tree.
 ##
 ## **A resolved Miss is a successful `TurnResult`.** `TurnResult.success` means
 ## the action resolved, not that the attack hurt someone, so `HIT`, `DRAWN` and
@@ -23,16 +30,28 @@
 ## `rules/tests/attack_action_test.gd` reproducible; changing it silently
 ## invalidates every recorded expectation.
 ##
-## **Templates are injected, never resolved.** The weapon, the target's
-## `FighterTemplate` and both `DiceProfile`s arrive through `_init()`. Nothing
-## here calls `load()` or `preload()`, consults a registry, or asks `GameState`
-## for a template -- `rules/` has no outbound dependency on `res://resources/`.
+## **Templates are injected, never resolved.** Both `FighterTemplate`s and the
+## `CombatProfile` arrive through `_init()`. Nothing here calls `load()` or
+## `preload()`, consults a registry, or asks `GameState` for a template --
+## `rules/` has no outbound dependency on `res://resources/`.
 ##
-## **The two symbols come from different places, and neither is written here.**
-## The attack roll matches `weapon.weapon_type`; the save roll matches
-## `save_profile.match_symbol`, because `FighterTemplate` carries `save` as a
-## dice count with no save *type*. No balance value, symbol string included,
-## may live in GDScript.
+## **The two target numbers are separate charts, not one.** Spec §7.3 prices
+## the attack roll's conditions and the save roll's from different fields, and
+## measures them on different fighters. The attack target starts at
+## `attack_target` and takes the *target's* flanking priced from the `attack_*`
+## modifiers, plus the engagement bonus; the save target starts at
+## `save_target` and takes the *attacker's* flanking priced from the `save_*`
+## modifiers. Every row is a bonus -- a subtraction -- and
+## `CombatProfile.clamped_target()` does the clamping.
+##
+## **Engagement is measured on the board, never off the Range stat.** The
+## distance actually attacked across is what is compared to
+## `engagement_range`, so a Range-4 archer standing in contact is engaged
+## exactly as a Range-1 warrior is, and the same archer two hexes out is not.
+## Engagement is also *not* adjacency: `engagement_range` is a dial an ability
+## may one day raise, while `Flanking` is measured in literal adjacency for
+## everyone, always, inside `Flanking.bonus_count()`. The two must not be
+## routed through one helper.
 ##
 ## **Defeat removes the board occupant, not the payload.** Spec §9 takes a
 ## defeated fighter off the board, so `resolve()` calls
@@ -73,8 +92,8 @@ const FAILURE_TARGET_IS_SELF := &"attack_target_is_self"
 ## The target shares the actor's `owner_id`.
 const FAILURE_TARGET_IS_FRIENDLY := &"attack_target_is_friendly"
 
-## The target stands further than the weapon's `range_hexes`. The boundary is
-## inclusive: a target at exactly `range_hexes` is in range.
+## The target stands further than the attacker's `range_hexes()`. The boundary
+## is inclusive: a target at exactly `range_hexes()` is in range.
 const FAILURE_TARGET_OUT_OF_RANGE := &"attack_target_out_of_range"
 
 ## A BLOCKED hex, or a coordinate with no hex at all, intervenes.
@@ -83,18 +102,23 @@ const FAILURE_NO_LINE_OF_SIGHT := &"attack_no_line_of_sight"
 ## The target's damage counter is already at or above its health.
 const FAILURE_TARGET_ALREADY_DEFEATED := &"attack_target_already_defeated"
 
-## One of the four injected objects is `null`, or a fighter payload could not be
-## parsed. Refusing beats crashing, and beats resolving against a guess.
+## One of the three injected objects is `null`, or a fighter payload could not
+## be parsed. Refusing beats crashing, and beats resolving against a guess.
 const FAILURE_MISSING_DATA := &"attack_missing_data"
 
 ## The fighter this action attacks. Set once, at construction.
 var _target_id: String
 
 ## The authored data this resolver needs, all injected, none resolved.
-var _weapon: WeaponTemplate
+##
+## Both templates are required and neither stands in for the other: the
+## attacker's stats decide the pool size, the damage and the reach, and the
+## target's decide the save pool. Parsing one fighter over the other's template
+## resolves the attack with the wrong fighter's numbers -- a wrong answer, not
+## a crash.
+var _attacker_template: FighterTemplate
 var _target_template: FighterTemplate
-var _attack_profile: DiceProfile
-var _save_profile: DiceProfile
+var _combat_profile: CombatProfile
 
 ## Declared intent, set once at construction: whether the attacking player
 ## wants the target shoved on a Hit or a Drawn. See the class docstring.
@@ -109,6 +133,8 @@ var _attack_successes: int = 0
 var _save_successes: int = 0
 var _attack_bonus: int = 0
 var _save_bonus: int = 0
+var _attack_target: int = 0
+var _save_target: int = 0
 var _target_defeated: bool = false
 
 ## Whether `_apply_push()` actually moved the target. False until `resolve()`
@@ -125,18 +151,16 @@ var _pushed: bool = false
 func _init(
 	actor_id: String,
 	target_id: String,
-	weapon: WeaponTemplate,
+	attacker_template: FighterTemplate,
 	target_template: FighterTemplate,
-	attack_profile: DiceProfile,
-	save_profile: DiceProfile,
+	combat_profile: CombatProfile,
 	push_back: bool = false
 ) -> void:
 	super(actor_id)
 	_target_id = target_id
-	_weapon = weapon
+	_attacker_template = attacker_template
 	_target_template = target_template
-	_attack_profile = attack_profile
-	_save_profile = save_profile
+	_combat_profile = combat_profile
 	_push_back = push_back
 
 
@@ -147,14 +171,14 @@ func _init(
 ## reports the same one.
 ##
 ## Then, in this order and no other: build the flanking candidates, read the
-## attack bonus off the target and the save bonus off the attacker, roll the
-## attack pool, roll the save pool, count both, compare, and on a `HIT` apply
-## damage and check defeat.
+## attack bonus off the target and the save bonus off the attacker, resolve
+## both target numbers, roll the attack pool, roll the save pool, count both,
+## compare, and on a `HIT` apply damage and check defeat.
 ##
 ## Returns `TurnResult.ok()` for `HIT`, `DRAWN` and `MISS` alike.
 func resolve(state: GameState) -> TurnResult:
-	var attacker := _read_fighter(state.fighter(actor_id()))
-	var target := _read_fighter(state.fighter(_target_id))
+	var attacker := _read_fighter(state.fighter(actor_id()), _attacker_template)
+	var target := _read_fighter(state.fighter(_target_id), _target_template)
 
 	var reason := _refusal(state, attacker, target)
 	if not reason.is_empty():
@@ -169,24 +193,36 @@ func outcome() -> DicePool.Outcome:
 	return _outcome
 
 
-## Successes counted on the attack roll.
+## Successes counted on the attack roll: dice at or above `attack_target()`.
 func attack_successes() -> int:
 	return _attack_successes
 
 
-## Successes counted on the save roll.
+## Successes counted on the save roll: dice at or above `save_target()`.
 func save_successes() -> int:
 	return _save_successes
 
 
-## Extra success-symbol types the target's neighbours unlocked on the attack
-## roll: `Flanking.NONE`, `FLANKED` or `SURROUNDED`.
+## The effective attack target number this resolution used, after the target's
+## flanking, the engagement bonus and the profile's clamp.
+func attack_target() -> int:
+	return _attack_target
+
+
+## The effective save target number this resolution used, after the attacker's
+## flanking and the profile's clamp.
+func save_target() -> int:
+	return _save_target
+
+
+## The tier the target's neighbours reached, and so which `attack_*` modifier
+## priced the attack target: `Flanking.NONE`, `FLANKED` or `SURROUNDED`.
 func attack_bonus_count() -> int:
 	return _attack_bonus
 
 
-## Extra success-symbol types the attacker's neighbours unlocked on the save
-## roll.
+## The tier the *attacker's* neighbours reached, and so which `save_*` modifier
+## priced the save target.
 func save_bonus_count() -> int:
 	return _save_bonus
 
@@ -235,9 +271,9 @@ func _refusal(state: GameState, attacker: Fighter, target: Fighter) -> StringNam
 ## `FAILURE_MISSING_DATA`, since something is wrong with the data rather than
 ## with the request.
 func _identity_refusal(state: GameState, attacker: Fighter, target: Fighter) -> StringName:
-	if _weapon == null or _target_template == null:
+	if _attacker_template == null or _target_template == null:
 		return FAILURE_MISSING_DATA
-	if _attack_profile == null or _save_profile == null:
+	if _combat_profile == null:
 		return FAILURE_MISSING_DATA
 
 	if attacker == null:
@@ -254,17 +290,17 @@ func _identity_refusal(state: GameState, attacker: Fighter, target: Fighter) -> 
 	return &""
 
 
-## Is this a legal target: not friendly, within the weapon's reach, visible, and
-## not already defeated. Both fighters are non-`null` by the time this runs.
+## Is this a legal target: not friendly, within the attacker's reach, visible,
+## and not already defeated. Both fighters are non-`null` by the time this runs.
 ##
-## Range is inclusive at the boundary -- `distance <= range_hexes` -- and
-## visibility is the board's own centre-to-centre line, which already answers
-## "off the board" as blocked.
+## Range is the *attacker's* `range_hexes()`, inclusive at the boundary --
+## `distance <= range_hexes()` -- and visibility is the board's own
+## centre-to-centre line, which already answers "off the board" as blocked.
 func _targeting_refusal(state: GameState, attacker: Fighter, target: Fighter) -> StringName:
 	if target.owner_id() == attacker.owner_id():
 		return FAILURE_TARGET_IS_FRIENDLY
 
-	if HexCoord.distance(attacker.position(), target.position()) > _weapon.range_hexes:
+	if HexCoord.distance(attacker.position(), target.position()) > attacker.range_hexes():
 		return FAILURE_TARGET_OUT_OF_RANGE
 
 	if not state.board.has_line_of_sight(attacker.position(), target.position()):
@@ -278,10 +314,10 @@ func _targeting_refusal(state: GameState, attacker: Fighter, target: Fighter) ->
 
 ## Spec §7 steps 2 to 6, on a request that has already passed `_refusal()`.
 ##
-## The bonuses are read before either pool is rolled, because both are pure
-## adjacency and neither touches the generator. Then the attack pool entirely,
-## then the save pool entirely; see the class docstring on why that order is the
-## contract.
+## The bonuses and both target numbers are resolved before either pool is
+## rolled, because all of that is pure adjacency and arithmetic and none of it
+## touches the generator. Then the attack pool entirely, then the save pool
+## entirely; see the class docstring on why that order is the contract.
 func _resolve_attack(state: GameState, attacker: Fighter, target: Fighter) -> void:
 	var candidates := _flanking_candidates(state)
 	_attack_bonus = Flanking.bonus_count(
@@ -291,33 +327,81 @@ func _resolve_attack(state: GameState, attacker: Fighter, target: Fighter) -> vo
 		attacker.position(), attacker.owner_id(), _target_id, candidates
 	)
 
-	var attack_roll := DicePool.roll(_attack_profile, _weapon.dice_count, state.rng)
-	var save_roll := DicePool.roll(_save_profile, _target_template.save, state.rng)
+	_attack_target = _resolved_attack_target(attacker, target)
+	_save_target = _resolved_save_target()
 
-	_attack_successes = DicePool.count_successes(
-		attack_roll, DicePool.success_symbols(_attack_profile, _weapon.weapon_type, _attack_bonus)
-	)
-	_save_successes = DicePool.count_successes(
-		save_roll, DicePool.success_symbols(_save_profile, _save_profile.match_symbol, _save_bonus)
-	)
+	var attack_roll := DicePool.roll_dice(attacker.attack(), _combat_profile.die_sides, state.rng)
+	var save_roll := DicePool.roll_dice(target.save(), _combat_profile.die_sides, state.rng)
+
+	_attack_successes = DicePool.count_at_or_above(attack_roll, _attack_target)
+	_save_successes = DicePool.count_at_or_above(save_roll, _save_target)
 
 	_outcome = DicePool.outcome(_attack_successes, _save_successes)
 	if _outcome == DicePool.Outcome.HIT:
-		_apply_hit(state, target)
+		_apply_hit(state, attacker, target)
 
 	var hit_or_drawn := _outcome == DicePool.Outcome.HIT or _outcome == DicePool.Outcome.DRAWN
 	if _push_back and hit_or_drawn and not _target_defeated:
 		_apply_push(state, attacker, target)
 
 
-## Applies the weapon's damage to `target`, commits the payload, and takes the
-## fighter off the board when the damage defeated it.
+## Spec §7.3's attack chart: the profile's `attack_target`, less the *target's*
+## flanking priced from the `attack_*` modifiers, less the engagement bonus,
+## clamped.
+##
+## `_engagement_bonus()` is passed as `target_modifier()`'s signed `extra`,
+## already negative, because every §7.3 row is a bonus.
+func _resolved_attack_target(attacker: Fighter, target: Fighter) -> int:
+	var modifier := DicePool.target_modifier(
+		_attack_bonus,
+		_combat_profile.attack_flank_modifier,
+		_combat_profile.attack_surround_modifier,
+		_engagement_bonus(attacker, target)
+	)
+	return _combat_profile.clamped_target(_combat_profile.attack_target, modifier)
+
+
+## Spec §7.3's save chart: the profile's `save_target`, less the *attacker's*
+## flanking priced from the `save_*` modifiers -- larger magnitudes than the
+## attack chart's, and keyed on the other fighter -- clamped.
+##
+## `extra` is `0`. Spec §7.3's other save-chart row is Guard, whose
+## `guard_modifier` this action deliberately leaves unread: the `guarded` flag
+## has no writer until the Guard action exists.
+func _resolved_save_target() -> int:
+	var modifier := DicePool.target_modifier(
+		_save_bonus, _combat_profile.save_flank_modifier, _combat_profile.save_surround_modifier, 0
+	)
+	return _combat_profile.clamped_target(_combat_profile.save_target, modifier)
+
+
+## `-engagement_modifier` when the attacker stands at or within
+## `engagement_range` of the target, `0` otherwise. Negative because engagement
+## is a bonus.
+##
+## The distance measured is the one actually attacked across, read off the
+## board. It is **not** derived from `attacker.range_hexes()`: a long-ranged
+## fighter standing in contact is engaged like any other, and a fighter
+## shooting from further out is not, whatever its Range stat says.
+func _engagement_bonus(attacker: Fighter, target: Fighter) -> int:
+	var distance := HexCoord.distance(attacker.position(), target.position())
+	if distance <= _combat_profile.engagement_range:
+		return -_combat_profile.engagement_modifier
+
+	return 0
+
+
+## Applies the *attacker's* damage to `target`, commits the payload, and takes
+## the fighter off the board when the damage defeated it.
+##
+## `attacker.damage()`, never the target's: the two fighters have different
+## stats, and reading the wrong one is a wrong result rather than a crash.
 ##
 ## The payload stays in `GameState` either way -- spec §9 removes a defeated
 ## fighter from the *board*, and `Fighter.is_defeated()` has to keep answering
 ## true for the stored record.
-func _apply_hit(state: GameState, target: Fighter) -> void:
-	target.apply_damage(_weapon.damage_value)
+func _apply_hit(state: GameState, attacker: Fighter, target: Fighter) -> void:
+	target.apply_damage(attacker.damage())
 	state.update_fighter(_target_id, target.to_dict())
 
 	_target_defeated = target.is_defeated()
@@ -385,9 +469,13 @@ func _push_destination(attacker_position: Vector3i, origin: Vector3i) -> Vector3
 ## fighter the board no longer reports at its recorded position is exactly a
 ## fighter this engine has already defeated, and a fighter off the board flanks
 ## nobody. Reading each payload's counter against its own health is not
-## available here and must not be faked: only the *target's* `FighterTemplate`
-## is injected, and measuring another fighter's health against it would be a
-## guess dressed as a rule.
+## available here and must not be faked: only the two participants' templates
+## are injected, and measuring a third fighter's health against either would be
+## a guess dressed as a rule.
+##
+## Every candidate is parsed over `_target_template`, and that is safe for
+## exactly the reason `_read_fighter()` gives: a candidate contributes only its
+## id, owner and position, none of which come from a template.
 ##
 ## A payload that will not parse is skipped rather than refused, matching
 ## `Flanking`'s own handling of an unreadable candidate: an unreadable fighter
@@ -396,7 +484,7 @@ func _flanking_candidates(state: GameState) -> Array[Dictionary]:
 	var candidates: Array[Dictionary] = []
 
 	for fighter_id in state.fighter_ids():
-		var fighter := _read_fighter(state.fighter(fighter_id))
+		var fighter := _read_fighter(state.fighter(fighter_id), _target_template)
 		if fighter == null:
 			continue
 		if state.board.occupant_at(fighter.position()) != StringName(fighter.id()):
@@ -412,14 +500,19 @@ func _flanking_candidates(state: GameState) -> Array[Dictionary]:
 	return candidates
 
 
-## `payload` as a `Fighter`, or `null` when it will not parse.
+## `payload` as a `Fighter` over `template`, or `null` when it will not parse.
 ##
-## Every payload is parsed over `_target_template`, the one `FighterTemplate`
-## this action holds, because `Fighter` owns the payload shape and this file may
-## not hand-parse a `position` array. `Fighter.from_dict()` documents that it
-## neither reads nor matches the payload's `template_id`, so for any fighter but
-## the target this reads back the mutable half only -- id, owner and position,
-## which is all the candidate list wants. **Do not read a stat off a `Fighter`
-## returned here unless it is the target**: its stats would be the target's.
-func _read_fighter(payload: Dictionary) -> Fighter:
-	return Fighter.from_dict(payload, _target_template)
+## The template is a parameter rather than a fixed field because this action
+## holds two and they are not interchangeable. `resolve()` parses the attacker
+## over `_attacker_template` and the target over `_target_template`, so every
+## stat either one reads through -- `range_hexes()`, `attack()`, `damage()`,
+## `save()` -- is its own.
+##
+## `_flanking_candidates()` is the one caller that may pass either template,
+## because a candidate contributes only its id, owner and position:
+## `Fighter.from_dict()` documents that it neither reads nor matches the
+## payload's `template_id`, so for a fighter that is neither participant this
+## reads back the mutable half only. Do not read a stat off a `Fighter`
+## returned to that caller.
+func _read_fighter(payload: Dictionary, template: FighterTemplate) -> Fighter:
+	return Fighter.from_dict(payload, template)
