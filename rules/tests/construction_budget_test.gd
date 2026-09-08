@@ -78,7 +78,7 @@ static func _test_is_satisfied_by_stat_below_minimum_returns_false() -> Array[St
 
 static func _test_is_satisfied_by_stat_above_maximum_returns_false() -> Array[String]:
 	var budget := _make_budget(15, 1, 5)
-	var template := _make_template(4, 2, 3, 1, 3, 6)  # damage = 6, above maximum 5
+	var template := _make_template(1, 1, 1, 3, 3, 6)  # damage = 6, above maximum 5; total = 15
 	return _expect(
 		not budget.is_satisfied_by(template),
 		"is_satisfied_by() must return false for a template with a stat above the maximum"

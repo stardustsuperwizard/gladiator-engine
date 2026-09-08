@@ -1,6 +1,6 @@
-## Game-side data suite for the three authored `.tres` files under `resources/`:
-## `resources/fighters/warrior.tres`, `resources/fighters/archer.tres`, and
-## `resources/combat/combat_profile.tres`.
+## Game-side data suite for the four authored `.tres` files under `resources/`:
+## `resources/fighters/warrior.tres`, `resources/fighters/archer.tres`,
+## `resources/fighters/construction_budget.tres`, and `resources/combat/combat_profile.tres`.
 ##
 ## **There were seven.** `resources/weapons/` and `resources/dice/` are gone,
 ## deleted along with the two resource classes they were authored against:
@@ -499,20 +499,33 @@ static func _test_all_fighters_satisfy_construction_budget() -> Array[String]:
 	if not (budget is ConstructionBudget):
 		return violations
 
-	var warrior := load(WARRIOR_PATH) as FighterTemplate
-	var archer := load(ARCHER_PATH) as FighterTemplate
-
 	var budget_resource: ConstructionBudget = budget
-	violations.append_array(
-		_expect(
-			budget_resource.is_satisfied_by(warrior),
-			"the authored warrior fighter must satisfy the construction budget"
+	var fighters_dir := "res://resources/fighters/"
+	var fighter_count := 0
+
+	# Enumerate all files under res://resources/fighters/, filtering to FighterTemplate instances.
+	# This naturally skips construction_budget.tres, which lives in the same directory.
+	for file_path in ExtractionContractTest.files_recursive(fighters_dir):
+		if not file_path.ends_with(".tres"):
+			continue
+
+		var resource: Variant = load(file_path)
+		if not (resource is FighterTemplate):
+			continue
+
+		fighter_count += 1
+		var template: FighterTemplate = resource
+		violations.append_array(
+			_expect(
+				budget_resource.is_satisfied_by(template),
+				"the authored fighter at %s must satisfy the construction budget" % file_path
+			)
 		)
-	)
+
 	violations.append_array(
 		_expect(
-			budget_resource.is_satisfied_by(archer),
-			"the authored archer fighter must satisfy the construction budget"
+			fighter_count > 0,
+			"at least one FighterTemplate must be found under res://resources/fighters/"
 		)
 	)
 
