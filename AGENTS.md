@@ -19,35 +19,64 @@ Three documents, three jobs — keep them that way:
 
 Do not put Godot specifics in the spec, and do not put mechanics in the guide.
 
-**Current state (2026-09-08): Slice 0 is built, and the spec has moved ahead of
-it.** Extraction plan §5.1 is merged — the hex board with cube distance and
-symmetric line of sight; the `FighterTemplate`/`Fighter` model over authored
-`.tres`; `DeterministicRng` and a serializable, digestible `GameState`; the
-dice pool with flanking and surrounding; and `AttackAction` and `PassAction`
+**Current state (2026-09-08): Slice 0 is built, and the code is reconciled with
+the revised spec.** Extraction plan §5.1 is merged — the hex board with cube
+distance and symmetric line of sight; the `FighterTemplate`/`Fighter` model over
+authored `.tres`; `DeterministicRng` and a serializable, digestible `GameState`;
+the dice pool with flanking and surrounding; and `AttackAction` and `PassAction`
 resolving through `Authority`/`ActionRunner`, with the hand-worked combat tests
 §5.1 asks for and contract tests behind both architectural commitments.
 
-**The code does not match spec §3, §6 and §7 as revised 2026-09-08.** Still in
-the tree and no longer in the rules: `WeaponTemplate` and
-`FighterTemplate.weapons`; `DiceProfile`'s symbol faces and `DicePool`'s
-success-set matching; the weapon `AttackAction` takes through `_init()`. Not
-yet in the tree and now required: the fighter's `range`, `attack` and `damage`
-stats, and the `CombatProfile` holding the target numbers, the flank and
-surround modifiers, the long-range threshold and the clamp.
+> **Revised 2026-09-08, later the same day.** This section previously said the
+> code did not match spec §3, §6 and §7 as revised that morning, and that
+> reconciling the two was the next work and came **before** the rest of §5.2.
+> That was true when written and is no longer: epic #83 closed with all six of
+> its tasks merged (#84–#89). `WeaponTemplate`, `FighterTemplate.weapons`,
+> `DiceProfile`'s symbol faces and `DicePool`'s success-set matching are gone
+> from the tree; the fighter's `range_hexes`, `attack` and `damage` stats,
+> `CombatProfile` and `ConstructionBudget` are in it; and the hand-worked combat
+> tests have been re-derived against target numbers. Do not plan reconciliation
+> work — it is done.
 
-Reconciling the two is the next work, and it comes **before** the rest of §5.2.
-Move, Charge and Guard all touch resolution — Charge resolves an attack, Guard
-modifies a save target — so building them against the old model means paying
-for them twice. The hand-worked combat tests are the bulk of that cost: their
-expectations are derived from symbol faces and have to be re-derived against
-target numbers.
+**Built, against the spec's own sections:** §2's board in full. §3's data model —
+six-stat `FighterTemplate`, runtime `Fighter`, `CombatProfile`,
+`ConstructionBudget`, `GameState`, `DeterministicRng`. §7's resolution — d6
+against a target number, the two separate target-number charts, the engagement
+bonus, damage, defeat and push-back. §8's flanking and surrounding. §9's damage
+and defeat.
 
-After that, the rest of §5.2 in the spec's own build order (§12): the remaining
-core actions (Move, Charge, Guard, Focus) → status effects → the card system →
-scoring and the end phase → victory conditions. There is still no UI and no
-hotseat loop, so §5.4's "play a full 3-round match" is some way off. Do not
-build ahead of the order above, and check §5.3 before building something that
-feels obviously missing — it may be missing on purpose.
+**Not built, and the next work: §6's remaining core actions.** `AttackAction`
+and `PassAction` are the only two `TurnAction` subclasses in the tree. Move,
+Charge and Guard are now unblocked — the reason to hold them, that they all
+touch resolution and resolution was about to change under them, no longer
+applies.
+
+A suggested order within that, which is not quite §6's own listing:
+
+- **Move** first. §12 warns that movement and distance are different problems:
+  §2's distance is a direct coordinate calculation, while movement must route
+  *around* blocked and occupied hexes and needs a real search. It also needs the
+  `"moved"` status-flag constant, which does not exist yet — `Fighter` carries
+  the flag *mechanism* (`set_status_flag`, `has_status_flag`,
+  `clear_status_flag`) and no rule names a flag through it.
+- **Guard** next. Small, and `CombatProfile.guard_modifier` is authored in
+  `resources/combat/combat_profile.tres` and read by nothing until it exists.
+- **Charge** third. It is Move plus Attack composed, plus the `"charged"` flag
+  and §6's lockout rule, so it wants both of the above first.
+- **Focus/Mulligan** discards and draws cards, and there is no card system. It
+  belongs with the card work rather than with the other three.
+
+Round-level flag clearing (§10 step 5) arrives with the first flag that needs
+clearing, which is Guard's.
+
+After that, the rest of §5.2 in the spec's own build order (§12): status effects
+→ the card system → scoring and the end phase → victory conditions.
+`PlayerState` already carries the empty `hand`, `deck`, `discard` and `scored`
+arrays the card system fills; `rules/cards/` does not exist yet. There is still
+no UI and no hotseat loop — `scripts/` holds `Authority` and `ActionRunner`, and
+`scenes/main.tscn` is a stub — so §5.4's "play a full 3-round match" is some way
+off. Do not build ahead of the order above, and check §5.3 before building
+something that feels obviously missing — it may be missing on purpose.
 
 **The spec is the authority on mechanics, and an implementation session does
 not redesign them.** Most of the rules are inherited from a settled tabletop

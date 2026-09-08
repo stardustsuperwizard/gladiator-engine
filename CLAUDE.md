@@ -67,15 +67,19 @@ them. Run `.github/scripts/bootstrap-labels.sh` once, and set the
 
 **2026-09-08:** Slice 0 (extraction plan §5.1) is built and merged — board,
 fighters, deterministic state, dice-pool combat with flanking, and Attack and
-Pass resolving through the authority gate.
+Pass resolving through the authority gate. The spec revisions of the same day
+(§3, §6, §7 — the `Weapon` entity gone, six combat stats per fighter,
+symbol-matched dice replaced by d6 against a target number) are **reconciled**:
+epic #83 closed with all six tasks merged.
 
-**The spec has since moved ahead of the code.** §3, §6 and §7 were revised on
-2026-09-08: the `Weapon` entity is gone, a fighter carries six combat stats,
-and symbol-matched dice became d6 against a target number. The tree still holds
-`WeaponTemplate`, `DiceProfile`'s faces and `DicePool`'s success sets.
-Reconciling code to spec is the next work and comes **before** the rest of
-§5.2 — Move, Charge and Guard all touch resolution, so building them first
-means building them twice.
+> **Revised 2026-09-08, later the same day.** This section previously said the
+> spec had moved ahead of the code and that reconciling the two was the next
+> work, coming before the rest of §5.2. It no longer is — that work is merged.
+
+**The next work is §6's remaining core actions**, now unblocked: Move, then
+Guard, then Charge. `AttackAction` and `PassAction` are the only two
+`TurnAction` subclasses in the tree. Focus/Mulligan needs a card system that
+does not exist and belongs with the card work instead.
 
 After that, the rest of §5.2 in the spec's §12 build order. Everything in §5.3
 is explicitly deferred — check that list before building something that feels

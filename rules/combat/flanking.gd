@@ -1,11 +1,18 @@
 ## Spec §8: flanking and surrounding, expressed as one pure adjacency count.
 ##
-## `bonus_count()` answers how many extra success-symbol types a roll
-## unlocks -- `NONE`, `FLANKED` or `SURROUNDED` -- from where a fighter
-## stands and which other fighters stand around it. Spec §8 applies the same
-## check symmetrically: once to the target (bonus on the attack roll) and
-## once to the attacker (bonus on the defence roll), which is why this is
-## one function used twice rather than two.
+## `bonus_count()` answers which flanking tier applies -- `NONE`, `FLANKED` or
+## `SURROUNDED` -- from where a fighter stands and which other fighters stand
+## around it. Spec §8 applies the same check symmetrically: once to the target
+## (bonus on the attack roll) and once to the attacker (bonus on the defence
+## roll), which is why this is one function used twice rather than two.
+##
+## The tier is a magnitude, not a modifier. This file decides *whether* a
+## fighter is flanked or surrounded; `DicePool.target_modifier()` prices that
+## tier against the `CombatProfile`, from the `attack_*` fields or the `save_*`
+## fields depending on which roll is being resolved. (The wording here
+## previously described the tier as unlocking "extra success-symbol types",
+## which was true of the symbol-faced dice spec §7 replaced on 2026-09-08 with
+## d6 against a target number.)
 ##
 ## Never instantiated -- every member is `static`. Reads no `GameState` and no
 ## `Board`; adjacency only, via `HexCoord.are_adjacent()` -- line of sight
