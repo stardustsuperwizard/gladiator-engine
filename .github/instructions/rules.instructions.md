@@ -28,12 +28,14 @@ holds the Godot mechanics behind these rules.
   `rules/` does not use game-side classes at all — not by `res://` path and not
   by global `class_name`. The source's contract test checks paths only, which
   let its `rules/` depend on `Action`/`ActionResult` from `scripts/`; its own
-  README calls that "limited inbound dependencies." We do not have that hole.
+  README calls that "limited inbound dependencies." Enforced by
+  `tests/inbound_type_contract_test.gd`.
   `TurnAction` and `TurnResult` live in `rules/state/` because they are the
   resolver's own signature.
 - **Off the scene tree.** `RefCounted` or `Resource`, never `Node`. No
-  autoloads, no `await`, no timers, no `_process`/`_physics_process`. A
-  turn-based resolver has no frame loop.
+  autoloads, no `await`, no timers, no `_process`/`_physics_process`. Enforced
+  by `rules/tests/base_class_contract_test.gd`. A turn-based resolver has no
+  frame loop.
 - **Do not reach sideways into the game to change it.** If the ruleset appears
   to need a change in `scripts/` or `scenes/`, stop and say so in the PR rather
   than making it.
