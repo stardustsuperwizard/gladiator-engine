@@ -133,7 +133,9 @@ func _check_engine_version() -> bool:
 			break
 
 	if declared_version.is_empty():
-		printerr("ERROR: No MAJOR.MINOR version entry found in project.godot application/config/features")
+		printerr(
+			"ERROR: No MAJOR.MINOR version entry found in project.godot application/config/features"
+		)
 		get_tree().quit(1)
 		return false
 
@@ -154,8 +156,16 @@ func _check_engine_version() -> bool:
 	var declared_minor: int = int(declared_parts[1])
 
 	# Check if running version is below declared version
-	if running_major < declared_major or (running_major == declared_major and running_minor < declared_minor):
-		printerr("ERROR: Engine version %s is below required version %s" % [running_version, declared_version])
+	if (
+		running_major < declared_major
+		or (running_major == declared_major and running_minor < declared_minor)
+	):
+		printerr(
+			(
+				"ERROR: Engine version %s is below required version %s"
+				% [running_version, declared_version]
+			)
+		)
 		get_tree().quit(1)
 		return false
 
@@ -181,8 +191,15 @@ func _check_harness_liveness() -> bool:
 
 			# Type guard is part of the failure condition: must be non-empty Array
 			if not (result is Array and not result.is_empty()):
-				printerr("ERROR: Harness liveness probe failed on %s: _expect(false, ...) returned %s" % [suite["name"], result])
-				printerr("The test harness cannot detect assertion failures on this engine version.")
+				printerr(
+					(
+						"ERROR: Harness liveness probe failed on %s: _expect(false, ...) returned %s"
+						% [suite["name"], result]
+					)
+				)
+				printerr(
+					"The test harness cannot detect assertion failures on this engine version."
+				)
 				get_tree().quit(1)
 				return false
 
