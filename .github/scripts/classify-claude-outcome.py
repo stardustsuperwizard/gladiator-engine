@@ -28,7 +28,18 @@ Usage:
         --stderr claude-error.txt \
         --exit-status 1 \
         --model claude-opus-5 \
+        --vendor anthropic \
+        --auth-mode api-key \
         --out agent-outcome.json
+
+`--vendor` and `--auth-mode` describe the *caller's* configuration, not
+anything read out of the envelope. Two vendors run this same CLI -- see the
+vendor table in `run-agent-session/action.yml` -- and they differ only in
+which credential authenticates and which account is billed. The classifier
+has to be told which one it is looking at, because the guidance it writes for
+an authentication failure names a different secret in each case, and guidance
+that names the wrong secret sends the reader to fix something that was never
+broken.
 """
 
 import argparse
@@ -52,6 +63,19 @@ COMPLETED = "completed"
 # CLAUDE_CODE_OAUTH_TOKEN instead of ANTHROPIC_API_KEY fails exactly this way
 # and the message should say so rather than blaming the model.
 UNAVAILABLE_PATTERNS = [
+    # What the CLI actually prints for an id it cannot resolve, observed
+    # directly:
+    #
+    #   [claude-code:unrecognized_model] {"model":"...","query_source":"sdk"}
+    #
+    # None of the prose patterns below match that, and the miss is not
+    # cosmetic. An unresolvable id does not fail the run -- Claude Code
+    # substitutes a model and returns `is_error: false` with a real answer on
+    # stderr's word alone. So without this pattern a misspelled id is
+    # classified `completed`, the preference walk never advances, and
+    # `resolved_model` reports an id that did not answer. That is precisely
+    # the confusion the walk exists to prevent, and it is silent.
+    r"\bunrecognized[_ ]model\b",
     r"\bmodel[_ ]not[_ ]found\b",
     r"\bunknown model\b",
     r"\binvalid model\b",
@@ -132,7 +156,7 @@ def classify(args):
     auth_signals = _hits(AUTH_PATTERNS, harness_text)
 
     outcome = {
-        "vendor": "claude",
+        "vendor": args.vendor,
         "model": args.model,
         "exit_status": args.exit_status,
         "credit_limit": None,
@@ -173,11 +197,26 @@ def classify(args):
         # walk the preference list -- every candidate would fail identically.
         outcome["reason"] = HARNESS_ERROR
         outcome["headline"] = "Claude Code could not authenticate"
-        outcome["guidance"] = (
-            "`--bare` never reads OAuth credentials or the system keychain, "
-            "so CLAUDE_CODE_OAUTH_TOKEN does not authenticate this path. Set "
-            "the ANTHROPIC_API_KEY repository secret."
-        )
+
+        if args.auth_mode == "oauth":
+            outcome["guidance"] = (
+                "This vendor authenticates with the CLAUDE_CODE_OAUTH_TOKEN "
+                "repository secret and bills a Claude subscription. Check "
+                "that the secret is set and that the token has not expired "
+                "or been revoked -- `claude setup-token` mints a fresh one. "
+                "ANTHROPIC_API_KEY is not read on this path; to bill the "
+                "Anthropic Platform API instead, use the `anthropic` vendor."
+            )
+        else:
+            outcome["guidance"] = (
+                "This vendor authenticates with the ANTHROPIC_API_KEY "
+                "repository secret and bills the Anthropic Platform API. "
+                "`--bare` never reads OAuth credentials or the system "
+                "keychain, so CLAUDE_CODE_OAUTH_TOKEN does not authenticate "
+                "this path whatever it is set to; to bill a Claude "
+                "subscription instead, use the `claude` vendor."
+            )
+
         outcome["retry_next_model"] = False
 
     elif unavailable_signals:
@@ -256,6 +295,12 @@ def main():
     parser.add_argument("--stderr", required=True)
     parser.add_argument("--exit-status", type=int, required=True)
     parser.add_argument("--model", required=True)
+    # Defaulted rather than required: every current caller passes both, but a
+    # default keeps a hand-run of this script on a saved envelope working.
+    parser.add_argument("--vendor", default="claude")
+    parser.add_argument(
+        "--auth-mode", default="api-key", choices=["api-key", "oauth"]
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 

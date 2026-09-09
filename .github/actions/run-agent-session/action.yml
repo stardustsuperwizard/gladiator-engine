@@ -1,10 +1,23 @@
 name: Run Agent Session
 description: >-
   Runs one agent session against a prepared prompt and returns the model's
-  answer as text. The vendor -- Copilot CLI or Claude Code -- is an input, so
-  every caller gets the same contract regardless of which company's model
-  answers: the same preference-list walk, the same outcome vocabulary, the
-  same output files.
+  answer as text. The vendor is an input, so every caller gets the same
+  contract regardless of who answers: the same preference-list walk, the same
+  outcome vocabulary, the same output files.
+
+  There are three vendors and two CLIs, because a vendor names a *billing
+  arrangement*, not a program:
+
+  | vendor      | CLI         | credential                | billed to           |
+  | ----------- | ----------- | ------------------------- | ------------------- |
+  | `copilot`   | Copilot CLI | the workflow's own GitHub identity | Copilot premium requests |
+  | `anthropic` | Claude Code | `ANTHROPIC_API_KEY`       | Anthropic Platform API |
+  | `claude`    | Claude Code | `CLAUDE_CODE_OAUTH_TOKEN` | a Claude Pro/Max subscription |
+
+  `anthropic` and `claude` run the same binary on the same model ids and are
+  interchangeable in every respect except which account pays. That is the
+  whole point of splitting them: the choice of who pays is made by putting a
+  label on an Issue, not by editing a workflow.
 
   This is the one place a vendor difference is allowed to exist. Above it the
   agent workflows are vendor-blind: they build a prompt, run a session, parse
@@ -14,18 +27,21 @@ description: >-
 inputs:
   vendor:
     description: >-
-      Which CLI answers: `copilot` or `claude`. Comes from the second segment
-      of an `agent:{role}:{vendor}` label, so the label is what chooses the
-      company.
+      Who answers and who pays: `copilot`, `anthropic` or `claude`. See the
+      table in this action's description -- the last two are the same CLI on
+      the same models, differing only in the credential and the bill.
+
+      Comes from the third segment of an `agent:{role}:{vendor}` label, so
+      the label is what chooses it.
     required: true
 
   prompt-file:
     description: >-
       Path to the prepared prompt. Absolute, and under $RUNNER_TEMP -- every
       caller builds its prompt there rather than in the checkout (#98).
-      Copilot reads it from stdin; Claude is pointed at it by path and reads
-      it with its own Read tool, which is why the claude branch passes
-      `--add-dir "$RUNNER_TEMP"`. Neither form passes it as an argv element -- Linux caps
+      Copilot reads it from stdin; Claude Code is pointed at it by path and
+      reads it with its own Read tool, which is why both Claude Code vendors
+      pass `--add-dir "$RUNNER_TEMP"`. Neither form passes it as an argv element -- Linux caps
       a single argument at 128 KiB (MAX_ARG_STRLEN) and a diff-bearing prompt
       exceeds that long before the larger ARG_MAX applies.
     required: true
@@ -37,23 +53,24 @@ inputs:
       identity -- never after a real failure. A cheap fallback after a real
       failure would silently defeat whatever tier the caller chose.
 
-      The ids are vendor-native and must not be copied between vendors:
-      Copilot CLI spells its Opus 4.8 `claude-opus-4.8`, Claude Code spells
-      the same model `claude-opus-4-8`.
+      The ids are CLI-native and must not be copied between CLIs: Copilot CLI
+      spells its Opus 4.8 `claude-opus-4.8`, Claude Code spells the same model
+      `claude-opus-4-8`. `anthropic` and `claude` are the same CLI, so they
+      take the same spelling and callers hand them the same list.
     required: true
 
   max-ai-credits:
     description: >-
       Copilot only. Soft credit cap for the session. The CLI rejects any
-      value below 30, so that is a floor, not a tuning choice. Ignored when
-      vendor is `claude`.
+      value below 30, so that is a floor, not a tuning choice. Ignored on
+      both Claude Code vendors.
     required: false
     default: "75"
 
   max-turns:
     description: >-
-      Claude only. Turn ceiling for the session. Ignored when vendor is
-      `copilot`. A session that hits it is classified `budget_exhausted`,
+      Claude Code only -- `anthropic` and `claude` alike. Turn ceiling for
+      the session. Ignored when vendor is `copilot`. A session that hits it is classified `budget_exhausted`,
       not `completed`, so a truncated answer is never mistaken for a finished
       one.
 
@@ -92,19 +109,38 @@ inputs:
 
   api-key:
     description: >-
-      Claude only. An Anthropic API key, which the caller must pass from
-      `secrets.ANTHROPIC_API_KEY` -- a composite action cannot read `secrets`
-      itself, so a key that is set on the repository but not threaded through
-      a caller never reaches this process.
+      The `anthropic` vendor's credential. An Anthropic Platform API key,
+      which the caller must pass from `secrets.ANTHROPIC_API_KEY` -- a
+      composite action cannot read `secrets` itself, so a key that is set on
+      the repository but not threaded through a caller never reaches this
+      process.
 
-      `--bare` never reads OAuth credentials or the keychain, so this is the
-      only auth that works on the claude branch. CLAUDE_CODE_OAUTH_TOKEN does
-      not, whatever it is set to.
+      Read only when vendor is `anthropic`. The `claude` vendor ignores it,
+      and takes `oauth-token` instead.
 
       Empty is allowed, and fails at the point of use rather than here: a
       caller running `vendor: copilot` has no reason to hold a Claude key,
       and refusing to start would make the copilot path depend on a secret it
-      never uses.
+      never uses. Callers pass both credentials unconditionally for exactly
+      that reason -- a secret threaded through only on the branch that needs
+      it is a secret that turns out to be missing the first time someone
+      flips a label.
+    required: false
+    default: ""
+
+  oauth-token:
+    description: >-
+      The `claude` vendor's credential. A Claude Code OAuth token, which the
+      caller must pass from `secrets.CLAUDE_CODE_OAUTH_TOKEN`. Mint one with
+      `claude setup-token`; it bills the subscription that authorised it
+      rather than the Anthropic Platform API.
+
+      Read only when vendor is `claude`. The `anthropic` vendor ignores it --
+      and could not use it anyway, because `--bare` never reads OAuth
+      credentials. That incompatibility is the reason the two vendors differ
+      by more than an environment variable; see `invoke_claude` below.
+
+      Empty is allowed, on the same reasoning as `api-key`.
     required: false
     default: ""
 
@@ -199,7 +235,25 @@ runs:
       with:
         node-version: "24"
 
-    - name: Install Agent CLI
+    # Vendor is one word; what it means is two independent facts. Resolving
+    # them once, here, is what keeps every step below from re-deriving the
+    # mapping and eventually disagreeing about it -- which is the failure
+    # this action was created to prevent, reappearing one level down.
+    #
+    #   cli   which program runs, and therefore which flags, which output
+    #         shape and which classifier
+    #   auth  which credential authenticates, and therefore which account is
+    #         billed and which secret a failure should name
+    #
+    # `anthropic` and `claude` share a cli and differ in auth. Nothing else
+    # differs, and nothing else is allowed to: a role must not change how it
+    # behaves because someone changed who pays for it.
+    #
+    # Step outputs rather than $GITHUB_ENV deliberately. $GITHUB_ENV would
+    # leak both values into the calling job, where they would outlive this
+    # action and be visible to steps that have nothing to do with it.
+    - name: Resolve Vendor
+      id: resolve
       shell: bash
       env:
         VENDOR: ${{ inputs.vendor }}
@@ -207,19 +261,38 @@ runs:
         set -euo pipefail
 
         case "$VENDOR" in
-          copilot) npm install -g @github/copilot ;;
-          claude)  npm install -g @anthropic-ai/claude-code ;;
+          copilot)   CLI=copilot; AUTH=copilot ;;
+          anthropic) CLI=claude;  AUTH=api-key ;;
+          claude)    CLI=claude;  AUTH=oauth ;;
           *)
-            echo "::error::Unknown vendor '$VENDOR'. Expected 'copilot' or 'claude'."
+            echo "::error::Unknown vendor '$VENDOR'. Expected 'copilot'," \
+                 "'anthropic' or 'claude'."
             exit 1
             ;;
+        esac
+
+        echo "cli=$CLI" >> "$GITHUB_OUTPUT"
+        echo "auth=$AUTH" >> "$GITHUB_OUTPUT"
+
+        echo "vendor=$VENDOR -> cli=$CLI, auth=$AUTH"
+
+    - name: Install Agent CLI
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.cli }}
+      run: |
+        set -euo pipefail
+
+        case "$CLI" in
+          copilot) npm install -g @github/copilot ;;
+          claude)  npm install -g @anthropic-ai/claude-code ;;
         esac
 
     # Copilot CLI model ids are not published as a stable list; they are
     # shown in the --model help text. Dumping them costs nothing and means
     # a rejected id is self-diagnosing instead of a mystery failure.
     - name: Show Available Models
-      if: inputs.vendor == 'copilot'
+      if: steps.resolve.outputs.cli == 'copilot'
       continue-on-error: true
       shell: bash
       env:
@@ -246,7 +319,7 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Show Claude Version
-      if: inputs.vendor == 'claude'
+      if: steps.resolve.outputs.cli == 'claude'
       continue-on-error: true
       shell: bash
       env:
@@ -261,13 +334,18 @@ runs:
       shell: bash
       env:
         VENDOR: ${{ inputs.vendor }}
+        CLI: ${{ steps.resolve.outputs.cli }}
+        AUTH: ${{ steps.resolve.outputs.auth }}
         PROMPT_FILE: ${{ inputs.prompt-file }}
         MODELS: ${{ inputs.models }}
         MAX_AI_CREDITS: ${{ inputs.max-ai-credits }}
         MAX_TURNS: ${{ inputs.max-turns }}
         CAPABILITY: ${{ inputs.capability }}
         STEP_LABEL: ${{ inputs.step-label }}
+        # Both credentials are put in the environment; exactly one is left
+        # there at the point of invocation. See `invoke_claude`.
         ANTHROPIC_API_KEY: ${{ inputs.api-key }}
+        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.oauth-token }}
       run: |
         set -euo pipefail
 
@@ -303,7 +381,7 @@ runs:
         esac
 
         echo "capability=$CAPABILITY -> copilot excludes [$EXCLUDED_TOOLS]," \
-             "claude allows [$ALLOWED_TOOLS]"
+             "claude code allows [$ALLOWED_TOOLS]"
 
         # One invocation function per vendor, one shared loop. The loop is
         # the load-bearing part -- "advance only on model_unavailable" is the
@@ -349,26 +427,66 @@ runs:
           local model="$1"
           local status=0
 
+          # Serves both Claude Code vendors. They must produce identical
+          # sessions -- same isolation, same tools, same model -- because the
+          # only sanctioned difference between `anthropic` and `claude` is
+          # which account is billed. Everything that varies below varies for
+          # that reason alone.
+          #
           # Claude is pointed at the prompt file rather than fed it, for the
           # same MAX_ARG_STRLEN reason as above and because `-p` with piped
           # stdin combines the two in a way this harness would rather not
-          # depend on. `--bare` is the documented mode for CI: it skips the
-          # host's hooks, plugins, MCP servers, auto memory and CLAUDE.md, so
-          # the run does not vary with whatever is configured on the machine
-          # that happens to be executing it.
+          # depend on.
           #
-          # `--bare` also never reads OAuth credentials or the keychain, so
-          # ANTHROPIC_API_KEY is the only auth that works here.
-          # CLAUDE_CODE_OAUTH_TOKEN does not, and the classifier says so by
-          # name rather than reporting a generic failure.
+          # ISOLATION. A CI session must not vary with whatever the checkout
+          # happens to configure: no hooks, no plugins, no MCP servers, no
+          # custom agents or commands, no auto memory, no CLAUDE.md. Two
+          # flags achieve that, and which one is usable is decided by auth,
+          # not by preference:
           #
-          # And it does not read `.claude/settings.json`, so the
-          # `fallbackModel` chain committed there does NOT apply to this run.
-          # That is the intended arrangement, not an oversight: the `models`
-          # input above is the fallback here, it is per role rather than
-          # per session, and it is the same mechanism the Copilot side uses.
-          # Two fallback systems agreeing by accident would be worse than
-          # one that obviously owns the job.
+          #   --bare       skips all of it AND restricts Anthropic auth to
+          #                ANTHROPIC_API_KEY (or an apiKeyHelper). Its own
+          #                --help is explicit that OAuth and the keychain are
+          #                "never read". So it is unusable on the `claude`
+          #                vendor -- not awkward, unusable.
+          #   --safe-mode  disables the same customizations, and leaves auth,
+          #                model selection, tools and permissions working
+          #                normally. That last clause is why the OAuth vendor
+          #                exists at all.
+          #
+          # Verified rather than assumed: asked, with no tools, whether
+          # CLAUDE.md was in context, `--safe-mode` answers NOT-LOADED and a
+          # plain run answers LOADED. The two flags isolate alike.
+          #
+          # `--strict-mcp-config` rides along on the --safe-mode path as a
+          # second lock on the one customization that could reach the
+          # network. It is redundant with --safe-mode today and costs
+          # nothing; --bare needs no equivalent.
+          #
+          # This is also what keeps `.claude/settings.json`'s `fallbackModel`
+          # chain out of the run, on both paths. That matters more than it
+          # looks: the `models` input above is this action's own fallback,
+          # per role rather than per session, and the same mechanism the
+          # Copilot side uses. A second fallback system silently overriding
+          # it would make `resolved-model` report an id that did not answer.
+          #
+          # CREDENTIALS. Exactly one is left in the environment. Callers pass
+          # both unconditionally -- deliberately, so that flipping a label
+          # never discovers a secret that was never threaded through -- which
+          # means both are present here even though this run may use either.
+          # Leaving the other in place would let the CLI pick, and the
+          # symptom of it picking wrong is a correct answer billed to the
+          # wrong account: invisible in the logs, visible on an invoice.
+          local -a auth_env isolation
+
+          if [ "$AUTH" = "oauth" ]; then
+            auth_env=(env -u ANTHROPIC_API_KEY)
+            isolation=(--safe-mode --strict-mcp-config)
+          else
+            auth_env=(env -u CLAUDE_CODE_OAUTH_TOKEN)
+            isolation=(--bare)
+          fi
+
           # --add-dir "$RUNNER_TEMP" is load-bearing since #98 moved the
           # prompt files out of the checkout. Claude is pointed at the prompt
           # by PATH and opens it with its own Read tool, and that tool is
@@ -378,12 +496,13 @@ runs:
           # cannot read its own prompt, and the failure looks like a model
           # that ignored its instructions rather than a path it was refused.
           #
-          # `--bare` permits it: the flag's own documentation names --add-dir
-          # among the ways to give a bare session context explicitly. The
-          # Copilot branch needs no equivalent -- it feeds the prompt on
+          # Both isolation modes permit it: --bare's own documentation names
+          # --add-dir among the ways to give a bare session context
+          # explicitly, and --safe-mode does not touch directory permissions.
+          # The Copilot branch needs no equivalent -- it feeds the prompt on
           # stdin, which has no notion of a permitted directory.
-          claude \
-            --bare \
+          "${auth_env[@]}" claude \
+            "${isolation[@]}" \
             --add-dir "$RUNNER_TEMP" \
             -p "Read $PROMPT_FILE and follow it exactly. It is the whole task." \
             --model "$model" \
@@ -393,28 +512,52 @@ runs:
             --allowedTools "$ALLOWED_TOOLS" \
             > "$RUNNER_TEMP"/claude-output.json 2> "$RUNNER_TEMP"/agent-error.txt || status=$?
 
-          echo "claude exited $status"
+          echo "claude exited $status (auth: $AUTH)"
           echo "output: $(wc -c < "$RUNNER_TEMP"/claude-output.json) bytes of JSON"
 
+          # --vendor and --auth-mode are what let one classifier write
+          # guidance naming the right secret. They describe this run's
+          # configuration; nothing in the envelope reveals either.
           python3 .github/scripts/classify-claude-outcome.py \
             --json "$RUNNER_TEMP"/claude-output.json \
             --stderr "$RUNNER_TEMP"/agent-error.txt \
             --exit-status "$status" \
             --model "$model" \
+            --vendor "$VENDOR" \
+            --auth-mode "$AUTH" \
             --out "$RUNNER_TEMP"/agent-outcome.json
         }
 
-        # Checked before the loop, not inside it. Without a key every
+        # Checked before the loop, not inside it. Without a credential every
         # candidate fails identically, so walking the list would turn one
         # missing secret into N identical failures and report the last one.
-        if [ "$VENDOR" = "claude" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-          jq -n '{reason:"harness_error",
-                  headline:"No ANTHROPIC_API_KEY reached this session",
-                  guidance:"A composite action cannot read `secrets` itself. The caller must pass secrets.ANTHROPIC_API_KEY to this action'"'"'s `api-key` input. `--bare` never reads OAuth credentials, so CLAUDE_CODE_OAUTH_TOKEN does not work here whatever it is set to."}' \
+        #
+        # Keyed on auth rather than on vendor: the question is which secret
+        # this run needs, and that is exactly what auth already answers.
+        MISSING_SECRET=""
+
+        case "$AUTH" in
+          api-key)
+            [ -n "${ANTHROPIC_API_KEY:-}" ] || MISSING_SECRET=ANTHROPIC_API_KEY
+            ;;
+          oauth)
+            [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] \
+              || MISSING_SECRET=CLAUDE_CODE_OAUTH_TOKEN
+            ;;
+        esac
+
+        if [ -n "$MISSING_SECRET" ]; then
+          jq -n \
+            --arg secret "$MISSING_SECRET" \
+            --arg vendor "$VENDOR" \
+            '{reason:"harness_error",
+              headline:("No " + $secret + " reached this session"),
+              guidance:("The `" + $vendor + "` vendor authenticates with the " + $secret + " repository secret. A composite action cannot read `secrets` itself, so the caller must thread it through -- check that this workflow passes it to run-agent-session, and that the secret is set on the repository.")}' \
             > "$RUNNER_TEMP"/agent-session-failure.json
 
-          echo "::error::vendor is 'claude' but no ANTHROPIC_API_KEY reached" \
-               "this step. Pass secrets.ANTHROPIC_API_KEY to the api-key input."
+          echo "::error::vendor is '$VENDOR' but no $MISSING_SECRET reached" \
+               "this step. Pass secrets.$MISSING_SECRET through to" \
+               "run-agent-session."
           exit 1
         fi
 
@@ -429,7 +572,7 @@ runs:
 
           echo "::group::$STEP_LABEL with $model ($VENDOR)"
 
-          case "$VENDOR" in
+          case "$CLI" in
             copilot) invoke_copilot "$model" ;;
             claude)  invoke_claude  "$model" ;;
           esac
@@ -482,7 +625,7 @@ runs:
         done
 
         if [ -z "$resolved" ]; then
-          if [ "$VENDOR" = "claude" ]; then
+          if [ "$CLI" = "claude" ]; then
             GUIDANCE="Availability is resolved per account. Check the id spelling -- Claude Code ids use dashes (claude-opus-4-8), not the dotted Copilot form -- then set the relevant CLAUDE_*_MODELS repository variable."
           else
             GUIDANCE="Availability is resolved per identity. Check https://github.com/settings/copilot/features, then set the relevant COPILOT_*_MODELS repository variable."
@@ -579,7 +722,10 @@ runs:
       if: always()
       shell: python
       env:
-        VENDOR: ${{ inputs.vendor }}
+        # The CLI, not the vendor: what shape the raw evidence has is a
+        # property of which program wrote it. `anthropic` and `claude` both
+        # leave behind one claude-output.json envelope.
+        CLI: ${{ steps.resolve.outputs.cli }}
       run: |
         import json
         import os
@@ -589,10 +735,10 @@ runs:
         # tree -- see the note on `outputs` above.
         SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
 
-        vendor = os.environ["VENDOR"]
+        cli = os.environ["CLI"]
         parts = []
 
-        if vendor == "copilot":
+        if cli == "copilot":
             jsonl = SCRATCH / "copilot-output.jsonl"
 
             if jsonl.exists():
@@ -619,7 +765,7 @@ runs:
                             if isinstance(block, dict) and block.get("type") == "text":
                                 parts.append(block.get("text", ""))
 
-        elif vendor == "claude":
+        elif cli == "claude":
             # One envelope, one answer. `.result` carries the final text --
             # and on an in-run failure Claude Code puts the failure message
             # there too, which is why it is still worth writing out on a

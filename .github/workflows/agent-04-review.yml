@@ -46,13 +46,19 @@ on:
 
       vendor:
         description: >
-          Which company answers. A labelled run takes this from the label's
-          third segment instead; this input exists because workflow_dispatch
-          has no label to read.
+          Who answers and who pays. A labelled run takes this from the
+          label's third segment instead; this input exists because
+          workflow_dispatch has no label to read.
+
+          `anthropic` and `claude` are the same Claude Code CLI on the same
+          models. They differ only in the credential and therefore the bill:
+          `anthropic` spends the Anthropic Platform API key, `claude` spends
+          a Claude subscription. Pick on billing, not on capability.
         required: false
         type: choice
         options:
           - copilot
+          - anthropic
           - claude
         default: copilot
 
@@ -77,7 +83,8 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.action == 'labeled' &&
        (github.event.label.name == 'agent:reviewer:copilot' ||
-        github.event.label.name == 'agent:reviewer:claude')) ||
+        github.event.label.name == 'agent:reviewer:claude' ||
+        github.event.label.name == 'agent:reviewer:anthropic')) ||
       (github.event.action == 'ready_for_review' &&
        (startsWith(github.event.pull_request.head.ref, 'copilot/') ||
         startsWith(github.event.pull_request.head.ref, 'claude/')))
@@ -144,14 +151,19 @@ jobs:
           # A `ready_for_review` run and a workflow_dispatch have no label to
           # read; both mean copilot, which is the surface they came from.
           case "$LABEL" in
-            agent:reviewer:claude)  VENDOR=claude ;;
-            agent:reviewer:copilot) VENDOR=copilot ;;
-            *)                    VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
+            agent:reviewer:claude)    VENDOR=claude ;;
+            agent:reviewer:anthropic) VENDOR=anthropic ;;
+            agent:reviewer:copilot)   VENDOR=copilot ;;
+            *)                        VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
           esac
 
+          # `anthropic` and `claude` share this list. They are the same CLI
+          # on the same ids -- a second variable would be a second name for
+          # one correct answer, and would drift the first time only one of
+          # them was updated.
           case "$VENDOR" in
-            copilot) MODELS="$COPILOT_REVIEWER_MODELS" ;;
-            claude)  MODELS="$CLAUDE_REVIEWER_MODELS" ;;
+            copilot)          MODELS="$COPILOT_REVIEWER_MODELS" ;;
+            anthropic|claude) MODELS="$CLAUDE_REVIEWER_MODELS" ;;
             *)
               echo "::error::Unknown vendor '$VENDOR'."
               exit 1
@@ -208,6 +220,10 @@ jobs:
           max-ai-credits: ${{ env.REVIEWER_MAX_AI_CREDITS }}
           max-turns: ${{ env.REVIEWER_MAX_TURNS }}
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `claude` vendor's credential, as `api-key` is the
+          # `anthropic` vendor's. Both are passed on every call and
+          # exactly one is used; which, is the vendor's whole meaning.
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Same capability-removal posture as the planner: the reviewer
           # can read the checkout but holds no tool that can change it.
           capability: read-only

@@ -102,13 +102,19 @@ on:
 
       vendor:
         description: >
-          Which company answers. A labelled run takes this from the label's
-          third segment instead; this input exists because workflow_dispatch
-          has no label to read.
+          Who answers and who pays. A labelled run takes this from the
+          label's third segment instead; this input exists because
+          workflow_dispatch has no label to read.
+
+          `anthropic` and `claude` are the same Claude Code CLI on the same
+          models. They differ only in the credential and therefore the bill:
+          `anthropic` spends the Anthropic Platform API key, `claude` spends
+          a Claude subscription. Pick on billing, not on capability.
         required: false
         type: choice
         options:
           - copilot
+          - anthropic
           - claude
         default: copilot
 
@@ -141,6 +147,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.action == 'labeled' &&
        (github.event.label.name == 'agent:implementer:copilot' ||
+        github.event.label.name == 'agent:implementer:anthropic' ||
         github.event.label.name == 'agent:implementer:claude'))
 
     env:
@@ -245,20 +252,25 @@ jobs:
           # workflow_dispatch has no label to read, so it falls back to the
           # dispatch input, which defaults to copilot.
           case "$LABEL" in
-            agent:implementer:claude)  VENDOR=claude ;;
-            agent:implementer:copilot) VENDOR=copilot ;;
-            *)                  VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
+            agent:implementer:claude)    VENDOR=claude ;;
+            agent:implementer:anthropic) VENDOR=anthropic ;;
+            agent:implementer:copilot)   VENDOR=copilot ;;
+            *)                           VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
           esac
 
           # The pre-PR review and fix sessions need the vendor's spellings
           # too. Resolved here so both call sites read one output instead of
           # an env var that is only correct for copilot.
+          # `anthropic` and `claude` share this list. They are the same CLI
+          # on the same ids -- a second variable would be a second name for
+          # one correct answer, and would drift the first time only one of
+          # them was updated.
           case "$VENDOR" in
             copilot)
               REVIEWER_MODELS="$COPILOT_REVIEWER_MODELS"
               FIXER_MODELS="$COPILOT_FIXER_MODELS"
               ;;
-            claude)
+            anthropic|claude)
               REVIEWER_MODELS="$CLAUDE_REVIEWER_MODELS"
               FIXER_MODELS="$CLAUDE_FIXER_MODELS"
               ;;
@@ -674,14 +686,29 @@ jobs:
             TIER="$IMPLEMENTER_TIER_FLOOR"
           fi
 
-          # A tier names a capability level; each vendor spells it its own
-          # way. Copilot CLI: `claude-haiku-4.5`. Claude Code: the same model
-          # is `claude-haiku-4-5`. Resolving the spelling here keeps the
-          # escalation logic above vendor-blind, and keeps a `:claude` run
+          # A tier names a capability level; each CLI spells it its own way.
+          # Copilot CLI: `claude-haiku-4.5`. Claude Code: the same model is
+          # `claude-haiku-4-5`. Resolving the spelling here keeps the
+          # escalation logic above vendor-blind, and keeps a Claude Code run
           # from walking a list of Copilot ids and then reporting that every
           # model was unavailable.
+          #
+          # Keyed on the CLI, not the vendor. `anthropic` and `claude` are
+          # one CLI billed two ways, so a per-vendor key would mean three
+          # rows per tier where two carry identical ids -- a duplicate that
+          # stays correct only for as long as everyone remembers to update
+          # both halves of it.
+          case "$VENDOR" in
+            copilot)          CLI=copilot ;;
+            anthropic|claude) CLI=claude ;;
+            *)
+              echo "::error::Unknown vendor '$VENDOR'."
+              exit 1
+              ;;
+          esac
+
           tier_models() {
-            case "$1:$VENDOR" in
+            case "$1:$CLI" in
               haiku:copilot)  echo "claude-haiku-4.5,claude-sonnet-5,claude-opus-5" ;;
               haiku:claude)   echo "claude-haiku-4-5,claude-sonnet-5,claude-opus-5" ;;
               sonnet:copilot) echo "claude-sonnet-5,claude-opus-5" ;;
@@ -692,15 +719,18 @@ jobs:
             esac
           }
 
-          # The operator's list for the vendor that is answering, and whether
-          # they actually set it. Both are per-vendor: an operator who pinned
-          # the Copilot list has said nothing about Claude.
+          # The operator's list for the CLI that is answering, and whether
+          # they actually set it. An operator who pinned the Copilot list has
+          # said nothing about Claude Code -- but pinning the Claude Code
+          # list does bind both `anthropic` and `claude`, because the ids are
+          # a property of the CLI and the vendor choice is only about the
+          # bill.
           case "$VENDOR" in
             copilot)
               OPERATOR_MODELS="$COPILOT_IMPLEMENTER_MODELS"
               PINNED="$COPILOT_IMPLEMENTER_PINNED"
               ;;
-            claude)
+            anthropic|claude)
               OPERATOR_MODELS="$CLAUDE_IMPLEMENTER_MODELS"
               PINNED="$CLAUDE_IMPLEMENTER_PINNED"
               ;;
@@ -816,6 +846,10 @@ jobs:
         with:
           vendor: ${{ steps.route.outputs.vendor }}
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `claude` vendor's credential, as `api-key` is the
+          # `anthropic` vendor's. Both are passed on every call and
+          # exactly one is used; which, is the vendor's whole meaning.
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt-file: ${{ runner.temp }}/implementer-prompt.txt
           models: ${{ steps.tier.outputs.models }}
           max-ai-credits: ${{ env.IMPLEMENTER_MAX_AI_CREDITS }}
@@ -1290,6 +1324,10 @@ jobs:
         with:
           vendor: ${{ steps.route.outputs.vendor }}
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `claude` vendor's credential, as `api-key` is the
+          # `anthropic` vendor's. Both are passed on every call and
+          # exactly one is used; which, is the vendor's whole meaning.
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt-file: ${{ steps.review-build.outputs.prompt-file }}
           models: ${{ steps.route.outputs.reviewer_models }}
           max-turns: ${{ env.REVIEWER_MAX_TURNS }}
@@ -1358,6 +1396,10 @@ jobs:
         with:
           vendor: ${{ steps.route.outputs.vendor }}
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `claude` vendor's credential, as `api-key` is the
+          # `anthropic` vendor's. Both are passed on every call and
+          # exactly one is used; which, is the vendor's whole meaning.
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt-file: ${{ steps.fix-build.outputs.prompt-file }}
           models: ${{ steps.route.outputs.fixer_models }}
           max-turns: ${{ env.FIXER_MAX_TURNS }}

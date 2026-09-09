@@ -219,7 +219,7 @@ the earlier ones. A pull request fixed once by Copilot therefore escalates on
 a Claude retry, which is the point of counting a shared marker rather than
 each vendor keeping its own tally.
 
-The two bounds hold for both vendors, and for the same reasons. Setting the
+The two bounds hold for every vendor, and for the same reasons. Setting the
 answering vendor's list — `vars.COPILOT_IMPLEMENTER_MODELS` or
 `vars.CLAUDE_IMPLEMENTER_MODELS`, and the same pair for the fixer — skips tier
 resolution entirely for that role: an operator naming a list has made a
@@ -227,8 +227,10 @@ decision about this repository, and neither a planner's guess about one task
 nor an escalation counter overrules it. The workflows capture whether the
 variable was *set* (a `*_PINNED` flag) separately from its value, because the
 `||` default collapses "unset" and "set to the default" into the same string.
-Pinning is per vendor: an operator who pinned the Copilot list has said
-nothing about what Claude should run. The pre-vendor names — `PLANNER_MODELS`,
+Pinning is per CLI: an operator who pinned the Copilot list has said nothing
+about what Claude Code should run, and pinning `vars.CLAUDE_*_MODELS` binds
+`anthropic` and `claude` alike — the ids belong to the CLI, and the vendor
+choice is only about the bill. The pre-vendor names — `PLANNER_MODELS`,
 `REVIEWER_MODELS`, `FIXER_MODELS` and the singular `*_MODEL` forms — are still
 read as a Copilot fallback, so an existing override is not silently lost.
 And the fix cycle treats its
@@ -545,25 +547,28 @@ Trial them on one or two mechanical tasks and compare how much rework each
 needs before switching. Nothing records that for you — read the pull requests
 and their review verdicts.
 
-### Open: paying for Claude sessions with a subscription instead of API credits
+### Resolved: paying for Claude sessions with a subscription instead of API credits
 
 > **Written for this repository on 2026-09-04, not ported.** Unlike the rest of
 > this document, the issue numbers convention does not apply here — there is no
-> source-repo issue behind it. Status: **not adopted, revisit deliberately.**
+> source-repo issue behind it. Status: **adopted 2026-09-09.** The `claude`
+> vendor now bills a subscription; the `anthropic` vendor is the API-credit
+> path this section was originally written about. The analysis below is kept
+> because one of its four premises turned out to be wrong, and the correction
+> is the reason the change was possible at all.
 
-**The question.** Every Claude-vendor agent session bills to the
+**The question.** Claude-vendor agent sessions billed to the
 `ANTHROPIC_API_KEY` repository secret, which draws on Anthropic API credits
 bought at console.anthropic.com. That is separate billing from a Claude Pro or
-Max subscription, which grants no API credits and no API key. The question is
+Max subscription, which grants no API credits and no API key. The question was
 whether a subscription could pay for these sessions instead.
 
-**Why it currently cannot.** `run-agent-session/action.yml` invokes
+**What was in the way.** `run-agent-session/action.yml` invoked
 `claude --bare`, and `--bare` never reads OAuth credentials or the keychain.
 `CLAUDE_CODE_OAUTH_TOKEN` — the token `claude setup-token` mints for
 subscription holders, and what the official `claude-code-action` uses to
-support Pro/Max in CI — therefore does nothing here whatever it is set to. The
-classifier names this failure by name rather than reporting a generic auth
-error, which is the only reason it is legible at all.
+support Pro/Max in CI — therefore did nothing whatever it was set to. That
+part was correct, and is still true of the `anthropic` vendor.
 
 **What `--bare` buys, and what dropping it would cost.** Four things, in
 descending order of how much they actually matter:
@@ -591,18 +596,50 @@ descending order of how much they actually matter:
    config, not the host. Only relevant if `run-agent-session` is ever driven
    from a self-hosted runner or a developer machine.
 
-**How to test it** without committing to anything: add a boolean input on
-`run-agent-session` that decides whether `--bare` is passed, set it per role
-rather than repo-wide, and try the cheapest role first (implementer, Haiku
-4.5) with `CLAUDE_CODE_OAUTH_TOKEN` set and no API key. The existing classifier
-will say plainly whether it authenticated. Check Anthropic's current terms on
-subscription auth for automated workloads before adopting it broadly.
+**What the analysis got wrong: the choice was never `--bare` or nothing.**
+Points 2, 3 and 4 above all assume that dropping `--bare` means accepting
+whatever the checkout configures. It does not. `--safe-mode` disables the same
+set of customizations — CLAUDE.md, hooks, plugins, MCP servers, skills, custom
+agents and commands — and its documentation is explicit that "auth, model
+selection, built-in tools, and permissions work normally". It is the isolation
+half of `--bare` without the auth half.
 
-**The other lever, which needs no decision here.** The control plane is
-dual-vendor and `ANTHROPIC_API_KEY` is the only secret referenced anywhere in
-the repository — the Copilot path runs on the built-in `GITHUB_TOKEN` plus a
-Copilot licence. Labelling Issues `agent:*:copilot` runs the entire pipeline
-with no Anthropic billing at all. See *One workflow per role, two vendors*.
+Verified rather than taken on trust, because the whole decision rests on it:
+asked with no tools available whether `CLAUDE.md` was in context, a
+`--safe-mode` run answers `NOT-LOADED` and a plain run answers `LOADED`. So
+point 3's cost is not paid, point 2 holds, and point 4 was already the weakest.
+Point 1 — one owner for model fallback — is covered by the same flag, which is
+what keeps `.claude/settings.json`'s `fallbackModel` chain from quietly
+overriding the `models` walk.
+
+**What was adopted.** A third vendor rather than a switch. `anthropic` and
+`claude` are the same Claude Code CLI on the same model ids, and differ only
+in which credential authenticates:
+
+| vendor | flag | credential | billed to |
+| --- | --- | --- | --- |
+| `anthropic` | `--bare` | `ANTHROPIC_API_KEY` | Anthropic Platform API credits |
+| `claude` | `--safe-mode --strict-mcp-config` | `CLAUDE_CODE_OAUTH_TOKEN` | the Claude subscription that minted the token |
+
+Two vendors rather than a boolean input because the choice is *whose money*,
+and a label on an Issue is where that decision is already made. A boolean would
+have hidden it in a workflow file.
+
+`run-agent-session` leaves exactly one credential in the environment at the
+point of invocation — `env -u` strips the other. Callers pass both
+unconditionally, so a run that flips a label never discovers a secret that was
+never threaded through; the cost of that is that both are present in the step,
+and letting the CLI choose between them would produce a correct answer billed
+to the wrong account. That is invisible in a log and visible on an invoice,
+which is why it is stripped rather than merely ignored.
+
+Check Anthropic's current terms on subscription auth for automated workloads
+before leaning on the `claude` vendor heavily.
+
+**The other lever, which needs no decision here.** The Copilot path runs on
+the built-in `GITHUB_TOKEN` plus a Copilot licence. Labelling Issues
+`agent:*:copilot` runs the entire pipeline with no Anthropic billing at all.
+See *One workflow per role, three vendors*.
 
 ## The workflow
 
@@ -612,8 +649,8 @@ number no longer maps to file purpose one-to-one — `agent-03-rollup.yml` and
 `agent-05-fix.yml` was added — so treat the filename, not the number, as
 authoritative. Four spend model budget (planner, implement, review, fix); two
 are plumbing and cost nothing (dashboard, rollup). Each of the four runs
-either vendor, chosen by its label's third segment — see *One workflow per
-role, two vendors*. `agent-00-dashboard.yml` no
+any of the three vendors, chosen by its label's third segment — see *One
+workflow per role, three vendors*. `agent-00-dashboard.yml` no
 longer runs on every event — it renders on demand now. See *Issue views* and
 *The control plane* below.
 
@@ -767,12 +804,16 @@ depends on the color. Checked live against the repository on 2026-08-22:
 | Label | Color | Bootstrapped by |
 | --- | --- | --- |
 | `agent:planner:copilot` | `#1D76DB` | — not created by any workflow; must already exist |
+| `agent:planner:anthropic` | `#1D76DB` | — not created by any workflow; must already exist |
 | `agent:planner:claude` | `#1D76DB` | — not created by any workflow; must already exist |
 | `agent:implementer:copilot` | `#1D76DB` | — not created by any workflow; must already exist |
+| `agent:implementer:anthropic` | `#1D76DB` | — not created by any workflow; must already exist |
 | `agent:implementer:claude` | `#1D76DB` | — not created by any workflow; must already exist |
 | `agent:reviewer:copilot` | `#1D76DB` | — not created by any workflow; must already exist |
+| `agent:reviewer:anthropic` | `#1D76DB` | — not created by any workflow; must already exist |
 | `agent:reviewer:claude` | `#1D76DB` | — not created by any workflow; must already exist |
 | `agent:fixer:copilot` | `#1D76DB` | — not created by any workflow; must already exist |
+| `agent:fixer:anthropic` | `#1D76DB` | — not created by any workflow; must already exist |
 | `agent:fixer:claude` | `#1D76DB` | — not created by any workflow; must already exist |
 | `plan` | `#0E8A16` | `agent-01-planner.yml` |
 | `planned` | `#0E8A16` | `agent-01-planner.yml` |
@@ -1935,12 +1976,28 @@ dashboard — reads the Issue graph the same way regardless of which tool
 produced the diff, so switching tools mid-epic, or per task, doesn't
 require picking one system and discarding the other.
 
-### One workflow per role, two vendors
+### One workflow per role, three vendors
 
-Each role is one workflow, and which company answers is the label's third
-segment. `agent:reviewer:copilot` and `agent:reviewer:claude` run the same
-`agent-04-review.yml` against the same prompt and publish the same verdict
-comment; the only difference is which CLI produced the text in between.
+Each role is one workflow, and who answers is the label's third segment.
+`agent:reviewer:copilot`, `agent:reviewer:anthropic` and
+`agent:reviewer:claude` run the same `agent-04-review.yml` against the same
+prompt and publish the same verdict comment; the only difference is which CLI
+produced the text in between, and which account paid for it.
+
+**Three vendors, two CLIs.** A vendor names a billing arrangement, not a
+program:
+
+| vendor | CLI | credential | billed to |
+| --- | --- | --- | --- |
+| `copilot` | Copilot CLI | the workflow's `GITHUB_TOKEN` | Copilot premium requests |
+| `anthropic` | Claude Code | `ANTHROPIC_API_KEY` | Anthropic Platform API credits |
+| `claude` | Claude Code | `CLAUDE_CODE_OAUTH_TOKEN` | a Claude Pro/Max subscription |
+
+`anthropic` and `claude` are interchangeable in every respect except the bill —
+same binary, same model ids, same tools, same isolation. Choose between them on
+which budget should absorb the run, never on what the run can do. See
+*Resolved: paying for Claude sessions with a subscription instead of API
+credits* for why this is two vendors rather than one vendor and a flag.
 
 | Label | Target | Workflow | Models |
 | --- | --- | --- | --- |
@@ -1959,29 +2016,53 @@ standardisation *is*.
 **The vendor swaps in exactly one place.** `run-agent-session` takes a
 `vendor` input, runs the matching CLI, and writes one outcome file and one
 text file. Everything upstream builds a prompt; everything downstream parses a
-verdict and publishes it. Neither end knows who answered.
+verdict and publishes it. Neither end knows who answered, or who paid.
 
-**A tier is semantic; the spelling is the vendor's.** The planner's
+Inside that action the vendor is resolved once, into the two facts it actually
+stands for: `cli` (which program, and therefore which flags, output shape and
+classifier) and `auth` (which credential, and therefore which account and which
+secret a failure should name). Every step below reads those rather than
+re-deriving the mapping — which is this action's own rule applied one level
+down, since the way two branches drift is by each deciding separately what a
+vendor means.
+
+**A tier is semantic; the spelling is the CLI's.** The planner's
 `model:haiku` label means "this task is mechanical", not "use
 `claude-haiku-4.5`". Each workflow's `tier_models` helper resolves the tier to
-the answering vendor's ids, because the two spellings are not interchangeable:
+the answering CLI's ids, because the two spellings are not interchangeable:
 Copilot CLI writes `claude-haiku-4.5`, Claude Code writes `claude-haiku-4-5`.
-A list copied between vendors does not fail loudly — it walks every candidate
+A list copied between CLIs does not fail loudly — it walks every candidate
 and then reports that no model was available, which points the reader at
 entitlements rather than at a typo.
 
+Keyed on the CLI, not the vendor, so `anthropic` and `claude` resolve through
+one row per tier rather than two identical ones. The same applies to the
+configured lists: `vars.CLAUDE_*_MODELS` serves both, because the ids belong to
+the CLI and the vendor choice is only about the bill.
+
 **A label is a button, and the button that was pressed is the one released.**
 Each workflow consumes its own trigger label rather than a hardcoded one, so
-re-adding `agent:fixer:claude` is a clean retry of *that vendor* rather than a
-silent fallback to Copilot.
+re-adding `agent:fixer:claude` is a clean retry of *that vendor* — and of that
+budget — rather than a silent fallback to Copilot.
 
-**The Claude path needs `ANTHROPIC_API_KEY`.** A composite action cannot read
-`secrets` itself, so every workflow threads it into `run-agent-session`'s
-`api-key` input. `--bare` — the mode these runs use, so a run does not vary
-with whatever hooks or `CLAUDE.md` sit on the runner — never reads OAuth
-credentials, so `CLAUDE_CODE_OAUTH_TOKEN` does not authenticate this path
-whatever it is set to. A missing key fails before the model loop with that
-sentence, rather than walking every candidate and blaming availability.
+**Each Claude Code vendor needs its own secret.** A composite action cannot
+read `secrets` itself, so every workflow threads both into
+`run-agent-session` — `ANTHROPIC_API_KEY` into `api-key` for `anthropic`, and
+`CLAUDE_CODE_OAUTH_TOKEN` into `oauth-token` for `claude`. Both are passed on
+every call, including `copilot` calls that use neither: a secret threaded
+through only on the branch that needs it is a secret that turns out to be
+missing the first time someone changes a label, and that failure has no symptom
+until then.
+
+The action then strips whichever one this run is not using, so the CLI cannot
+pick. A missing secret fails before the model loop, naming the vendor and the
+secret it wanted, rather than walking every candidate and blaming
+availability.
+
+Neither run reads the checkout's `.claude/` or `CLAUDE.md`: `anthropic` uses
+`--bare` and `claude` uses `--safe-mode`, which isolate identically. A run
+therefore does not vary with what is committed to the repository or configured
+on the runner.
 
 **The pre-vendor labels are gone.** `agent:plan`, `agent:execute`,
 `agent:review` and `agent:fix` triggered these workflows before the vendor
@@ -2075,7 +2156,7 @@ are custom agents and MCP servers.
 | `.github/workflows/godot-ci-validation.yml` | Human-authored `pull_request` validation gate (`paths-ignore` deny-list) plus a manual dispatch; calls `godot-validation.yml` |
 | `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt |
 | `.github/actions/build-fix-request` | Shared by `agent-05-fix.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the fixer prompt |
-| `.github/actions/run-agent-session` | The one place a vendor difference lives. Runs one agent session -- Copilot CLI or Claude Code, chosen by its `vendor` input -- walking a model preference list and classifying how the session ended into a shared outcome schema. Not yet shared by the planner, which still carries its own copy of the loop |
+| `.github/actions/run-agent-session` | The one place a vendor difference lives. Runs one agent session -- Copilot CLI, or Claude Code on either credential, chosen by its `vendor` input -- walking a model preference list and classifying how the session ended into a shared outcome schema. Not yet shared by the planner, which still carries its own copy of the loop |
 | `.github/actions/extract-review-verdict` | Turns a review session's text into a machine-readable `VERDICT` |
 | `.github/actions/lint-gdscript` | Diff-scoped `gdformat` check/fix, used by `agent-02-implement.yml` and `gdscript-lint.yml` |
 | `.github/scripts/render-dashboard.py` | Derives every task and epic state from the repository graph |

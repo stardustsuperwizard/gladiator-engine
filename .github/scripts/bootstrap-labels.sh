@@ -31,13 +31,17 @@ echo "Bootstrapping labels on $repo"
 # name|color|description
 LABELS=$(cat <<'LABELS'
 agent:planner:copilot|1D76DB|Route planning for this Issue to the Copilot planner
-agent:planner:claude|1D76DB|Route planning for this Issue to the Claude planner
+agent:planner:anthropic|1D76DB|Route planning for this Issue to Claude Code, billed to the Anthropic Platform API
+agent:planner:claude|1D76DB|Route planning for this Issue to Claude Code, billed to the Claude subscription
 agent:implementer:copilot|1D76DB|Route implementation to the Copilot implementer
-agent:implementer:claude|1D76DB|Route implementation to the Claude implementer
+agent:implementer:anthropic|1D76DB|Route implementation to Claude Code, billed to the Anthropic Platform API
+agent:implementer:claude|1D76DB|Route implementation to Claude Code, billed to the Claude subscription
 agent:reviewer:copilot|1D76DB|Route review to the Copilot reviewer
-agent:reviewer:claude|1D76DB|Route review to the Claude reviewer
+agent:reviewer:anthropic|1D76DB|Route review to Claude Code, billed to the Anthropic Platform API
+agent:reviewer:claude|1D76DB|Route review to Claude Code, billed to the Claude subscription
 agent:fixer:copilot|1D76DB|Route the fix cycle to the Copilot fixer
-agent:fixer:claude|1D76DB|Route the fix cycle to the Claude fixer
+agent:fixer:anthropic|1D76DB|Route the fix cycle to Claude Code, billed to the Anthropic Platform API
+agent:fixer:claude|1D76DB|Route the fix cycle to Claude Code, billed to the Claude subscription
 # Issue-type labels, declared in .github/ISSUE_TEMPLATE/*.md frontmatter.
 # GitHub silently drops a template label that does not exist in the repository,
 # so an Issue filed from the Infrastructure template would simply arrive
