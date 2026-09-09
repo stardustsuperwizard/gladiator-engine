@@ -25,6 +25,9 @@
 #   Part 6  A role is written down on three surfaces with nothing linking
 #           them; one that goes missing on a surface fails silently, the way
 #           an unbootstrapped label does.
+#   Part 7  The Godot version is pinned in several places that must move
+#           together, and VERSION.md wrongly claimed one default covered
+#           them all. A half-done bump would pass CI on the stale half.
 #
 # Like `test-issue-dependencies.sh`, this needs nothing but python3: no
 # network, no credentials, no GitHub CLI, and it never touches a real
@@ -847,6 +850,147 @@ sys.exit(0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 7: every Godot version pin agrees.
+#
+# The engine version is named in more places than one, and they have to move
+# together. `setup-godot`'s input default is the canonical one; a workflow may
+# also pass `godot-version:` explicitly, and `godot-validation.yml` declares
+# its own input default that it forwards. `project.godot`'s
+# `config/features` carries the same version as major.minor, and the test
+# bootstrap enforces it as a floor at runtime.
+#
+# Nothing linked them. `docs/engine-reference/godot/VERSION.md` claimed that
+# "every call site passes the default, so changing the default changes CI
+# everywhere at once", and that was simply false -- three workflows pinned
+# 4.7.1-stable explicitly, so bumping the default alone would have left them
+# behind, silently and greenly. This part is the check that claim needed.
+#
+# Local and textual on purpose: it asks whether the pins agree with each
+# other, never whether they are current. "Is there a newer Godot" needs the
+# network and a judgement about whether upgrading is wise, which is the
+# `/godot-upgrade` command's job, not a test's.
+# ---------------------------------------------------------------------------
+
+part7 () {
+  python3 - <<'PY'
+import pathlib
+import re
+import sys
+
+failures = []
+
+CANONICAL = pathlib.Path(".github/actions/setup-godot/action.yml")
+
+# --- The canonical pin -----------------------------------------------------
+# `default:` in setup-godot's `godot-version` input. Matched inside that
+# input's block rather than anywhere in the file, so an unrelated input
+# gaining a default does not silently become the version of record.
+text = CANONICAL.read_text(encoding="utf-8")
+block = re.search(
+    r"^  godot-version:\n((?:    [^\n]*\n|[ \t]*\n)*)", text, re.MULTILINE
+)
+canonical = None
+if block:
+    m = re.search(r"^    default:\s*(\S+)\s*$", block.group(1), re.MULTILINE)
+    if m:
+        canonical = m.group(1).strip('"\'')
+
+if canonical is None:
+    print(f"  FAIL — no godot-version default found in {CANONICAL}", file=sys.stderr)
+    sys.exit(1)
+
+# --- Every other place a full release tag is written -----------------------
+# `godot-version: <literal>` call sites, plus any `default:` under a
+# `godot-version:` input in a workflow. An expression (${{ ... }}) forwards
+# something else and is not a pin.
+sites = []
+for path in sorted(
+    list(pathlib.Path(".github/workflows").glob("*.yml"))
+    + list(pathlib.Path(".github/actions").glob("*/action.yml"))
+):
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        m = re.match(r"\s*godot-version:\s*(\S.*?)\s*$", line)
+        if m and "${{" not in m.group(1):
+            value = m.group(1).strip('"\'')
+            if value and not value.endswith(":"):
+                sites.append((path, n, value))
+
+    # A `godot-version:` input block with its own default, e.g. the
+    # reusable godot-validation.yml workflow.
+    body = path.read_text(encoding="utf-8")
+    # `[ \t]*`, never `\s*`: in MULTILINE, `\s` matches the newline before the
+    # line too, so `^(\s*)` captures "\n      " and the `\1  ` backreference
+    # then cannot match a plain indented line. The block matched empty and
+    # godot-validation.yml's own input default -- the one site class this part
+    # exists for -- was skipped in silence.
+    for blk in re.finditer(
+        r"^([ \t]*)godot-version:[ \t]*\n((?:\1[ \t]+[^\n]*\n|[ \t]*\n)*)",
+        body,
+        re.MULTILINE,
+    ):
+        m = re.search(r"^\s*default:\s*(\S+)\s*$", blk.group(2), re.MULTILINE)
+        if m:
+            value = m.group(1).strip('"\'')
+            line_no = body[: blk.start()].count("\n") + 1
+            if path != CANONICAL:
+                sites.append((path, line_no, value))
+
+for path, line_no, value in sites:
+    if value != canonical:
+        failures.append(
+            f"{path}:{line_no} pins Godot {value}, but"
+            f" {CANONICAL} defaults to {canonical}"
+        )
+
+# --- project.godot carries the same major.minor ----------------------------
+# `config/features` is the version floor the test bootstrap enforces at
+# runtime, so a mismatch here is a real disagreement about which engine this
+# project targets -- not merely untidy.
+project = pathlib.Path("project.godot")
+m = re.search(
+    r'config/features\s*=\s*PackedStringArray\((.*?)\)',
+    project.read_text(encoding="utf-8"),
+)
+if not m:
+    failures.append("project.godot: no config/features=PackedStringArray(...) found")
+else:
+    declared = re.findall(r'"([^"]+)"', m.group(1))
+    versions = [v for v in declared if re.fullmatch(r"\d+\.\d+", v)]
+    expected = ".".join(canonical.split("-")[0].split(".")[:2])
+    if not versions:
+        failures.append(
+            f"project.godot: config/features declares no major.minor version"
+            f" (found {declared!r}); expected {expected}"
+        )
+    elif expected not in versions:
+        failures.append(
+            f"project.godot: config/features declares {versions!r},"
+            f" but the CI pin is {canonical} (expected {expected})"
+        )
+
+# --- VERSION.md records the pin it documents -------------------------------
+# The engine reference exists to be trusted, so a stale pin in it is worse
+# than none. Checked loosely: the tag must appear somewhere in the file.
+version_md = pathlib.Path("docs/engine-reference/godot/VERSION.md")
+if not version_md.exists():
+    failures.append(f"{version_md} is missing -- the engine reference documents the pin")
+elif canonical not in version_md.read_text(encoding="utf-8"):
+    failures.append(f"{version_md} does not mention the current pin {canonical}")
+
+if failures:
+    for line in failures:
+        print(f"  FAIL — {line}", file=sys.stderr)
+    sys.exit(1)
+
+print(
+    f"  ok   — Godot {canonical} agreed across {len(sites) + 1} CI pin(s),"
+    f" project.godot and VERSION.md"
+)
+sys.exit(0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -856,6 +1000,7 @@ run_part "Part 3: label description cap (#65)" part3
 run_part "Part 4: marker reads are classified (#69)" part4
 run_part "Part 5: scratch stays out of the tree (#97/#98)" part5
 run_part "Part 6: agent roles stay in parity" part6
+run_part "Part 7: Godot version pins agree" part7
 
 echo
 if [ "$failures" -eq 0 ]; then

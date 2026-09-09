@@ -34,6 +34,8 @@ on:
       - '.github/agents/**'
       - '.claude/agents/**'
       - '.claude/commands/**'
+      - 'project.godot'
+      - 'docs/engine-reference/godot/VERSION.md'
 
   # Deliberately also on push to the default branch. The `paths` filter above
   # means a pull request that changes nothing under the control plane never
@@ -44,6 +46,11 @@ on:
   # filter because Part 6 reads all three. A role definition edited on one
   # surface alone is exactly the change that breaks parity, so it is exactly
   # the change that must trigger the check.
+  #
+  # `project.godot` and the engine reference's `VERSION.md` are there for the
+  # same reason on Part 7's behalf: a Godot bump that touches only the engine
+  # version declaration, or only the document recording it, is the half-done
+  # bump that part exists to catch.
   push:
     branches:
       - main
@@ -54,6 +61,8 @@ on:
       - '.github/agents/**'
       - '.claude/agents/**'
       - '.claude/commands/**'
+      - 'project.godot'
+      - 'docs/engine-reference/godot/VERSION.md'
 
   workflow_dispatch:
 
