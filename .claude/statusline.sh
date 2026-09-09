@@ -30,9 +30,11 @@ branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
 [ -z "$branch" ] && branch="(no git)"
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then branch="${branch}*"; fi
 
-# Progress through spec §6, counted rather than claimed.
+# Progress through spec §6, counted rather than claimed. Counted by base class
+# rather than by directory: rules/actions/ also holds shared machinery that is
+# not a `TurnAction` (see .claude/hooks/session-start.sh).
 if [ -d rules/actions ]; then
-	n="$(find rules/actions -name '*.gd' 2>/dev/null | wc -l | tr -d ' ')"
+	n="$(grep -rl '^extends TurnAction' rules/actions --include='*.gd' 2>/dev/null | wc -l | tr -d ' ')"
 	actions=" | ${n} action$([ "$n" = "1" ] || echo s)"
 else
 	actions=""

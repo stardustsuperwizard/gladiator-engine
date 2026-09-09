@@ -30,13 +30,19 @@ echo "Recent commits:"
 git log --oneline -3 2>/dev/null | sed 's/^/  /'
 
 # --- What is actually built -------------------------------------------------
-# `TurnAction` subclasses are the unit of progress through spec §6, so the list
-# of files in rules/actions/ is the most honest one-line answer to "where is
-# this project". Derived, so it cannot disagree with the tree.
+# `TurnAction` subclasses are the unit of progress through spec §6, so listing
+# them is the most honest one-line answer to "where is this project". Derived,
+# so it cannot disagree with the tree.
+#
+# Keyed on `extends TurnAction`, NOT on living in rules/actions/. That
+# directory also holds shared machinery -- `ChargeLockout` is a `RefCounted`
+# legality predicate, not an action -- and counting by directory reported it
+# as a fifth action the day it landed. The base class is the actual claim.
 if [ -d rules/actions ]; then
-	actions="$(find rules/actions -name '*.gd' -exec basename {} .gd \; 2>/dev/null | sort | tr '\n' ' ')"
+	actions="$(grep -rl '^extends TurnAction' rules/actions --include='*.gd' 2>/dev/null \
+		| xargs -r -n1 basename 2>/dev/null | sed 's/\.gd$//' | sort | tr '\n' ' ')"
 	echo ""
-	echo "Actions built (rules/actions/): ${actions:-none}"
+	echo "Actions built (TurnAction subclasses): ${actions:-none}"
 fi
 
 # The three named in AGENTS.md as the next work, in its order.
