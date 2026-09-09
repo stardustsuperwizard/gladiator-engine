@@ -100,7 +100,11 @@ static func _build_state() -> GameState:
 ## Records a fighter both ways the engine tracks one: an opaque payload in
 ## `GameState` and an occupant on the board.
 static func _place(
-	state: GameState, fighter_id: String, owner_id: String, coord: Vector3i, template: FighterTemplate
+	state: GameState,
+	fighter_id: String,
+	owner_id: String,
+	coord: Vector3i,
+	template: FighterTemplate
 ) -> void:
 	var fighter := Fighter.new(fighter_id, template, owner_id, coord)
 	state.add_fighter(fighter_id, fighter.to_dict())
@@ -116,7 +120,9 @@ static func _flag(state: GameState, fighter_id: String, template: FighterTemplat
 	state.update_fighter(fighter_id, fighter.to_dict())
 
 
-static func _stored_fighter(state: GameState, fighter_id: String, template: FighterTemplate) -> Fighter:
+static func _stored_fighter(
+	state: GameState, fighter_id: String, template: FighterTemplate
+) -> Fighter:
 	return Fighter.from_dict(state.fighter(fighter_id), template)
 
 
@@ -155,7 +161,9 @@ static func _build_scenario(actor_charged: bool, friendly_mode: String) -> GameS
 	return state
 
 
-static func _resolve_move(state: GameState, destination: Vector3i, template: FighterTemplate) -> TurnResult:
+static func _resolve_move(
+	state: GameState, destination: Vector3i, template: FighterTemplate
+) -> TurnResult:
 	return MoveAction.new(ACTOR_ID, destination, template).resolve(state)
 
 
@@ -172,7 +180,9 @@ static func _resolve_guard(state: GameState, template: FighterTemplate) -> TurnR
 
 static func _test_predicate_false_for_null_actor() -> Array[String]:
 	var state := _build_state()
-	return _expect(not ChargeLockout.locks_out(state, null), "locks_out() must return false for a null actor")
+	return _expect(
+		not ChargeLockout.locks_out(state, null), "locks_out() must return false for a null actor"
+	)
 
 
 static func _test_predicate_false_for_unflagged_actor() -> Array[String]:
@@ -312,7 +322,10 @@ static func _assert_all_three_refused(friendly_mode: String, label: String) -> A
 	var attack_result := _resolve_attack(attack_state, template)
 	violations.append_array(
 		_expect(
-			not attack_result.success and attack_result.reason == AttackAction.FAILURE_CHARGE_LOCKOUT,
+			(
+				not attack_result.success
+				and attack_result.reason == AttackAction.FAILURE_CHARGE_LOCKOUT
+			),
 			"%s: a locked-out Attack must be refused with FAILURE_CHARGE_LOCKOUT" % label
 		)
 	)
@@ -368,7 +381,8 @@ static func _assert_all_three_allowed(
 	var move_result := _resolve_move(move_state, MOVE_DEST, template)
 	violations.append_array(
 		_expect(
-			move_result.success, "%s: Move must resolve, got refusal %s" % [label, move_result.reason]
+			move_result.success,
+			"%s: Move must resolve, got refusal %s" % [label, move_result.reason]
 		)
 	)
 
@@ -385,7 +399,8 @@ static func _assert_all_three_allowed(
 	var guard_result := _resolve_guard(guard_state, template)
 	violations.append_array(
 		_expect(
-			guard_result.success, "%s: Guard must resolve, got refusal %s" % [label, guard_result.reason]
+			guard_result.success,
+			"%s: Guard must resolve, got refusal %s" % [label, guard_result.reason]
 		)
 	)
 
@@ -417,7 +432,9 @@ static func _test_move_consult_order_before_destination_is_origin() -> Array[Str
 static func _test_attack_consult_order_before_targeting_refusal() -> Array[String]:
 	var template := _template()
 	var state := _build_scenario(true, "unflagged")
-	var result := AttackAction.new(ACTOR_ID, FRIENDLY_ID, template, template, _profile()).resolve(state)
+	var result := AttackAction.new(ACTOR_ID, FRIENDLY_ID, template, template, _profile()).resolve(
+		state
+	)
 	return _expect(
 		result.reason == AttackAction.FAILURE_CHARGE_LOCKOUT,
 		(
