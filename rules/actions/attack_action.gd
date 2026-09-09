@@ -81,7 +81,14 @@
 ## from `state.rng` -- the generator's position after an attack is pinned by
 ## the tests above, and a push must not shift it. And it sets no status flag
 ## at all: spec §6's `"moved"` flag belongs to a fighter's own chosen move, not
-## a shove it did not choose, and no `"moved"` constant exists yet regardless.
+## a shove it did not choose. `MoveAction.FLAG_MOVED` exists, and this class
+## still sets no flag of its own for a push.
+##
+## **Guard's two effects, spec §6 and §7.3.** A guarded target -- one holding
+## `GuardAction.FLAG_GUARDED` -- subtracts `guard_modifier` from the save
+## target, per `_guard_bonus()`, and is immune to the push above on a `HIT` or
+## a `DRAWN` alike. Guard blocks the push and nothing else: it does not reduce
+## damage, negate a hit, or touch the attacker's own pool.
 ##
 ## Adding this action required no edit to `ActionRunner` and none to
 ## `Authority`: generality comes from subclassing `resolve()`.
@@ -338,7 +345,7 @@ func _resolve_attack(state: GameState, attacker: Fighter, target: Fighter) -> vo
 	)
 
 	_attack_target = _resolved_attack_target(attacker, target)
-	_save_target = _resolved_save_target()
+	_save_target = _resolved_save_target(target)
 
 	var attack_roll := DicePool.roll_dice(attacker.attack(), _combat_profile.die_sides, state.rng)
 	var save_roll := DicePool.roll_dice(target.save(), _combat_profile.die_sides, state.rng)
@@ -351,7 +358,8 @@ func _resolve_attack(state: GameState, attacker: Fighter, target: Fighter) -> vo
 		_apply_hit(state, attacker, target)
 
 	var hit_or_drawn := _outcome == DicePool.Outcome.HIT or _outcome == DicePool.Outcome.DRAWN
-	if _push_back and hit_or_drawn and not _target_defeated:
+	var guarded := target.has_status_flag(GuardAction.FLAG_GUARDED)
+	if _push_back and hit_or_drawn and not _target_defeated and not guarded:
 		_apply_push(state, attacker, target)
 
 
@@ -373,16 +381,29 @@ func _resolved_attack_target(attacker: Fighter, target: Fighter) -> int:
 
 ## Spec §7.3's save chart: the profile's `save_target`, less the *attacker's*
 ## flanking priced from the `save_*` modifiers -- larger magnitudes than the
-## attack chart's, and keyed on the other fighter -- clamped.
+## attack chart's, and keyed on the other fighter -- less spec §6's Guard
+## bonus when `target` holds `GuardAction.FLAG_GUARDED`, clamped.
 ##
-## `extra` is `0`. Spec §7.3's other save-chart row is Guard, whose
-## `guard_modifier` this action deliberately leaves unread: the `guarded` flag
-## has no writer until the Guard action exists.
-func _resolved_save_target() -> int:
+## `_guard_bonus()` is passed as `target_modifier()`'s signed `extra`, already
+## negative, because every §7.3 row is a bonus, mirroring how
+## `_resolved_attack_target()` passes `_engagement_bonus()`.
+func _resolved_save_target(target: Fighter) -> int:
 	var modifier := DicePool.target_modifier(
-		_save_bonus, _combat_profile.save_flank_modifier, _combat_profile.save_surround_modifier, 0
+		_save_bonus,
+		_combat_profile.save_flank_modifier,
+		_combat_profile.save_surround_modifier,
+		_guard_bonus(target)
 	)
 	return _combat_profile.clamped_target(_combat_profile.save_target, modifier)
+
+
+## `-guard_modifier` when the target holds spec §6's guarded flag, `0`
+## otherwise. Negative because every §7.3 row is a bonus, and the profile
+## stores the magnitude positive.
+func _guard_bonus(target: Fighter) -> int:
+	if target.has_status_flag(GuardAction.FLAG_GUARDED):
+		return -_combat_profile.guard_modifier
+	return 0
 
 
 ## `-engagement_modifier` when the attacker stands at or within
