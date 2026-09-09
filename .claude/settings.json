@@ -1,3 +1,53 @@
 {
-  "fallbackModel": ["claude-opus-5", "claude-opus-4-8"]
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "fallbackModel": ["claude-opus-5", "claude-opus-4-8"],
+  "statusLine": {
+    "type": "command",
+    "command": "bash .claude/statusline.sh"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(.github/scripts/validate-godot.sh:*)",
+      "Bash(.github/scripts/test-workflow-logic.sh:*)",
+      "Bash(.github/scripts/test-issue-dependencies.sh:*)",
+      "Bash(gdlint:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/session-start.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/guard-rules-boundary.sh",
+            "if": "Bash(git commit:*)",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
 }

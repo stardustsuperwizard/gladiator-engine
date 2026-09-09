@@ -200,12 +200,24 @@ API credits* in `docs/AGENT_WORKFLOW.md`. The Copilot-vendor path
 
 ## Path-scoped instructions
 
-Copilot picks these up automatically via `applyTo:` frontmatter; Claude Code
-does not, so check manually before editing:
+One contract per directory, reached by two different mechanisms:
 
-| Directory | Also read |
-| --- | --- |
-| `rules/**` | `.github/instructions/rules.instructions.md` |
+| Directory | Contract | Copilot loads it via | Claude Code loads it via |
+| --- | --- | --- | --- |
+| `rules/**` | `.github/instructions/rules.instructions.md` | `applyTo:` frontmatter | `rules/CLAUDE.md` |
+
+`rules/CLAUDE.md` exists only to point at the contract. Both vendors get the
+same text; neither has its own copy to drift from. Adding a second scoped
+contract means adding both halves — the `applyTo:` file and a `CLAUDE.md` in
+the directory that points to it.
+
+> **Revised 2026-09-09.** This section previously said Claude Code does not
+> pick path-scoped instructions up and that a session had to "check manually
+> before editing." That was true and is no longer: a directory-scoped
+> `CLAUDE.md` is loaded when a session touches files in that directory, so the
+> manual step is gone. If a session ever finds itself editing `rules/` without
+> having seen the contract, the pointer file is missing or misnamed — the
+> instruction to check manually is the fallback, not the plan.
 
 ## Issue Dependencies
 
@@ -222,7 +234,12 @@ full contract is *Declaring Issue dependencies* in
 ## Recording decisions
 
 - Extraction decisions (extract / adapt / rebuild / reject) go in
-  `EXTRACTION_LOG.md`, one row, with the rationale.
+  `EXTRACTION_LOG.md`, one row, with the rationale. That log is scoped to
+  `mikeys_game_bones-rules-moba`, whose commit its header pins. Material from
+  any other outside repository goes in `THIRD_PARTY_NOTICES.md` instead, using
+  the same four verdicts, and carrying that source's licence notice — MIT and
+  most others require the notice to travel with the work, and reproducing it
+  costs nothing next to being wrong about what counts as substantial.
 - Findings about the source repo go in `AUDIT_NOTES.md`.
 - When a document is revised because it was **wrong** — not merely
   incomplete — say so in the document, dated, with what it previously claimed.

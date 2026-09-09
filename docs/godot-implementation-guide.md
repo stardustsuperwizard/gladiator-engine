@@ -7,6 +7,12 @@ mechanics, not an implementation. This document is where the Godot specifics
 live, so the spec stays portable and there is one place to look when the
 question is "how does this work in Godot."
 
+It is written against Godot 4 as a whole and does not date. The perishable
+half — *which APIs did the engine change recently enough that a model will
+confidently suggest the old one* — lives in `docs/engine-reference/godot/`,
+pinned to the exact version CI runs. Check there before using an API from
+memory; this guide will not contradict a stale one.
+
 ---
 
 ## 1. Keep the rules module out of the scene tree
