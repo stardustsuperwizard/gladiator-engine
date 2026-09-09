@@ -232,10 +232,22 @@ game.
 > unchanged: a step sitting directly inside a turn is Magic's own usage and
 > reads correctly to both traditions.
 >
-> This is a naming change and not a rules change. Nothing about what happens,
-> in what order, or who may act is different. The old names came in from the
-> source game and were never chosen against this hierarchy — see
-> `EXTRACTION_LOG.md` #52.
+> The renaming is not a rules change: nothing about what happens, in what
+> order, or who may act is different. The old names came in from the source
+> game and were never chosen against this hierarchy — see `EXTRACTION_LOG.md`
+> #52.
+>
+> **§5.3's closing paragraph is a rules addition, and is not part of the
+> renaming.** The old text said "Turn = Action Step + Power Step", which
+> implies a Turn contains both but never said when a Turn *ends*, and nothing
+> anywhere said what a count of Turns counts. §5.3 now settles both: a Turn
+> ends when its Power Step ends, and anything counting Turns counts completed
+> Turns rather than resolved actions. With no card system the Power Step ends
+> immediately, so the two readings are indistinguishable today and diverge the
+> moment cards exist — an implementation that counted resolved actions would
+> pass every test now and be silently wrong then. Settled here, in the
+> document, rather than left to whichever resolver reaches it first. Owner
+> decision, 2026-09-09.
 
 ### 5.1 The layers
 
