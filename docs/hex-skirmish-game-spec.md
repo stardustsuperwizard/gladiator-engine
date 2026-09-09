@@ -241,7 +241,12 @@ One per Action Step, targeting one friendly fighter:
 
 **Lockout rule:** a fighter with a "charged" flag can't Move/Attack/Guard again until all friendly fighters still on the board share that flag (a soft round-level restriction, not a permanent one).
 
-> **Revised 2026-09-09.** This section previously did not state whether a defeated fighter counted toward the "all friendly fighters" condition. A defeated fighter can never gain the "charged" flag, so counting it would turn a soft round-level restriction into a permanent penalty for having lost a fighter — which §6's own definition rules out. The release condition applies only to friendly fighters still on the board.
+> **Revised 2026-09-09.** This section previously did not state whether a
+> defeated fighter counted toward the "all friendly fighters" condition. A
+> defeated fighter can never gain the "charged" flag, so counting it would turn
+> a soft round-level restriction into a permanent penalty for having lost a
+> fighter — which §6's own definition rules out. The release condition applies
+> only to friendly fighters still on the board.
 
 **Charge carries no attack-type restriction, and never did.** Any fighter may
 Charge, including one with a long Range. This is worth stating because the
