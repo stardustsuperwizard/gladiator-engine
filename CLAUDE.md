@@ -62,8 +62,15 @@ costs nothing and stays correct if the branch is ever renamed.
 ## Before the control plane works
 
 Every agent workflow triggers on a label name, and a fresh clone has none of
-them. Run `.github/scripts/bootstrap-labels.sh` once, and set the
-`ANTHROPIC_API_KEY` repository secret, or nothing fires and nothing says why.
+them. Run `.github/scripts/bootstrap-labels.sh` once, or nothing fires and
+nothing says why.
+
+Then set the secret for whichever vendor you intend to label with:
+`ANTHROPIC_API_KEY` for `agent:*:anthropic` (Anthropic Platform API credit),
+`CLAUDE_CODE_OAUTH_TOKEN` for `agent:*:claude` (a Claude Pro/Max subscription,
+minted with `claude setup-token`). `agent:*:copilot` needs neither. A vendor
+whose secret is missing fails before the model loop and says which secret it
+wanted.
 
 ## Current state
 

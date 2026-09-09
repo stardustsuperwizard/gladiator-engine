@@ -191,12 +191,19 @@ The control plane is label-driven. **Every trigger is keyed on a label name,
 and a fresh clone has none of them** — run `.github/scripts/bootstrap-labels.sh`
 once before expecting any workflow to fire.
 
-Claude-vendor sessions bill to the `ANTHROPIC_API_KEY` secret, which is API
-credit and **not** covered by a Claude Pro or Max subscription. Whether a
-subscription could pay for them instead is an open question with a written-up
-answer — see *Open: paying for Claude sessions with a subscription instead of
-API credits* in `docs/AGENT_WORKFLOW.md`. The Copilot-vendor path
-(`agent:*:copilot`) needs no Anthropic billing at all.
+**Three vendors, and the third segment of a label picks which pays.**
+`agent:{role}:copilot` runs the Copilot CLI on a Copilot licence and needs no
+Anthropic billing at all. `agent:{role}:anthropic` and `agent:{role}:claude`
+both run Claude Code, on the same models with the same tools, and differ only
+in the credential: `anthropic` spends the `ANTHROPIC_API_KEY` secret, which is
+Anthropic Platform API credit; `claude` spends the `CLAUDE_CODE_OAUTH_TOKEN`
+secret, which is a Claude Pro or Max subscription.
+
+Pick between the last two on which budget should absorb the run, never on what
+the run can do — they are the same session. See *One workflow per role, three
+vendors* in `docs/AGENT_WORKFLOW.md`, and *Resolved: paying for Claude sessions
+with a subscription instead of API credits* for why it is two vendors rather
+than one vendor and a flag.
 
 ## Path-scoped instructions
 

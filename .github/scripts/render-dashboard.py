@@ -448,7 +448,8 @@ def render(model: dict, repo: str | None) -> str:
     out += ["", f"## Awaiting planning ({len(waiting)})", ""]
     if waiting:
         out += [
-            "Add **`agent:planner:copilot`** or **`agent:planner:claude`** to "
+            "Add **`agent:planner:copilot`**, **`agent:planner:anthropic`** "
+            "or **`agent:planner:claude`** to "
             "one of these when it is genuinely ready "
             "to be decomposed — not when it was filed.",
             "",

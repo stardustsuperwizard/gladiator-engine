@@ -47,13 +47,19 @@ on:
 
       vendor:
         description: >
-          Which company answers. A labelled run takes this from the label's
-          third segment instead; this input exists because workflow_dispatch
-          has no label to read.
+          Who answers and who pays. A labelled run takes this from the
+          label's third segment instead; this input exists because
+          workflow_dispatch has no label to read.
+
+          `anthropic` and `claude` are the same Claude Code CLI on the same
+          models. They differ only in the credential and therefore the bill:
+          `anthropic` spends the Anthropic Platform API key, `claude` spends
+          a Claude subscription. Pick on billing, not on capability.
         required: false
         type: choice
         options:
           - copilot
+          - anthropic
           - claude
         default: copilot
 
@@ -86,7 +92,8 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.action == 'labeled' &&
        (github.event.label.name == 'agent:fixer:copilot' ||
-        github.event.label.name == 'agent:fixer:claude'))
+        github.event.label.name == 'agent:fixer:claude' ||
+        github.event.label.name == 'agent:fixer:anthropic'))
 
     env:
       GH_TOKEN: ${{ github.token }}
@@ -186,9 +193,10 @@ jobs:
           # workflow_dispatch has no label, and the legacy label has no vendor
           # segment. Both mean copilot, which is what they have always meant.
           case "$LABEL" in
-            agent:fixer:claude)  VENDOR=claude ;;
-            agent:fixer:copilot) VENDOR=copilot ;;
-            *)                  VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
+            agent:fixer:claude)    VENDOR=claude ;;
+            agent:fixer:anthropic) VENDOR=anthropic ;;
+            agent:fixer:copilot)   VENDOR=copilot ;;
+            *)                     VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
           esac
 
           echo "vendor=$VENDOR" >> "$GITHUB_OUTPUT"
@@ -435,14 +443,15 @@ jobs:
           set -euo pipefail
 
           # Resolved first, because the pinned branch below reads both. The
-          # operator's list is per-vendor: pinning the Copilot list says
-          # nothing about what Claude should run.
+          # operator's list is per-CLI: pinning the Copilot list says nothing
+          # about what Claude Code should run, and pinning the Claude Code
+          # list binds `anthropic` and `claude` alike.
           case "$VENDOR" in
             copilot)
               FIXER_MODELS="$COPILOT_FIXER_MODELS"
               FIXER_MODELS_PINNED="$COPILOT_FIXER_PINNED"
               ;;
-            claude)
+            anthropic|claude)
               FIXER_MODELS="$CLAUDE_FIXER_MODELS"
               FIXER_MODELS_PINNED="$CLAUDE_FIXER_PINNED"
               ;;
@@ -578,14 +587,29 @@ jobs:
           # configured list untouched -- it carries intermediate ids (such as
           # claude-sonnet-4.5) that a tier list does not, and dropping them
           # here would narrow the fallback walk for no reason.
-          # A tier names a capability level; each vendor spells it its own
-          # way. Copilot CLI: `claude-haiku-4.5`. Claude Code: the same model
-          # is `claude-haiku-4-5`. Resolving the spelling here keeps the
-          # escalation logic above vendor-blind, and keeps a `:claude` run
+          # A tier names a capability level; each CLI spells it its own way.
+          # Copilot CLI: `claude-haiku-4.5`. Claude Code: the same model is
+          # `claude-haiku-4-5`. Resolving the spelling here keeps the
+          # escalation logic above vendor-blind, and keeps a Claude Code run
           # from walking a list of Copilot ids and then reporting that every
           # model was unavailable.
+          #
+          # Keyed on the CLI, not the vendor. `anthropic` and `claude` are
+          # one CLI billed two ways, so a per-vendor key would mean three
+          # rows per tier where two carry identical ids -- a duplicate that
+          # stays correct only for as long as everyone remembers to update
+          # both halves of it.
+          case "$VENDOR" in
+            copilot)          CLI=copilot ;;
+            anthropic|claude) CLI=claude ;;
+            *)
+              echo "::error::Unknown vendor '$VENDOR'."
+              exit 1
+              ;;
+          esac
+
           tier_models() {
-            case "$1:$VENDOR" in
+            case "$1:$CLI" in
               haiku:copilot)  echo "claude-haiku-4.5,claude-sonnet-5,claude-opus-5" ;;
               haiku:claude)   echo "claude-haiku-4-5,claude-sonnet-5,claude-opus-5" ;;
               sonnet:copilot) echo "claude-sonnet-5,claude-opus-5" ;;
@@ -648,6 +672,10 @@ jobs:
         with:
           vendor: ${{ steps.route.outputs.vendor }}
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `claude` vendor's credential, as `api-key` is the
+          # `anthropic` vendor's. Both are passed on every call and
+          # exactly one is used; which, is the vendor's whole meaning.
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           max-turns: ${{ env.FIXER_MAX_TURNS }}
           prompt-file: ${{ steps.build.outputs.prompt-file }}
           models: ${{ steps.tier.outputs.models }}

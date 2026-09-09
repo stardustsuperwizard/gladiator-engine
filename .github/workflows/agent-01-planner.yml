@@ -22,13 +22,19 @@ on:
 
       vendor:
         description: >
-          Which company answers. A labelled run takes this from the label's
-          third segment instead; this input exists because workflow_dispatch
-          has no label to read.
+          Who answers and who pays. A labelled run takes this from the
+          label's third segment instead; this input exists because
+          workflow_dispatch has no label to read.
+
+          `anthropic` and `claude` are the same Claude Code CLI on the same
+          models. They differ only in the credential and therefore the bill:
+          `anthropic` spends the Anthropic Platform API key, `claude` spends
+          a Claude subscription. Pick on billing, not on capability.
         required: false
         type: choice
         options:
           - copilot
+          - anthropic
           - claude
         default: copilot
 
@@ -51,7 +57,8 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.label.name == 'agent:planner:copilot' ||
-      github.event.label.name == 'agent:planner:claude'
+      github.event.label.name == 'agent:planner:claude' ||
+      github.event.label.name == 'agent:planner:anthropic'
 
     env:
       GH_TOKEN: ${{ github.token }}
@@ -738,11 +745,12 @@ jobs:
                   f" {len(inventory)} tracked files inventoried.\n"
               )
 
-      # The vendor comes from the label. `agent:planner:copilot` and
-      # `agent:planner:claude` name the same role and differ only in which
-      # company answers, so the routing below is the whole difference between
-      # them -- everything downstream reads one outcome file and one text file
-      # and never learns which CLI produced them.
+      # The vendor comes from the label. `agent:planner:copilot`,
+      # `agent:planner:anthropic` and `agent:planner:claude` name the same
+      # role and differ only in who answers and who is billed, so the routing
+      # below is the whole difference between them -- everything downstream
+      # reads one outcome file and one text file and never learns which CLI
+      # produced them, let alone which account paid.
       - name: Route Vendor
         id: route
         if: steps.duplicate_check.outputs.already_planned != 'true'
@@ -755,14 +763,19 @@ jobs:
 
           # workflow_dispatch has no label, so it takes the input.
           case "$LABEL" in
-            agent:planner:claude)  VENDOR=claude ;;
-            agent:planner:copilot) VENDOR=copilot ;;
-            *)                     VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
+            agent:planner:claude)    VENDOR=claude ;;
+            agent:planner:anthropic) VENDOR=anthropic ;;
+            agent:planner:copilot)   VENDOR=copilot ;;
+            *)                       VENDOR="${DISPATCH_VENDOR:-copilot}" ;;
           esac
 
+          # `anthropic` and `claude` share this list. They are the same CLI
+          # on the same ids -- a second variable would be a second name for
+          # one correct answer, and would drift the first time only one of
+          # them was updated.
           case "$VENDOR" in
-            copilot) MODELS="$COPILOT_PLANNER_MODELS" ;;
-            claude)  MODELS="$CLAUDE_PLANNER_MODELS" ;;
+            copilot)          MODELS="$COPILOT_PLANNER_MODELS" ;;
+            anthropic|claude) MODELS="$CLAUDE_PLANNER_MODELS" ;;
             *)
               echo "::error::Unknown vendor '$VENDOR'."
               exit 1
@@ -788,6 +801,10 @@ jobs:
           # when this workflow ran the CLI itself.
           capability: read-only
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `claude` vendor's credential, as `api-key` is the
+          # `anthropic` vendor's. Both are passed on every call and
+          # exactly one is used; which, is the vendor's whole meaning.
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           step-label: "Planning"
 
 

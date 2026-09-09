@@ -80,9 +80,13 @@ env:
   # findings, not open-ended judgment calls -- the same "Haiku first" shape
   # as IMPLEMENTER_MODELS in agent-02-implement.yml. Overridable via the
   # LINT_FIXER_MODELS repository variable (comma-separated).
+  # The test asks which CLI, not which vendor, and so must name both
+  # Claude Code vendors. An equality check against `claude` alone would hand
+  # `anthropic` the dotted Copilot ids, and every candidate would then fail
+  # as unavailable -- a wrong answer that reads like an entitlement problem.
   LINT_FIXER_MODELS: >-
     ${{ vars.LINT_FIXER_MODELS
-    || (vars.LINT_FIXER_VENDOR == 'claude'
+    || ((vars.LINT_FIXER_VENDOR == 'claude' || vars.LINT_FIXER_VENDOR == 'anthropic')
         && 'claude-haiku-4-5,claude-sonnet-5'
         || 'claude-haiku-4.5,claude-sonnet-5') }}
 
@@ -96,7 +100,12 @@ env:
   # by `gdlint` rather than by anyone's judgment, and a bad answer costs one
   # re-run rather than a wrong verdict on someone's pull request.
   #
-  # NOTE the model ids differ per vendor and are NOT interchangeable. Copilot
+  # One of `copilot`, `anthropic` or `claude`. The last two are the same
+  # Claude Code CLI on the same models, differing only in which credential
+  # authenticates and which account is billed -- `anthropic` spends the
+  # Anthropic Platform API key, `claude` spends a Claude subscription.
+  #
+  # NOTE the model ids differ per CLI and are NOT interchangeable. Copilot
   # CLI spells Haiku 4.5 `claude-haiku-4.5`; Claude Code spells the same model
   # `claude-haiku-4-5`. Setting LINT_FIXER_VENDOR without also setting
   # LINT_FIXER_MODELS picks the right default list for you; setting both is
@@ -104,8 +113,8 @@ env:
   LINT_FIXER_VENDOR: ${{ vars.LINT_FIXER_VENDOR || 'copilot' }}
 
   # The Copilot CLI rejects anything below 30 -- a floor, not a tuning
-  # choice. A single-file lint fix doesn't need more. Ignored when the vendor
-  # is claude, which is bounded by turns rather than credits.
+  # choice. A single-file lint fix doesn't need more. Ignored on the Claude
+  # Code vendors, which are bounded by turns rather than credits.
   LINT_FIXER_MAX_AI_CREDITS: "30"
 
   # Claude's equivalent bound. A single-file lint fix is a handful of edits;
@@ -442,12 +451,16 @@ jobs:
           models: ${{ env.LINT_FIXER_MODELS }}
           max-ai-credits: ${{ env.LINT_FIXER_MAX_AI_CREDITS }}
           max-turns: ${{ env.LINT_FIXER_MAX_TURNS }}
-          # Only read when LINT_FIXER_VENDOR is claude, and empty is fine
-          # otherwise. Passed unconditionally because a composite action
+          # Only read when LINT_FIXER_VENDOR is anthropic, and empty is
+          # fine otherwise. Passed unconditionally because a composite action
           # cannot read `secrets` itself: a key set on the repository but not
           # threaded through here never reaches the process, which is a
           # failure mode with no symptom until the vendor is switched.
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `claude` vendor's credential, as `api-key` is the
+          # `anthropic` vendor's. Both are passed on every call and
+          # exactly one is used; which, is the vendor's whole meaning.
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           step-label: "Auto-fixing lint"
 
       # The session was told not to touch anything outside the targeted

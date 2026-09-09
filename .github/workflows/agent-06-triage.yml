@@ -80,14 +80,20 @@ jobs:
       # Not one of the four labelled roles -- there is no
       # `agent:{role}:{vendor}` label on a merge event -- so the vendor is a
       # repository variable instead, the same shape gdscript-lint.yml uses
-      # for the same reason. NOTE the ids differ per vendor and are NOT
-      # interchangeable: Copilot CLI spells Haiku 4.5 `claude-haiku-4.5`;
-      # Claude Code spells the same model `claude-haiku-4-5`.
+      # for the same reason. One of `copilot`, `anthropic` or `claude`.
+      # NOTE the ids differ per CLI and are NOT interchangeable: Copilot CLI
+      # spells Haiku 4.5 `claude-haiku-4.5`; Claude Code spells the same
+      # model `claude-haiku-4-5`.
       TRIAGE_VENDOR: ${{ vars.TRIAGE_VENDOR || 'copilot' }}
 
+      # The test below asks which CLI, not which vendor, and so must name
+      # both Claude Code vendors. An equality check against `claude` alone
+      # would hand `anthropic` the dotted Copilot ids, and every candidate
+      # would then fail as unavailable -- a wrong answer that reads like an
+      # entitlement problem.
       TRIAGE_MODELS: >-
         ${{ vars.TRIAGE_MODELS
-        || (vars.TRIAGE_VENDOR == 'claude'
+        || ((vars.TRIAGE_VENDOR == 'claude' || vars.TRIAGE_VENDOR == 'anthropic')
             && 'claude-haiku-4-5,claude-sonnet-5'
             || 'claude-haiku-4.5,claude-sonnet-5') }}
 
@@ -475,6 +481,10 @@ jobs:
           max-ai-credits: ${{ env.TRIAGE_MAX_AI_CREDITS }}
           max-turns: ${{ env.TRIAGE_MAX_TURNS }}
           api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The `claude` vendor's credential, as `api-key` is the
+          # `anthropic` vendor's. Both are passed on every call and
+          # exactly one is used; which, is the vendor's whole meaning.
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # This session never needs to touch the checkout -- everything it
           # answers from is already in the prompt. read-only is the
           # fail-safe default anyway, but it is also the honest description
