@@ -749,7 +749,9 @@ static func _test_defeat_awards_the_flat_point_to_the_attackers_owner() -> Array
 	var result := action.resolve(state)
 
 	violations.append_array(_expect(result.success, "a defeating attack must resolve successfully"))
-	violations.append_array(_expect(action.target_defeated(), "this scenario must defeat the target"))
+	violations.append_array(
+		_expect(action.target_defeated(), "this scenario must defeat the target")
+	)
 	violations.append_array(
 		_expect(
 			state.player("p1").score == profile.defeat_award,
@@ -879,7 +881,9 @@ static func _test_defeat_award_survives_serialization() -> Array[String]:
 
 	var action := AttackAction.new("a1", "b1", attacker_template, target_template, profile)
 	action.resolve(state)
-	violations.append_array(_expect(action.target_defeated(), "this scenario must defeat the target"))
+	violations.append_array(
+		_expect(action.target_defeated(), "this scenario must defeat the target")
+	)
 
 	var restored := GameState.from_dict(state.to_dict())
 	violations.append_array(_expect(restored != null, "the resolved state must round-trip"))
@@ -913,7 +917,9 @@ static func _test_defeat_award_draws_nothing_from_state_rng() -> Array[String]:
 
 	var action := AttackAction.new("a1", "b1", attacker_template, target_template, profile)
 	action.resolve(state)
-	violations.append_array(_expect(action.target_defeated(), "this scenario must defeat the target"))
+	violations.append_array(
+		_expect(action.target_defeated(), "this scenario must defeat the target")
+	)
 
 	var reference := DeterministicRng.new(13)
 	for _i in range(attacker_template.attack):
