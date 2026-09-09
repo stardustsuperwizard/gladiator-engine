@@ -15,8 +15,10 @@ pointer to it, not a copy.
 | --- | --- |
 | Game rules and mechanics | `docs/hex-skirmish-game-spec.md` |
 | Anything in `rules/`, or Godot specifics anywhere | `docs/godot-implementation-guide.md` |
+| Reaching for a Godot API you have not seen in this repo | `docs/engine-reference/godot/` |
 | Build order, scope, what to build next | `docs/moba-to-hex-skirmish-extraction-plan.md` §5–§7 |
 | Anything sourced from `mikeys_game_bones-rules-moba` | `AUDIT_NOTES.md`, then log the decision in `EXTRACTION_LOG.md` |
+| Anything sourced from any *other* outside repository | `THIRD_PARTY_NOTICES.md` — log the decision and carry its licence notice |
 | Anything in `rules/` | `.github/instructions/rules.instructions.md` |
 | `.github/workflows/`, `.github/agents/`, `.github/actions/` | `docs/AGENT_WORKFLOW.md` |
 | Adding, splitting, or removing an agent role | `docs/AGENT_ROLE_DESIGN.md` |

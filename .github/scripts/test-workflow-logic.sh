@@ -22,6 +22,9 @@
 #           already done.
 #   Part 5  #97/#98 -- scratch written to the repository root got swept into
 #           an implementation commit, and then broke that branch's retry.
+#   Part 6  A role is written down on three surfaces with nothing linking
+#           them; one that goes missing on a surface fails silently, the way
+#           an unbootstrapped label does.
 #
 # Like `test-issue-dependencies.sh`, this needs nothing but python3: no
 # network, no credentials, no GitHub CLI, and it never touches a real
@@ -705,6 +708,145 @@ sys.exit(1 if (offenders or mixed) else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 6: the agent roles stay in parity across their three surfaces.
+#
+# A role is written down three times -- a cloud profile in `.github/agents/`,
+# a local counterpart in `.claude/agents/`, and a slash command in
+# `.claude/commands/` that invokes it. Nothing links them but discipline, and
+# a role that exists on one surface and not another fails the way a missing
+# label does: the trigger simply never fires, and nothing says why.
+#
+# `AGENTS.md` promises the two agent directories are counterparts, and
+# `AGENT_ROLE_DESIGN.md` sets the test a new role must pass. Neither is
+# checkable prose. This part makes the pairing itself checkable.
+#
+# The reviewer's tool list is checked separately and by name: "read-only
+# against code -- never edits files" is an architectural claim the file makes
+# about itself, and the only thing enforcing it is the absence of two strings.
+# ---------------------------------------------------------------------------
+
+part6 () {
+  python3 - <<'PY'
+import pathlib
+import re
+import sys
+
+failures = []
+
+
+def frontmatter(path):
+    """Return the YAML frontmatter block of a markdown file as raw lines.
+
+    Deliberately not a YAML parse: pyyaml is not guaranteed on a bare runner,
+    and every field checked here is a flat `key: value` on one line.
+    """
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return None
+    return text[4:end].splitlines()
+
+
+def field(lines, key):
+    for line in lines or []:
+        m = re.match(rf"{re.escape(key)}:\s*(.*)$", line)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def check_frontmatter(path, required):
+    lines = frontmatter(path)
+    if lines is None:
+        failures.append(f"{path}: no YAML frontmatter block")
+        return None
+    for key in required:
+        if field(lines, key) in (None, ""):
+            failures.append(f"{path}: frontmatter missing `{key}:`")
+    return lines
+
+
+# --- The cloud profiles ----------------------------------------------------
+cloud = {}
+for path in sorted(pathlib.Path(".github/agents").glob("*.agent.md")):
+    lines = check_frontmatter(path, ["name", "description", "model", "tools"])
+    name = field(lines, "name")
+    if not name:
+        continue
+    # `NN-<role>.agent.md`. The number tracks the workflow, not the role, so
+    # gaps in it are fine; the suffix after it must be the declared name.
+    stem = path.name[: -len(".agent.md")]
+    slug = stem.split("-", 1)[1] if "-" in stem else stem
+    if slug != name:
+        failures.append(f"{path}: filename says `{slug}`, frontmatter says `{name}`")
+    if name in cloud:
+        failures.append(f"{path}: duplicate role name `{name}` (also {cloud[name]})")
+    cloud[name] = path
+
+# --- The local counterparts ------------------------------------------------
+local = {}
+for path in sorted(pathlib.Path(".claude/agents").glob("*.md")):
+    lines = check_frontmatter(path, ["name", "description", "tools", "model"])
+    name = field(lines, "name")
+    if not name:
+        continue
+    if path.stem != name:
+        failures.append(f"{path}: filename says `{path.stem}`, frontmatter says `{name}`")
+    local[name] = path
+
+# --- Parity ----------------------------------------------------------------
+for name in sorted(set(cloud) - set(local)):
+    failures.append(
+        f"role `{name}` has a cloud profile ({cloud[name]}) but no"
+        f" local counterpart at .claude/agents/{name}.md"
+    )
+for name in sorted(set(local) - set(cloud)):
+    failures.append(
+        f"role `{name}` has a local agent ({local[name]}) but no"
+        f" cloud profile in .github/agents/"
+    )
+
+# --- Every role is reachable from a slash command --------------------------
+for name in sorted(local):
+    command = pathlib.Path(f".claude/commands/{name}.md")
+    if not command.exists():
+        failures.append(f"role `{name}` has no slash command at {command}")
+
+for path in sorted(pathlib.Path(".claude/commands").glob("*.md")):
+    check_frontmatter(path, ["description", "argument-hint"])
+
+# --- The reviewer holds no writing tool ------------------------------------
+# Stated in .claude/agents/reviewer.md, in AGENTS.md's role split, and in
+# AGENT_ROLE_DESIGN.md's tool-boundary test. Enforced by nothing else.
+reviewer = local.get("reviewer")
+if reviewer is None:
+    failures.append("no reviewer role found -- the read-only check cannot run")
+else:
+    tools = field(frontmatter(reviewer), "tools") or ""
+    granted = {t.strip() for t in tools.split(",")}
+    for forbidden in ("Edit", "Write", "NotebookEdit"):
+        if forbidden in granted:
+            failures.append(
+                f"{reviewer}: reviewer has the `{forbidden}` tool."
+                f" The role is read-only against code by design."
+            )
+
+if failures:
+    for line in failures:
+        print(f"  FAIL — {line}", file=sys.stderr)
+    sys.exit(1)
+
+print(
+    f"  ok   — {len(cloud)} role(s) paired across .github/agents,"
+    f" .claude/agents and .claude/commands; reviewer holds no write tool"
+)
+sys.exit(0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -713,6 +855,7 @@ run_part "Part 2: triage finding parser (#115)" part2
 run_part "Part 3: label description cap (#65)" part3
 run_part "Part 4: marker reads are classified (#69)" part4
 run_part "Part 5: scratch stays out of the tree (#97/#98)" part5
+run_part "Part 6: agent roles stay in parity" part6
 
 echo
 if [ "$failures" -eq 0 ]; then

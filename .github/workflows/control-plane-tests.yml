@@ -14,6 +14,9 @@ name: Control Plane Tests
 #   test-workflow-logic.sh       logic embedded in workflow YAML -- the
 #                                `shell: python` steps and `--jq` programs
 #                                that no other test can reach (#68).
+#                                It also checks (Part 6) that the four agent
+#                                roles stay paired across `.github/agents/`,
+#                                `.claude/agents/` and `.claude/commands/`.
 #   test-issue-dependencies.sh   the two `.github/scripts/` modules that read
 #                                Issue bodies and drive `gh`.
 #   actionlint                   workflow schema, expression syntax, and
@@ -28,11 +31,19 @@ on:
       - '.github/workflows/**'
       - '.github/actions/**'
       - '.github/scripts/**'
+      - '.github/agents/**'
+      - '.claude/agents/**'
+      - '.claude/commands/**'
 
   # Deliberately also on push to the default branch. The `paths` filter above
-  # means a pull request that changes nothing under `.github/` never runs this
-  # -- correct -- but it also means a merge queue or a direct push could land
-  # a control-plane change that no pull request check ever saw.
+  # means a pull request that changes nothing under the control plane never
+  # runs this -- correct -- but it also means a merge queue or a direct push
+  # could land a control-plane change that no pull request check ever saw.
+  #
+  # `.github/agents/`, `.claude/agents/` and `.claude/commands/` are in the
+  # filter because Part 6 reads all three. A role definition edited on one
+  # surface alone is exactly the change that breaks parity, so it is exactly
+  # the change that must trigger the check.
   push:
     branches:
       - main
@@ -40,6 +51,9 @@ on:
       - '.github/workflows/**'
       - '.github/actions/**'
       - '.github/scripts/**'
+      - '.github/agents/**'
+      - '.claude/agents/**'
+      - '.claude/commands/**'
 
   workflow_dispatch:
 

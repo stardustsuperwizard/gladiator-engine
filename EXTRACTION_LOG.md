@@ -6,6 +6,11 @@ gets a one-line rationale. Newest entries at the bottom.
 **Source repo:** `mikeys_game_bones-rules-moba` @ `ef29ad3` (2026-09-04),
 Godot 4.7. Findings behind these decisions are in `AUDIT_NOTES.md`.
 
+**This log covers that source and no other.** Material adapted from anywhere
+else is logged in `THIRD_PARTY_NOTICES.md`, with the licence it arrived under,
+using the same four verdicts. Keeping them apart is what lets this file pin one
+commit of one repository in its header.
+
 Verdicts: **extract** = copied near-verbatim · **adapt** = rewritten here from
 a source contract · **rebuild** = new work, source not usable · **reject** =
 deliberately not brought over.
