@@ -305,6 +305,48 @@ func to_dict() -> Dictionary:
 	}
 
 
+## Returns a copy of `payload` with every flag in `flags` removed from its
+## `"status_flags"` array, leaving every other key untouched and in place.
+##
+## Takes no template and builds no `Fighter`: this is the payload-shaped
+## operation spec §10 step 5 needs, for a caller that holds a stored payload and
+## no template to parse it over. It lives here rather than at that call site
+## because `"status_flags"` is this class's serialization contract, and a second
+## copy of that contract outside the class that owns it is the thing to avoid.
+##
+## A deep copy in, a deep copy out: `payload` itself is never mutated.
+##
+## **A payload with no `"status_flags"` key, or one whose value is not an
+## `Array`, comes back unchanged** -- the same safe direction `ChargeLockout`
+## takes with a payload it cannot parse. Nothing is repaired and no key is
+## added.
+##
+## **Entries that are not `String` are left alone** rather than dropped, so this
+## never quietly changes a payload's validity under `from_dict()`.
+##
+## **Key order is preserved.** `GameState.digest()` hashes
+## `JSON.stringify(to_dict())`, so a payload whose keys came back in a different
+## order would change the state's identity for no reason. The rebuild mutates a
+## duplicate of `payload` in place -- assigning to a key a `Dictionary` already
+## holds leaves that key where it is -- rather than constructing a fresh
+## dictionary from remembered keys.
+static func without_flags(payload: Dictionary, flags: Array[String]) -> Dictionary:
+	var out := payload.duplicate(true)
+
+	var flags_field: Variant = out.get("status_flags")
+	if typeof(flags_field) != TYPE_ARRAY:
+		return out
+
+	var kept: Array = []
+	for entry in flags_field:
+		if typeof(entry) == TYPE_STRING and entry in flags:
+			continue
+		kept.append(entry)
+
+	out["status_flags"] = kept
+	return out
+
+
 ## Rebuilds a `Fighter` from `to_dict()`'s shape over `fighter_template`.
 ##
 ## The template is an argument, never resolved from the data. `data`'s
