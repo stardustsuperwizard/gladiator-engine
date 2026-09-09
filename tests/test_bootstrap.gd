@@ -91,6 +91,7 @@ var _suites: Array[Dictionary] = [
 	# the headless run's output. See its own docstring.
 	{"name": "Charge Action Test", "run": ChargeActionTest.run},
 	{"name": "Charge Action Equivalence Test", "run": ChargeActionEquivalenceTest.run},
+	{"name": "End Segment Test", "run": EndSegmentTest.run},
 	{"name": "Determinism Test", "run": DeterminismTest.run},
 	{"name": "Fighter Template Test", "run": FighterTemplateTest.run},
 	{"name": "Status Flags Test", "run": StatusFlagsTest.run},
@@ -100,6 +101,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Authority Test", "run": AuthorityTest.run},
 	{"name": "Action Runner Test", "run": ActionRunnerTest.run},
 	{"name": "Power Step Gate Test", "run": PowerStepGateTest.run},
+	{"name": "End Segment Round Test", "run": EndSegmentRoundTest.run},
 	{"name": "Command Taxonomy Contract Test", "run": CommandTaxonomyContractTest.run},
 ]
 

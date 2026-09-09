@@ -364,6 +364,51 @@ static func from_dict(data: Dictionary, fighter_template: FighterTemplate) -> Fi
 	return fighter
 
 
+## Returns a copy of `payload` with every flag in `flags` removed from its
+## `"status_flags"` array, leaving every other key untouched and in place.
+##
+## Takes no template and builds no `Fighter`: this is the payload-shaped
+## operation spec §10 step 5 needs, for a caller that holds a stored payload
+## and no template to parse it over. It lives here, on the class that owns the
+## serialized shape, rather than in that caller -- reaching into
+## `"status_flags"` from outside this file would be a second copy of the
+## serialization contract.
+##
+## A deep copy in, a deep copy out: the argument is never mutated, exactly as
+## `GameState.fighter()` and `GameState.update_fighter()` already copy at their
+## own boundaries.
+##
+## **Nothing is repaired.** A payload with no `"status_flags"` key, or one
+## whose value is not an `Array`, comes back unchanged and gains no key -- the
+## same safe direction `ChargeLockout` takes with a payload it cannot parse.
+## An entry that is not a `String` is left alone rather than dropped, so this
+## never quietly changes whether a payload would survive `from_dict()`.
+##
+## **Key order is preserved.** `GameState.digest()` hashes
+## `JSON.stringify(to_dict())`, so a payload whose keys came back in a
+## different order would change the state's identity for no reason. The result
+## is a duplicate of the argument with one key reassigned in place, never a
+## fresh dictionary built from remembered keys.
+static func without_flags(payload: Dictionary, flags: Array[String]) -> Dictionary:
+	var copy := payload.duplicate(true)
+
+	var flags_field: Variant = copy.get("status_flags")
+	if typeof(flags_field) != TYPE_ARRAY:
+		return copy
+
+	# A plain `Array`, not an `Array[String]`, matching what `to_dict()` writes
+	# and what a round trip through `JSON.parse_string()` hands back -- and the
+	# only shape that can carry a non-`String` entry through untouched.
+	var kept: Array = []
+	for entry in flags_field:
+		if typeof(entry) == TYPE_STRING and flags.has(entry):
+			continue
+		kept.append(entry)
+
+	copy["status_flags"] = kept
+	return copy
+
+
 ## `value` as a valid cube coordinate, or `null` when it is not a three-element
 ## array of integers satisfying `HexCoord.is_valid()`.
 ##

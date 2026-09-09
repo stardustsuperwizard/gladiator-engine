@@ -1,4 +1,12 @@
-## What resolving a `TurnAction` returns.
+## What resolving a rule against a state returns.
+##
+## A `TurnAction` is the usual producer and was for a while the only one, but
+## it is not the only one: `EndSegment.run()` returns one of these too. A
+## Segment boundary is not a player command and is not a `TurnAction` -- see
+## that class's own docstring for why -- and it still has exactly the two
+## things this record carries, so it uses this record rather than a second
+## result type. There is deliberately no field naming which rule produced a
+## result: a caller already knows what it called.
 ##
 ## A dumb, immutable-by-convention record -- the shape `PlayerState` already
 ## sets, not an abstraction with behaviour. `_init()` stores exactly what it is
@@ -14,9 +22,10 @@ extends RefCounted
 ## Whether the action resolved.
 var success: bool
 
-## Empty (`&""`) on success. On failure, one of the acting `TurnAction`
-## subclass's own `FAILURE_*` constants -- never an `Authority` refusal, which
-## is a separate vocabulary and never reaches a `TurnResult`.
+## Empty (`&""`) on success. On failure, one of the acting rule's own
+## `FAILURE_*` constants -- a `TurnAction` subclass's, or `EndSegment`'s --
+## never an `Authority` refusal, which is a separate vocabulary and never
+## reaches a `TurnResult`.
 var reason: StringName
 
 
