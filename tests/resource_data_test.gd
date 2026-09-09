@@ -468,6 +468,7 @@ static func _test_combat_profile_loads_correctly() -> Array[String]:
 		violations.append_array(_expect(profile.guard_modifier == 1, "guard_modifier must be 1"))
 		violations.append_array(_expect(profile.min_target == 2, "min_target must be 2"))
 		violations.append_array(_expect(profile.max_target == 6, "max_target must be 6"))
+		violations.append_array(_expect(profile.defeat_award == 1, "defeat_award must be 1"))
 		violations.append_array(
 			_expect(
 				profile.attack_flank_modifier != profile.save_flank_modifier,
