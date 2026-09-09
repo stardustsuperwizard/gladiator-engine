@@ -268,12 +268,12 @@ static func _test_unparseable_payload_is_refused() -> Array[String]:
 
 	var result := GuardAction.new("a1", template).resolve(state)
 
-	(
-		violations
-		. append_array(
-			_expect(
-				result.reason == GuardAction.FAILURE_MISSING_DATA,
-				"a Guard naming a fighter whose payload will not parse must be refused with FAILURE_MISSING_DATA"
+	violations.append_array(
+		_expect(
+			result.reason == GuardAction.FAILURE_MISSING_DATA,
+			(
+				"a Guard naming a fighter whose payload will not parse "
+				+ "must be refused with FAILURE_MISSING_DATA"
 			)
 		)
 	)
