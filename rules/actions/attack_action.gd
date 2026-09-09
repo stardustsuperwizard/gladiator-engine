@@ -64,7 +64,10 @@
 ## -- a flat, authored value, not anything read off either fighter's stats. A
 ## missing `PlayerState` is skipped rather than refused, since the defeat
 ## itself has already happened. This is the only seam that exists for the
-## award today; nothing routes it through `Authority` or `ActionRunner`.
+## award today; nothing routes it through `Authority` or `ActionRunner`. The
+## award draws nothing from `state.rng`. Who scores when a fighter is defeated
+## with no attacker (a §2 hazard, a friendly card effect) is an open spec
+## question this resolver does not answer.
 ##
 ## **A push is optional, declared, and not a move -- spec §7.6-7.7.**
 ## `push_back` arrives through `_init()`, because spec §7.6 leaves whether to

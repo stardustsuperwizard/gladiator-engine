@@ -876,6 +876,8 @@ static func _test_defeat_award_survives_serialization() -> Array[String]:
 	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
 	_place(state, "b1", "p2", TARGET_HEX, target_template)
 
+	var before := state.digest()
+
 	var profile := forced_profile(ALWAYS_TARGET, NEVER_TARGET)
 	profile.defeat_award = 4
 
@@ -894,6 +896,18 @@ static func _test_defeat_award_survives_serialization() -> Array[String]:
 		_expect(
 			restored.player("p1").score == state.player("p1").score,
 			"the attacker's owner's score must survive a to_dict()/from_dict() round trip"
+		)
+	)
+	violations.append_array(
+		_expect(
+			restored.digest() == state.digest(),
+			"the defeated state's digest must survive a to_dict()/from_dict() round trip"
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.digest() != before,
+			"the defeat award must be reflected in the canonical state digest"
 		)
 	)
 
