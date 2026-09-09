@@ -10,11 +10,12 @@
 ## Before running any suite, two guards verify the harness is functional:
 ## 1. Engine version floor: reads the required version from project.godot's
 ##    application/config/features and aborts if the running engine is below it.
-## 2. Harness liveness probe: calls HexCoordTest._expect(false, "...") and
-##    aborts if it returns an empty array, indicating the harness cannot detect
-##    failures. The probe uses a direct static call on HexCoordTest rather than
-##    attempting dynamic dispatch through a Callable, as Godot does not support
-##    calling static methods on a class through a Callable's object reference.
+## 2. Harness liveness probe: attempts to call _expect(false, "...") on every
+##    suite through its registered Callable, and aborts if any returns an empty
+##    array, indicating the harness cannot detect failures. If the tree-wide
+##    probe finds no callable suites, falls back to a direct static call on
+##    HexCoordTest. Prints the probed suite count so a collapse to zero is
+##    visible in the log.
 ##
 ## Deliberately carries no class_name -- a global class sharing an autoload's
 ## name is a parse error in Godot 4 ("hides an autoload singleton").
@@ -79,10 +80,12 @@ func _ready() -> void:
 		return
 
 	# Guard 1: Engine version floor
-	_check_engine_version()
+	if not _check_engine_version():
+		return
 
 	# Guard 2: Harness liveness probe
-	_check_harness_liveness()
+	if not _check_harness_liveness():
+		return
 
 	# Queued BEFORE any suite runs, so the summary is still printed and the
 	# exit code still set if a suite aborts on a compile or runtime error.
@@ -103,17 +106,22 @@ func _check(suite_name: String, passed: bool) -> void:
 		printerr("FAIL %s" % suite_name)
 
 
-func _check_engine_version() -> void:
+func _check_engine_version() -> bool:
 	# Read the declared engine version from project.godot's
 	# application/config/features entry.
 	var config := ConfigFile.new()
-	config.load("res://project.godot")
+	var load_result := config.load("res://project.godot")
+	if load_result != OK:
+		printerr("ERROR: Failed to load project.godot: error %d" % load_result)
+		get_tree().quit(1)
+		return false
+
 	var features := config.get_value("application", "config/features", [])
 
 	if features is not PackedStringArray or features.is_empty():
 		printerr("ERROR: No engine version found in project.godot application/config/features")
 		get_tree().quit(1)
-		return
+		return false
 
 	# Find the MAJOR.MINOR entry (e.g., "4.7"). It must contain a dot and
 	# have numeric parts on both sides.
@@ -127,7 +135,7 @@ func _check_engine_version() -> void:
 	if declared_version.is_empty():
 		printerr("ERROR: No MAJOR.MINOR version entry found in project.godot application/config/features")
 		get_tree().quit(1)
-		return
+		return false
 
 	# Compare against running engine version
 	var version_info := Engine.get_version_info()
@@ -140,7 +148,7 @@ func _check_engine_version() -> void:
 	if declared_parts.size() < 2:
 		printerr("ERROR: Invalid version format in project.godot: %s" % declared_version)
 		get_tree().quit(1)
-		return
+		return false
 
 	var declared_major: int = int(declared_parts[0])
 	var declared_minor: int = int(declared_parts[1])
@@ -149,26 +157,54 @@ func _check_engine_version() -> void:
 	if running_major < declared_major or (running_major == declared_major and running_minor < declared_minor):
 		printerr("ERROR: Engine version %s is below required version %s" % [running_version, declared_version])
 		get_tree().quit(1)
-		return
+		return false
+
+	return true
 
 
-func _check_harness_liveness() -> void:
-	# Probe HexCoordTest._expect(false, "probe") and check that the result
-	# is not empty. This validates that the harness can detect failures on
-	# the running engine version.
-	#
-	# HexCoordTest is chosen as the fallback because:
-	# 1. It is always registered in _suites (entry 13)
-	# 2. It always defines _expect
-	# 3. It is a basic, non-contract test
+func _check_harness_liveness() -> bool:
+	# Attempt to probe every suite's _expect through its registered Callable.
+	# This validates that the harness can detect failures on the running engine.
+	var probed_count := 0
 
+	# Try tree-wide probe first: test each suite's Callable
+	for suite in _suites:
+		var callable: Callable = suite["run"]
+		var obj = callable.get_object()
+
+		if obj == null:
+			continue
+
+		# Check if this object has the _expect method
+		if obj.has_method("_expect"):
+			var result = obj.call("_expect", false, "harness liveness probe")
+
+			# Type guard is part of the failure condition: must be non-empty Array
+			if not (result is Array and not result.is_empty()):
+				printerr("ERROR: Harness liveness probe failed on %s: _expect(false, ...) returned %s" % [suite["name"], result])
+				printerr("The test harness cannot detect assertion failures on this engine version.")
+				get_tree().quit(1)
+				return false
+
+			probed_count += 1
+
+	# If tree-wide probe succeeded and found callable suites, report coverage
+	if probed_count > 0:
+		print("Probed %d suites for harness liveness" % probed_count)
+		return true
+
+	# Fallback: probe HexCoordTest directly if tree-wide found no probes
+	# This is used only if dynamic dispatch through Callable doesn't work
 	var result = HexCoordTest._expect(false, "harness liveness probe")
 
-	# If result is empty, the harness cannot detect failures
-	if result is Array and result.is_empty():
+	# Type guard is part of the failure condition: must be non-empty Array
+	if not (result is Array and not result.is_empty()):
 		printerr("ERROR: Harness liveness probe failed: _expect(false, ...) returned empty array")
 		printerr("The test harness cannot detect assertion failures on this engine version.")
 		get_tree().quit(1)
+		return false
+
+	return true
 
 
 func _finalize() -> void:
