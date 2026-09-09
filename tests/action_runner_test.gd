@@ -26,6 +26,7 @@ static func run() -> bool:
 	violations.append_array(_test_action_failure_is_passed_through_unmodified())
 	violations.append_array(_test_run_reason_matches_refusal())
 	violations.append_array(_test_permitted_attack_resolves_through_the_runner())
+	violations.append_array(_test_move_authority_gate())
 
 	if violations.is_empty():
 		return true
@@ -377,6 +378,86 @@ static func _test_permitted_attack_resolves_through_the_runner() -> Array[String
 		_expect(
 			refusal.reason == Authority.REFUSED_NOT_YOUR_TURN,
 			"an AttackAction submitted out of turn must be refused by the gate, not by the action"
+		)
+	)
+
+	return violations
+
+
+## `MoveAction` submits through the very same `run()` every other command
+## uses -- generality comes from subclassing `resolve()`, and adding it needed
+## no edit to `ActionRunner` or `Authority`.
+##
+## Two requests, both from the active player `p1`, against two different
+## fighters: a Move of `f2`, owned by `p2`, refused with
+## `REFUSED_NOT_YOUR_FIGHTER` before `resolve()` is ever reached -- asserted by
+## the board being left unchanged, the same external proof
+## `_test_every_refusal_leaves_the_state_identical()` uses above -- and a Move
+## of `f1`, `p1`'s own fighter, which resolves and moves it. The requester is
+## the active player in both requests, so the refusal is about ownership, not
+## about whose turn it is.
+static func _test_move_authority_gate() -> Array[String]:
+	var violations: Array[String] = []
+
+	var template := FighterTemplate.new()
+	template.template_id = "action-runner-move-test-fighter"
+	template.move = 1
+
+	var origin := Vector3i(0, 0, 0)
+	var other_hex := Vector3i(1, 0, -1)
+	var destination := Vector3i(1, -1, 0)
+
+	var board := Board.new()
+	board.add_hex(origin, Board.HexType.NORMAL)
+	board.add_hex(other_hex, Board.HexType.NORMAL)
+	board.add_hex(destination, Board.HexType.NORMAL)
+
+	var state := GameState.new(board, DeterministicRng.new(5))
+	state.add_player("p1")
+	state.add_player("p2")
+	state.add_fighter("f1", Fighter.new("f1", template, "p1", origin).to_dict())
+	state.add_fighter("f2", Fighter.new("f2", template, "p2", other_hex).to_dict())
+	board.place_occupant(origin, &"f1")
+	board.place_occupant(other_hex, &"f2")
+
+	var refused := MoveAction.new("f2", destination, template)
+	var refusal_result := ActionRunner.new(Authority.new(state)).run(refused, "p1")
+
+	violations.append_array(
+		_expect(
+			refusal_result.reason == Authority.REFUSED_NOT_YOUR_FIGHTER,
+			(
+				"a Move submitted by a player who does not own the fighter must be refused with "
+				+ "REFUSED_NOT_YOUR_FIGHTER"
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			(
+				board.occupant_at(other_hex) == &"f2"
+				and board.occupant_at(destination) == Board.EMPTY_OCCUPANT
+			),
+			"a refused Move must leave the board unchanged, proving resolve() was never reached"
+		)
+	)
+
+	var permitted := MoveAction.new("f1", destination, template)
+	var permitted_result := ActionRunner.new(Authority.new(state)).run(permitted, "p1")
+
+	violations.append_array(
+		_expect(
+			permitted_result.success,
+			"a Move submitted by the owning active player must resolve through the runner"
+		)
+	)
+	violations.append_array(
+		_expect(
+			(
+				board.occupant_at(destination) == &"f1"
+				and board.occupant_at(origin) == Board.EMPTY_OCCUPANT
+			),
+			"a permitted Move resolved through the runner must move the fighter on the board"
 		)
 	)
 
