@@ -25,22 +25,31 @@
 ##   loop between it and the Move action. The Attack and Guard actions would
 ##   close the same loop by the same route.
 ##
-## This class is a leaf -- it names `GameState`, `Board`, `Fighter` and
-## `StringName` conversions and nothing else under this directory -- so
+## This class names `GameState`, `Board`, `Fighter`, `StatusFlags` and
+## `StringName` conversions and nothing else under `rules/actions/` -- so
 ## hanging the constant here instead keeps the whole class graph acyclic: this
-## file depends on nothing here, each of the three reading actions depends on
-## this file, and the writing action (still to come) will depend on this file
-## plus the two actions whose flags it names.
+## file depends on nothing else in this directory, each of the three reading
+## actions depends on this file, and the writing action (still to come) will
+## depend on this file plus the two actions whose flags it names. `StatusFlags`
+## itself stays a leaf -- see its own docstring -- so depending on it adds no
+## cycle.
 ##
 ## `"charged"` is also the only flag in the game with one writer and three
 ## readers outside it, so "the rule that reads it owns its name" is a
 ## defensible home rather than a workaround.
 ##
-## The two existing actions' own flag constants do not move here, and no
-## shared status-flag holder is introduced -- that is a deliberate limit, not
-## an oversight. The trigger that would revisit it is spec §10 step 5's
-## round-level clearing, which needs the whole set at once; this predicate
-## does not clear anything.
+## **`StatusFlags` now exists, and this constant is a re-export of it.** The
+## trigger that was going to revisit "no shared status-flag holder" -- spec
+## §10 step 5's round-level clearing, which needs the whole set at once -- has
+## arrived: enumerating `"moved"`, `"guarded"` and `"charged"` across three
+## action imports from a non-action class would have been the worse of the two
+## options, so `StatusFlags` holds the three literals and `round_level()`
+## publishes the set that step clears. This predicate still clears nothing
+## itself. The dependency-cycle argument above is unaffected by that and is
+## why `FLAG_CHARGED` still resolves through this class rather than through
+## `StatusFlags` directly at each of the three call sites: the cycle it avoids
+## is between the actions, not between this class and `StatusFlags`, which
+## stays a leaf precisely so a class like this one can depend on it.
 ##
 ## **A plain `String`, not a `StringName`.** `Fighter.set_status_flag()` takes
 ## a `String`, `Fighter.to_dict()` serializes flags as plain strings, and
@@ -74,8 +83,9 @@ extends RefCounted
 
 ## Spec §6's `"charged"` flag. Nothing sets it outside a test fixture until
 ## the action that will own it lands; see the class docstring for why the
-## constant lives here rather than there.
-const FLAG_CHARGED := "charged"
+## constant lives here rather than there. Re-exported from `StatusFlags`, the
+## canonical home for the literal itself.
+const FLAG_CHARGED := StatusFlags.CHARGED
 
 
 ## True when spec §6's lockout refuses `actor` an action right now.

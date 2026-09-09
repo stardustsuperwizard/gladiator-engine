@@ -31,6 +31,12 @@
 ## entry. The `FAILURE_*` constants below stay `StringName` because
 ## `TurnResult.failure()` takes one; the two differ on purpose.
 ##
+## **The string itself now lives in `StatusFlags`.** `FLAG_MOVED` is retained
+## as a re-export so this class keeps naming the flag in its own vocabulary,
+## but `StatusFlags.MOVED` is the canonical literal, needed once a clearing
+## step must enumerate every round-level flag at once. See that class's
+## docstring.
+##
 ## **The flag must be set before the payload is committed.** `set_status_flag()`
 ## runs on the in-memory `Fighter` before `to_dict()` is read out of it and
 ## handed to `state.update_fighter()` -- `update_fighter()` replaces the stored
@@ -61,7 +67,8 @@ class_name MoveAction
 extends TurnAction
 
 ## Spec §6's `"moved"` flag, set on the acting fighter by a successful Move.
-const FLAG_MOVED := "moved"
+## Re-exported from `StatusFlags`, the canonical home; see the class docstring.
+const FLAG_MOVED := StatusFlags.MOVED
 
 ## `actor_template` is `null`, or the state holds a payload for `actor_id()`
 ## that will not parse.
