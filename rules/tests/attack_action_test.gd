@@ -87,6 +87,11 @@ static func run() -> bool:
 	violations.append_array(_test_flanking_tiers_are_read_off_each_fighters_own_neighbours())
 	violations.append_array(_test_a_defeated_flanker_no_longer_counts())
 	violations.append_array(_test_defeat_clears_the_hex_and_keeps_the_payload())
+	violations.append_array(_test_defeat_awards_the_flat_point_to_the_attackers_owner())
+	violations.append_array(_test_hit_drawn_and_miss_without_defeat_award_nothing())
+	violations.append_array(_test_refused_attack_awards_nothing())
+	violations.append_array(_test_defeat_award_survives_serialization())
+	violations.append_array(_test_defeat_award_draws_nothing_from_state_rng())
 	violations.append_array(_test_equal_seeds_produce_identical_outcome_and_digest())
 
 	# Spec §7.3's target-number chart and spec §7.6-7.7's push-back live in
@@ -720,6 +725,206 @@ static func _test_defeat_clears_the_hex_and_keeps_the_payload() -> Array[String]
 		_expect(
 			"b1" in state.fighter_ids(),
 			"a defeated fighter's payload must still be present in fighter_ids()"
+		)
+	)
+
+	return violations
+
+
+## Spec §9's flat point, credited to the *attacker's* owner, never the
+## defeated fighter's own owner -- and read off `profile.defeat_award` rather
+## than restated as a literal, so a retuned dial moves this test with it.
+static func _test_defeat_awards_the_flat_point_to_the_attackers_owner() -> Array[String]:
+	var violations: Array[String] = []
+	var attacker_template := fighter_template(2, 3)
+	var target_template := fighter_template(2, 1)
+	var state := _build_state(13)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "b1", "p2", TARGET_HEX, target_template)
+
+	var profile := forced_profile(ALWAYS_TARGET, NEVER_TARGET)
+	profile.defeat_award = 3
+
+	var action := AttackAction.new("a1", "b1", attacker_template, target_template, profile)
+	var result := action.resolve(state)
+
+	violations.append_array(_expect(result.success, "a defeating attack must resolve successfully"))
+	violations.append_array(_expect(action.target_defeated(), "this scenario must defeat the target"))
+	violations.append_array(
+		_expect(
+			state.player("p1").score == profile.defeat_award,
+			"defeating a fighter must raise the attacker's owner's score by exactly defeat_award"
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.player("p2").score == 0,
+			"defeating a fighter must leave the defeated fighter's own owner's score unchanged"
+		)
+	)
+
+	return violations
+
+
+## The award is defeat-only: a Hit that falls short of defeat, a Drawn, and a
+## Miss must all leave both owners' scores exactly where they started, even
+## against a profile whose `defeat_award` is nonzero.
+static func _test_hit_drawn_and_miss_without_defeat_award_nothing() -> Array[String]:
+	var violations: Array[String] = []
+
+	# label, attacker template, target template, attack target, save target.
+	var cases := [
+		[
+			"a Hit short of defeat",
+			fighter_template(2, 5, 1, 4, 2),
+			fighter_template(2, 5),
+			ALWAYS_TARGET,
+			NEVER_TARGET,
+		],
+		[
+			"a Drawn attack",
+			fighter_template(2, 5, 1, 2, 2),
+			fighter_template(2, 5),
+			ALWAYS_TARGET,
+			ALWAYS_TARGET,
+		],
+		[
+			"a Miss",
+			fighter_template(1, 5, 1, 3, 2),
+			fighter_template(1, 5),
+			NEVER_TARGET,
+			ALWAYS_TARGET,
+		],
+	]
+
+	for entry in cases:
+		var label: String = entry[0]
+		var attacker_template: FighterTemplate = entry[1]
+		var target_template: FighterTemplate = entry[2]
+		var attack_target: int = entry[3]
+		var save_target: int = entry[4]
+
+		var state := _build_state(13)
+		_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+		_place(state, "b1", "p2", TARGET_HEX, target_template)
+
+		var profile := forced_profile(attack_target, save_target)
+		profile.defeat_award = 5
+
+		var action := AttackAction.new("a1", "b1", attacker_template, target_template, profile)
+		action.resolve(state)
+
+		violations.append_array(
+			_expect(not action.target_defeated(), "%s must not defeat the target" % label)
+		)
+		violations.append_array(
+			_expect(
+				state.player("p1").score == 0,
+				"%s must leave the attacker's owner's score unchanged" % label
+			)
+		)
+		violations.append_array(
+			_expect(
+				state.player("p2").score == 0,
+				"%s must leave the target's owner's score unchanged" % label
+			)
+		)
+
+	return violations
+
+
+## `_test_every_refusal_leaves_the_state_identical()` already pins every
+## refusal's digest byte-for-byte, which covers both players' scores along
+## with everything else in the state. This restates one refusal case in terms
+## an award-focused reader can check without re-deriving it from a digest.
+static func _test_refused_attack_awards_nothing() -> Array[String]:
+	var violations: Array[String] = []
+	var template := fighter_template(2, 3)
+	var profile := standard_profile()
+	profile.defeat_award = 5
+
+	var state := _build_state(13)
+	_place(state, "a1", "p1", ATTACKER_HEX, template)
+	_place(state, "b1", "p1", TARGET_HEX, template)
+
+	var action := AttackAction.new("a1", "b1", template, template, profile)
+	var result := action.resolve(state)
+
+	violations.append_array(
+		_expect(
+			result.reason == AttackAction.FAILURE_TARGET_IS_FRIENDLY,
+			"this scenario must be refused as a friendly target"
+		)
+	)
+	violations.append_array(
+		_expect(state.player("p1").score == 0, "a refused attack must award nothing")
+	)
+
+	return violations
+
+
+## Score is an ordinary field of `PlayerState`, so a defeat award must survive
+## the same `to_dict()`/`from_dict()` round trip as everything else `GameState`
+## carries.
+static func _test_defeat_award_survives_serialization() -> Array[String]:
+	var violations: Array[String] = []
+	var attacker_template := fighter_template(2, 3)
+	var target_template := fighter_template(2, 1)
+	var state := _build_state(13)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "b1", "p2", TARGET_HEX, target_template)
+
+	var profile := forced_profile(ALWAYS_TARGET, NEVER_TARGET)
+	profile.defeat_award = 4
+
+	var action := AttackAction.new("a1", "b1", attacker_template, target_template, profile)
+	action.resolve(state)
+	violations.append_array(_expect(action.target_defeated(), "this scenario must defeat the target"))
+
+	var restored := GameState.from_dict(state.to_dict())
+	violations.append_array(_expect(restored != null, "the resolved state must round-trip"))
+	if restored == null:
+		return violations
+
+	violations.append_array(
+		_expect(
+			restored.player("p1").score == state.player("p1").score,
+			"the attacker's owner's score must survive a to_dict()/from_dict() round trip"
+		)
+	)
+
+	return violations
+
+
+## The award happens after both pools are drawn and touches nothing else: the
+## generator's position after a defeating attack must equal one stepped only
+## by the attack and save pools, exactly as a non-defeating attack's -- see
+## `_test_attack_pool_is_drawn_entirely_before_the_save_pool()`.
+static func _test_defeat_award_draws_nothing_from_state_rng() -> Array[String]:
+	var violations: Array[String] = []
+	var attacker_template := fighter_template(2, 3)
+	var target_template := fighter_template(2, 1)
+	var state := _build_state(13)
+	_place(state, "a1", "p1", ATTACKER_HEX, attacker_template)
+	_place(state, "b1", "p2", TARGET_HEX, target_template)
+
+	var profile := forced_profile(ALWAYS_TARGET, NEVER_TARGET)
+	profile.defeat_award = 4
+
+	var action := AttackAction.new("a1", "b1", attacker_template, target_template, profile)
+	action.resolve(state)
+	violations.append_array(_expect(action.target_defeated(), "this scenario must defeat the target"))
+
+	var reference := DeterministicRng.new(13)
+	for _i in range(attacker_template.attack):
+		reference.roll_die(profile.die_sides)
+	for _i in range(target_template.save):
+		reference.roll_die(profile.die_sides)
+
+	violations.append_array(
+		_expect(
+			state.rng.get_state() == reference.get_state(),
+			"awarding the defeat point must draw nothing from state.rng"
 		)
 	)
 

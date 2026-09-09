@@ -59,6 +59,13 @@
 ## counter at or above health, where `Fighter.is_defeated()` keeps answering
 ## true.
 ##
+## **Defeat also awards spec §9's flat point.** `_apply_hit()` credits
+## `_combat_profile.defeat_award` to `attacker.owner_id()`'s `PlayerState.score`
+## -- a flat, authored value, not anything read off either fighter's stats. A
+## missing `PlayerState` is skipped rather than refused, since the defeat
+## itself has already happened. This is the only seam that exists for the
+## award today; nothing routes it through `Authority` or `ActionRunner`.
+##
 ## **A push is optional, declared, and not a move -- spec §7.6-7.7.**
 ## `push_back` arrives through `_init()`, because spec §7.6 leaves whether to
 ## attempt the shove to the attacking player, not to this resolver; defaulting
@@ -391,8 +398,9 @@ func _engagement_bonus(attacker: Fighter, target: Fighter) -> int:
 	return 0
 
 
-## Applies the *attacker's* damage to `target`, commits the payload, and takes
-## the fighter off the board when the damage defeated it.
+## Applies the *attacker's* damage to `target`, commits the payload, takes the
+## fighter off the board when the damage defeated it, and on a defeat awards
+## spec §9's flat point to the attacker's owner.
 ##
 ## `attacker.damage()`, never the target's: the two fighters have different
 ## stats, and reading the wrong one is a wrong result rather than a crash.
@@ -400,13 +408,26 @@ func _engagement_bonus(attacker: Fighter, target: Fighter) -> int:
 ## The payload stays in `GameState` either way -- spec §9 removes a defeated
 ## fighter from the *board*, and `Fighter.is_defeated()` has to keep answering
 ## true for the stored record.
+##
+## The award is `_combat_profile.defeat_award`, a flat authored value rather
+## than anything read off either fighter -- §3.2 deleted `pointValue`, and this
+## is not its replacement in disguise. The recipient is `attacker.owner_id()`;
+## a state with no `PlayerState` for that id is skipped, not refused -- the
+## defeat itself has already happened by the time the award is reached, so
+## there is nothing left to refuse. Draws nothing from `state.rng`.
 func _apply_hit(state: GameState, attacker: Fighter, target: Fighter) -> void:
 	target.apply_damage(attacker.damage())
 	state.update_fighter(_target_id, target.to_dict())
 
 	_target_defeated = target.is_defeated()
-	if _target_defeated:
-		state.board.remove_occupant(target.position())
+	if not _target_defeated:
+		return
+
+	state.board.remove_occupant(target.position())
+
+	var scorer := state.player(attacker.owner_id())
+	if scorer != null:
+		scorer.score += _combat_profile.defeat_award
 
 
 ## Spec §7.6-7.7: shoves `target` one hex directly away from `attacker`, on a

@@ -79,6 +79,7 @@ CombatProfile {                     // one per game; every tuning dial in §7
   saveSurroundModifier               // ATTACKER surrounded
   guardModifier                      // defender guarded, §6
   minTarget, maxTarget               // the clamp, see §7.3
+  defeatAward                        // flat points awarded on defeat, §9 — 1
 }
 
 ConstructionBudget {                // §3.2; validates an authored fighter
