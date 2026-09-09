@@ -46,6 +46,12 @@ var rng: DeterministicRng
 var round_number: int = 1
 var turns_taken: int = 0
 
+## Spec §5.2's Turns per player per round, and §5.1's rounds per match. Both
+## authored: the game side seeds them from an authored RoundProfile, and
+## `rules/` never loads a resource path. Zero means unconfigured.
+var turns_per_player: int = 0
+var rounds_per_match: int = 0
+
 ## True while the current Turn's Power Step is open (spec §5.3).
 var power_step_open: bool = false
 
@@ -184,6 +190,27 @@ func clear_power_step_passes() -> void:
 	_power_step_passes.clear()
 
 
+## True when every player has completed their Turns for this round (§5.2), so
+## the Combat Segment is over and the End Segment (§5.4) may run.
+##
+## False for an unconfigured state -- `turns_per_player` at or below zero, or
+## no players -- because a Segment that was never sized has not been
+## completed.
+func combat_segment_complete() -> bool:
+	if turns_per_player <= 0:
+		return false
+	if _turn_order.is_empty():
+		return false
+	return turns_taken >= turns_per_player * _turn_order.size()
+
+
+## True when `round_number` has reached the last round of the match (§5.1).
+## False for an unconfigured state -- `rounds_per_match` at or below zero --
+## so an unbounded match never reports a final round.
+func is_final_round() -> bool:
+	return rounds_per_match > 0 and round_number >= rounds_per_match
+
+
 ## The whole state as JSON-compatible primitives -- `int`, `float`, `String`,
 ## `Array`, `Dictionary` only, no `Vector3i` and no `StringName`:
 ##
@@ -192,6 +219,8 @@ func clear_power_step_passes() -> void:
 ##     "rng": <DeterministicRng.to_dict()>,
 ##     "round_number": <int>,
 ##     "turns_taken": <int>,
+##     "turns_per_player": <int>,
+##     "rounds_per_match": <int>,
 ##     "power_step_open": <bool>,
 ##     "power_step_passes": ["<player id>", ...],
 ##     "turn_order": ["<player id>", ...],
@@ -235,6 +264,8 @@ func to_dict() -> Dictionary:
 		"rng": rng.to_dict(),
 		"round_number": round_number,
 		"turns_taken": turns_taken,
+		"turns_per_player": turns_per_player,
+		"rounds_per_match": rounds_per_match,
 		"power_step_open": power_step_open,
 		"power_step_passes": power_step_passes_out,
 		"turn_order": turn_order_out,
@@ -252,11 +283,13 @@ func to_dict() -> Dictionary:
 ## Returns `null`, having built nothing usable, on any refusal: a missing or
 ## non-`Dictionary` `"board"` or `"rng"`; a nested `Board.from_dict()` or
 ## `DeterministicRng.from_dict()` that itself refuses; a `round_number` or
-## `turns_taken` that is not an integer; a missing or non-`bool`
-## `power_step_open`; a missing or non-`Array` `power_step_passes`, or one
-## holding a non-`String` entry, an entry naming no player in `turn_order`, or
-## a repeated entry; a `turn_order` or `fighter_order` that is not an `Array`
-## of `String`; a `players` or `fighters` that is not a `Dictionary`; an id in
+## `turns_taken` that is not an integer; a `turns_per_player` or
+## `rounds_per_match` that is missing, not an integer, or negative; a missing
+## or non-`bool` `power_step_open`; a missing or non-`Array`
+## `power_step_passes`, or one holding a non-`String` entry, an entry naming
+## no player in `turn_order`, or a repeated entry; a `turn_order` or
+## `fighter_order` that is not an `Array` of `String`; a `players` or
+## `fighters` that is not a `Dictionary`; an id in
 ## an order array with no matching entry in its dictionary; an entry in a
 ## dictionary with no matching id in its order array; a duplicate or empty id;
 ## or a malformed nested `PlayerState`. Nothing is repaired.
@@ -281,6 +314,14 @@ static func from_dict(data: Dictionary) -> GameState:
 
 	var turns_value: Variant = PlayerState.as_int(data.get("turns_taken"))
 	if turns_value == null:
+		return null
+
+	var turns_per_player_value: Variant = PlayerState.as_int(data.get("turns_per_player"))
+	if turns_per_player_value == null or turns_per_player_value < 0:
+		return null
+
+	var rounds_per_match_value: Variant = PlayerState.as_int(data.get("rounds_per_match"))
+	if rounds_per_match_value == null or rounds_per_match_value < 0:
 		return null
 
 	var power_step_open_field: Variant = data.get("power_step_open")
@@ -317,6 +358,8 @@ static func from_dict(data: Dictionary) -> GameState:
 	var state := GameState.new(restored_board, restored_rng)
 	state.round_number = round_value
 	state.turns_taken = turns_value
+	state.turns_per_player = turns_per_player_value
+	state.rounds_per_match = rounds_per_match_value
 	state.power_step_open = power_step_open_field
 
 	for entry in turn_order_field:

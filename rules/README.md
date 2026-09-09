@@ -36,7 +36,7 @@ dependency arrow: **the game depends on `rules/`, never the reverse.**
 | `combat/` | Dice-pool resolution, flanking, and `CombatProfile` — the authored tuning surface §7 reads | §7–8 |
 | `fighters/` | Fighter template and runtime model, the six combat stats, status flags, damage, `ConstructionBudget` | §3, §9 |
 | `cards/` | Scoring and ability decks, hands, draw/discard — **not built yet** | §4, §10 |
-| `state/` | `GameState`, `TurnAction`, `TurnResult`, serialization, RNG | §3 |
+| `state/` | `GameState`, `TurnAction`, `TurnResult`, serialization, RNG, `RoundProfile` — the authored round structure §5 reads | §3, §5 |
 | `actions/` | One `TurnAction` subclass per player command | §6 |
 | `tests/` | Contract and regression suites | — |
 
