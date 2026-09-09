@@ -5,11 +5,13 @@
 ## Slice 0 scaffolding to prove the pipeline resolved something real without
 ## waiting on Attack, and that label was never accurate.
 ##
-## It resolves successfully against a known actor and changes nothing in the
-## state at all -- not `turns_taken`, not `round_number`, not any other field.
-## Spec §5.3's Turn-completion rule settles that a Turn is not over until its
-## Power Step has ended, and anything counting Turns counts *completed* Turns,
-## not resolved actions; no action increments that counter, this one included.
+## It resolves successfully against a known actor and its only effect on the
+## state is the one every command has: `PowerStep.note_action()` on the success
+## path, opening the Turn's Power Step and clearing any consecutive-pass
+## record. It still touches neither `turns_taken` nor `round_number`. Spec
+## §5.3's Turn-completion rule settles that a Turn is not over until its Power
+## Step has ended, and anything counting Turns counts *completed* Turns, not
+## resolved actions; no action increments that counter, this one included.
 ##
 ## **Why it is kept rather than retired.** Three reasons: `ChargeLockout`
 ## documents Pass as "the action a locked-out fighter still has," and §6's
@@ -37,11 +39,12 @@ extends TurnAction
 const FAILURE_NO_SUCH_FIGHTER := &"pass_no_such_fighter"
 
 
-## Returns a successful result, changing nothing in `state` at all. Returns
-## `FAILURE_NO_SUCH_FIGHTER`, also changing nothing, when `actor_id()` names no
-## fighter in `state`.
+## Returns a successful result, having changed nothing in `state` beyond
+## `PowerStep.note_action()`. Returns `FAILURE_NO_SUCH_FIGHTER`, changing
+## nothing at all, when `actor_id()` names no fighter in `state`.
 func resolve(state: GameState) -> TurnResult:
 	if actor_id() not in state.fighter_ids():
 		return TurnResult.failure(FAILURE_NO_SUCH_FIGHTER)
 
+	PowerStep.note_action(state)
 	return TurnResult.ok()

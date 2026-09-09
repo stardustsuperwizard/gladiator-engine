@@ -46,6 +46,18 @@ var rng: DeterministicRng
 var round_number: int = 1
 var turns_taken: int = 0
 
+## True while the current Turn's Power Step is open (spec §5.3).
+var power_step_open: bool = false
+
+## The players who have passed consecutively in the open Power Step, in the
+## order they passed. Cleared whenever any other command resolves.
+##
+## **This class owns the slot, not the rule.** It does not decide when two
+## passes end a Step, does not touch `turns_taken`, and does not know what a
+## Power Step is for -- `PowerStep` holds all of that, the same division
+## `add_fighter()` and `update_fighter()` already keep against the actions.
+var _power_step_passes: Array[String] = []
+
 ## player id -> PlayerState, for every player added.
 var _players: Dictionary = {}
 
@@ -143,6 +155,35 @@ func update_fighter(fighter_id: String, data: Dictionary) -> bool:
 	return true
 
 
+## The players who have passed consecutively in the open Power Step, in the
+## order they passed. A copy, so a caller cannot edit the record through the
+## value handed back -- the same guarantee `turn_order()` and `fighter_ids()`
+## give.
+func power_step_passes() -> Array[String]:
+	return _power_step_passes.duplicate()
+
+
+## Appends `player_id` to the consecutive-pass record. Returns `false` and
+## changes nothing when `player_id` is empty or names no player in
+## `turn_order()`.
+##
+## Records only. Whether the appended pass ends anything is `PowerStep`'s
+## question, not this class's.
+func record_power_step_pass(player_id: String) -> bool:
+	if player_id.is_empty():
+		return false
+	if player_id not in _turn_order:
+		return false
+
+	_power_step_passes.append(player_id)
+	return true
+
+
+## Empties the consecutive-pass record.
+func clear_power_step_passes() -> void:
+	_power_step_passes.clear()
+
+
 ## The whole state as JSON-compatible primitives -- `int`, `float`, `String`,
 ## `Array`, `Dictionary` only, no `Vector3i` and no `StringName`:
 ##
@@ -151,6 +192,8 @@ func update_fighter(fighter_id: String, data: Dictionary) -> bool:
 ##     "rng": <DeterministicRng.to_dict()>,
 ##     "round_number": <int>,
 ##     "turns_taken": <int>,
+##     "power_step_open": <bool>,
+##     "power_step_passes": ["<player id>", ...],
 ##     "turn_order": ["<player id>", ...],
 ##     "players": {"<player id>": <PlayerState.to_dict()>, ...},
 ##     "fighter_order": ["<fighter id>", ...],
@@ -164,6 +207,11 @@ func update_fighter(fighter_id: String, data: Dictionary) -> bool:
 ## `DeterministicRng` serializes its seed and state as decimal `String`s
 ## rather than ints, because JSON numbers are doubles and lose precision above
 ## 2^53. That is deliberate; it is not a shape to clean up.
+##
+## `power_step_passes` is written as a plain `Array` of `String`, untyped, for
+## the reason `PlayerState.to_dict()` untypes its piles: both stringify
+## identically, and the plain one is what `JSON.parse_string()` hands back, so
+## a round trip through JSON produces a dictionary of exactly this shape.
 func to_dict() -> Dictionary:
 	var players: Dictionary = {}
 	for player_id in _turn_order:
@@ -179,11 +227,16 @@ func to_dict() -> Dictionary:
 	var fighter_order_out: Array = []
 	fighter_order_out.append_array(_fighter_order)
 
+	var power_step_passes_out: Array = []
+	power_step_passes_out.append_array(_power_step_passes)
+
 	return {
 		"board": board.to_dict(),
 		"rng": rng.to_dict(),
 		"round_number": round_number,
 		"turns_taken": turns_taken,
+		"power_step_open": power_step_open,
+		"power_step_passes": power_step_passes_out,
 		"turn_order": turn_order_out,
 		"players": players,
 		"fighter_order": fighter_order_out,
@@ -199,12 +252,14 @@ func to_dict() -> Dictionary:
 ## Returns `null`, having built nothing usable, on any refusal: a missing or
 ## non-`Dictionary` `"board"` or `"rng"`; a nested `Board.from_dict()` or
 ## `DeterministicRng.from_dict()` that itself refuses; a `round_number` or
-## `turns_taken` that is not an integer; a `turn_order` or `fighter_order`
-## that is not an `Array` of `String`; a `players` or `fighters` that is not a
-## `Dictionary`; an id in an order array with no matching entry in its
-## dictionary; an entry in a dictionary with no matching id in its order array;
-## a duplicate or empty id; or a malformed nested `PlayerState`. Nothing is
-## repaired.
+## `turns_taken` that is not an integer; a missing or non-`bool`
+## `power_step_open`; a missing or non-`Array` `power_step_passes`, or one
+## holding a non-`String` entry, an entry naming no player in `turn_order`, or
+## a repeated entry; a `turn_order` or `fighter_order` that is not an `Array`
+## of `String`; a `players` or `fighters` that is not a `Dictionary`; an id in
+## an order array with no matching entry in its dictionary; an entry in a
+## dictionary with no matching id in its order array; a duplicate or empty id;
+## or a malformed nested `PlayerState`. Nothing is repaired.
 static func from_dict(data: Dictionary) -> GameState:
 	var board_field: Variant = data.get("board")
 	if typeof(board_field) != TYPE_DICTIONARY:
@@ -226,6 +281,14 @@ static func from_dict(data: Dictionary) -> GameState:
 
 	var turns_value: Variant = PlayerState.as_int(data.get("turns_taken"))
 	if turns_value == null:
+		return null
+
+	var power_step_open_field: Variant = data.get("power_step_open")
+	if typeof(power_step_open_field) != TYPE_BOOL:
+		return null
+
+	var power_step_passes_field: Variant = data.get("power_step_passes")
+	if typeof(power_step_passes_field) != TYPE_ARRAY:
 		return null
 
 	var turn_order_field: Variant = data.get("turn_order")
@@ -254,6 +317,7 @@ static func from_dict(data: Dictionary) -> GameState:
 	var state := GameState.new(restored_board, restored_rng)
 	state.round_number = round_value
 	state.turns_taken = turns_value
+	state.power_step_open = power_step_open_field
 
 	for entry in turn_order_field:
 		if typeof(entry) != TYPE_STRING:
@@ -275,6 +339,20 @@ static func from_dict(data: Dictionary) -> GameState:
 		if typeof(payload) != TYPE_DICTIONARY:
 			return null
 		if not state.add_fighter(entry, payload):
+			return null
+
+	# After the player loop by necessity: an entry naming no player in
+	# `turn_order` is a refusal, and `record_power_step_pass()` can only answer
+	# that once the players are in. The explicit membership test is what catches
+	# a repeated entry, which `record_power_step_pass()` itself permits --
+	# whether a player may pass twice in a row is a rule, and rules do not live
+	# in this class.
+	for entry in power_step_passes_field:
+		if typeof(entry) != TYPE_STRING:
+			return null
+		if entry in state._power_step_passes:
+			return null
+		if not state.record_power_step_pass(entry):
 			return null
 
 	return state
