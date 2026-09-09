@@ -49,9 +49,8 @@
 ##
 ## **Neither `turns_taken` nor `round_number` is touched.** Move has three
 ## observable effects of its own -- position, occupancy, the flag -- so it
-## follows `AttackAction`'s precedent rather than `PassAction`'s, which
-## increments `turns_taken` only because that increment is its sole observable
-## effect.
+## follows `AttackAction`'s precedent: `PassAction` touches neither field
+## either, and has no observable effect on `state` at all.
 ##
 ## **Draws nothing from `state.rng`.** Move is fully determined by the board
 ## and the `move()` stat; `rules/tests/ambient_rng_contract_test.gd` and

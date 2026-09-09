@@ -13,8 +13,8 @@ class_name PassActionTest
 static func run() -> bool:
 	var violations: Array[String] = []
 
-	violations.append_array(_test_resolve_increments_turns_taken())
-	violations.append_array(_test_resolve_increments_once_per_call())
+	violations.append_array(_test_resolve_leaves_turns_taken_unchanged())
+	violations.append_array(_test_resolve_leaves_turns_taken_unchanged_across_repeats())
 	violations.append_array(_test_resolve_leaves_the_rest_of_the_state_alone())
 	violations.append_array(_test_missing_actor_fails_with_its_own_constant())
 	violations.append_array(_test_missing_actor_changes_nothing())
@@ -45,7 +45,7 @@ static func _build_state() -> GameState:
 	return state
 
 
-static func _test_resolve_increments_turns_taken() -> Array[String]:
+static func _test_resolve_leaves_turns_taken_unchanged() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state()
 	var before := state.turns_taken
@@ -60,16 +60,16 @@ static func _test_resolve_increments_turns_taken() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			state.turns_taken == before + 1,
-			"resolve() with a known actor must increment turns_taken by exactly one"
+			state.turns_taken == before,
+			"resolve() with a known actor must leave turns_taken exactly as it was"
 		)
 	)
 
 	return violations
 
 
-## Three resolutions, three increments -- the counter is incremented, not set.
-static func _test_resolve_increments_once_per_call() -> Array[String]:
+## Three resolutions, no change -- the counter is not this action's to write.
+static func _test_resolve_leaves_turns_taken_unchanged_across_repeats() -> Array[String]:
 	var state := _build_state()
 	var before := state.turns_taken
 
@@ -77,21 +77,21 @@ static func _test_resolve_increments_once_per_call() -> Array[String]:
 		PassAction.new("f1").resolve(state)
 
 	return _expect(
-		state.turns_taken == before + 3,
-		"three successful resolve() calls must raise turns_taken by exactly three"
+		state.turns_taken == before,
+		"three successful resolve() calls must leave turns_taken exactly as it was"
 	)
 
 
-## PassAction records a turn and nothing else. Asserted by digest: take the
-## state's identity before the call, resolve, put `turns_taken` back by hand,
-## and require the digest to match again. Anything else the action touched --
-## `round_number`, the board, the generator position, a fighter payload, a
-## score -- would show up as a differing digest.
+## PassAction has no observable effect on the state at all. Asserted by
+## digest: take the state's identity before the call, resolve, and require the
+## digest to match again with nothing put back by hand. Anything the action
+## touched -- `turns_taken`, `round_number`, the board, the generator
+## position, a fighter payload, a score -- would show up as a differing
+## digest.
 static func _test_resolve_leaves_the_rest_of_the_state_alone() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state()
 	var before_round := state.round_number
-	var before_turns := state.turns_taken
 	var before_digest := state.digest()
 
 	PassAction.new("f1").resolve(state)
@@ -100,14 +100,10 @@ static func _test_resolve_leaves_the_rest_of_the_state_alone() -> Array[String]:
 		_expect(state.round_number == before_round, "resolve() must not touch round_number")
 	)
 
-	state.turns_taken = before_turns
 	violations.append_array(
 		_expect(
 			state.digest() == before_digest,
-			(
-				"with turns_taken restored the digest must match: resolve() must change nothing "
-				+ "in the state but the turn counter"
-			)
+			"a successful resolve() must leave the state digest byte-identical, nothing restored"
 		)
 	)
 

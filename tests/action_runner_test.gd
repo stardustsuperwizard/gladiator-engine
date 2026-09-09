@@ -73,7 +73,6 @@ static func _test_permitted_pass_resolves() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state()
 	var runner := ActionRunner.new(Authority.new(state))
-	var before := state.turns_taken
 
 	var result := runner.run(PassAction.new("f1"), "p1")
 
@@ -84,12 +83,6 @@ static func _test_permitted_pass_resolves() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(result.reason == &"", 'a successful run() result must have reason == &""')
-	)
-	violations.append_array(
-		_expect(
-			state.turns_taken == before + 1,
-			"run() on a permitted PassAction must raise turns_taken by exactly one"
-		)
 	)
 
 	return violations
