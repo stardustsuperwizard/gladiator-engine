@@ -82,12 +82,16 @@ static func _test_resolve_leaves_turns_taken_unchanged_across_repeats() -> Array
 	)
 
 
-## PassAction has no observable effect on the state at all. Asserted by
-## digest: take the state's identity before the call, resolve, and require the
-## digest to match again with nothing put back by hand. Anything the action
-## touched -- `turns_taken`, `round_number`, the board, the generator
-## position, a fighter payload, a score -- would show up as a differing
-## digest.
+## PassAction's only observable effect is the one every command has:
+## `PowerStep.note_action()` on the success path, which opens the Turn's Power
+## Step and clears the consecutive-pass record. Nothing else moves.
+##
+## Asserted by digest, in the shape this case has always used and with one
+## addition: take the state's identity before the call, resolve, put back *only*
+## the Power Step this action is allowed to have opened, and require the digest
+## to match again. Anything else the action touched -- `turns_taken`,
+## `round_number`, the board, the generator position, a fighter payload, a
+## score -- would still show up as a differing digest.
 static func _test_resolve_leaves_the_rest_of_the_state_alone() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state()
@@ -99,11 +103,19 @@ static func _test_resolve_leaves_the_rest_of_the_state_alone() -> Array[String]:
 	violations.append_array(
 		_expect(state.round_number == before_round, "resolve() must not touch round_number")
 	)
+	violations.append_array(
+		_expect(state.power_step_open, "a successful resolve() must open the Turn's Power Step")
+	)
+
+	state.power_step_open = false
 
 	violations.append_array(
 		_expect(
 			state.digest() == before_digest,
-			"a successful resolve() must leave the state digest byte-identical, nothing restored"
+			(
+				"with the Power Step put back, a successful resolve() must leave the state digest "
+				+ "byte-identical -- nothing else restored"
+			)
 		)
 	)
 

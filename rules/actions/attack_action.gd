@@ -24,6 +24,13 @@
 ## result -- `TurnResult` is deliberately a dumb two-field record and is not
 ## widened to carry a combat payload for the benefit of one action.
 ##
+## **It calls `PowerStep.note_action(state)` on its success path**, as every
+## concrete command does, which opens the Turn's Power Step and clears any
+## consecutive-pass record. Neither `turns_taken` nor `round_number` is touched
+## by it or by anything else here: `turns_taken` rises only when the Power Step
+## ends, in `PowerStep.end_on_second_pass()`. `note_action()` draws nothing
+## from `state.rng`, so the draw order below is unaffected.
+##
 ## **Draw order is the contract.** The attack pool is drawn *entirely* before
 ## the save pool, both through `state.rng`, and nothing else in `resolve()`
 ## touches the generator. That ordering is what makes the hand-worked tests in
@@ -212,6 +219,7 @@ func resolve(state: GameState) -> TurnResult:
 		return TurnResult.failure(reason)
 
 	_resolve_attack(state, attacker, target)
+	PowerStep.note_action(state)
 	return TurnResult.ok()
 
 

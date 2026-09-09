@@ -73,6 +73,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Game State Test", "run": GameStateTest.run},
 	{"name": "Turn Action Test", "run": TurnActionTest.run},
 	{"name": "Pass Action Test", "run": PassActionTest.run},
+	{"name": "Power Step Test", "run": PowerStepTest.run},
 	{"name": "Attack Action Test", "run": AttackActionTest.run},
 	{"name": "Move Action Test", "run": MoveActionTest.run},
 	# Guard Action Test and Attack Action Guard Test are registered directly
@@ -97,6 +98,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Resource Data Test", "run": ResourceDataTest.run},
 	{"name": "Authority Test", "run": AuthorityTest.run},
 	{"name": "Action Runner Test", "run": ActionRunnerTest.run},
+	{"name": "Power Step Gate Test", "run": PowerStepGateTest.run},
 	{"name": "Command Taxonomy Contract Test", "run": CommandTaxonomyContractTest.run},
 ]
 

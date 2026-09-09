@@ -47,6 +47,14 @@
 ## **Neither `turns_taken` nor `round_number` is touched**, following
 ## `MoveAction`'s and `AttackAction`'s precedent.
 ##
+## **It calls `PowerStep.note_action(state)` on its success path**, as every
+## concrete command does, which opens the Turn's Power Step and clears any
+## consecutive-pass record. It reaches that call twice on a successful Charge
+## -- once through the composed `AttackAction` and once directly -- and
+## `note_action()` is idempotent, so the second call leaves exactly what the
+## first did. `turns_taken` still rises only when the Power Step ends, in
+## `PowerStep.end_on_second_pass()`.
+##
 ## **The templates and the profile are injected, never resolved.** They arrive
 ## through `_init()` and are handed to the composed `AttackAction`: nothing
 ## here calls `load()` or `preload()`, consults a registry, or asks `GameState`
@@ -138,7 +146,9 @@ func _init(
 ## 3. resolve the attack half, which re-reads the attacker and so attacks from
 ##    the destination;
 ## 4. re-read the actor, set `ChargeLockout.FLAG_CHARGED`, commit again;
-## 5. return `TurnResult.ok()`.
+## 5. note the action against the Power Step, idempotently -- step 3 already
+##    did it once;
+## 6. return `TurnResult.ok()`.
 ##
 ## The actor is re-read at step 4 rather than reusing the local `Fighter` from
 ## step 1: it is one parse, and it keeps this action from depending on which
@@ -169,6 +179,7 @@ func resolve(state: GameState) -> TurnResult:
 	var charged := _read_fighter(state)
 	charged.set_status_flag(ChargeLockout.FLAG_CHARGED)
 	state.update_fighter(actor_id(), charged.to_dict())
+	PowerStep.note_action(state)
 	return TurnResult.ok()
 
 

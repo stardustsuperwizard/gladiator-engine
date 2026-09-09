@@ -50,7 +50,12 @@
 ## **Neither `turns_taken` nor `round_number` is touched.** Move has three
 ## observable effects of its own -- position, occupancy, the flag -- so it
 ## follows `AttackAction`'s precedent: `PassAction` touches neither field
-## either, and has no observable effect on `state` at all.
+## either.
+##
+## **It calls `PowerStep.note_action(state)` on its success path**, as every
+## concrete command does, which opens the Turn's Power Step and clears any
+## consecutive-pass record. That is not a Turn count: `turns_taken` still rises
+## only when the Power Step ends, in `PowerStep.end_on_second_pass()`.
 ##
 ## **Draws nothing from `state.rng`.** Move is fully determined by the board
 ## and the `move()` stat; `rules/tests/ambient_rng_contract_test.gd` and
@@ -128,6 +133,7 @@ func resolve(state: GameState) -> TurnResult:
 
 	fighter.set_status_flag(FLAG_MOVED)
 	state.update_fighter(actor_id(), fighter.to_dict())
+	PowerStep.note_action(state)
 	return TurnResult.ok()
 
 
