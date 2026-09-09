@@ -248,6 +248,16 @@ game.
 > pass every test now and be silently wrong then. Settled here, in the
 > document, rather than left to whichever resolver reaches it first. Owner
 > decision, 2026-09-09.
+>
+> **§5.3 also gains a default action, also a rules addition.** The old text
+> said the active player "picks exactly one core action and resolves it" and
+> never said what happens if they do not pick one — while §6's core actions
+> have never included a Pass, so declining was not expressible either. An
+> Action Step that can stall has no end, and a timed game needs a defined
+> outcome when a clock expires. The default is **Guard**, on the first eligible
+> fighter in deployment order. Owner decision, 2026-09-09. The trigger for it —
+> clock, disconnect, or a player declining — is left to implementations on
+> purpose; only the outcome is a rule.
 
 ### 5.1 The layers
 
@@ -284,6 +294,37 @@ counts completed Turns, not resolved actions. With no cards in the game the
 Power Step ends immediately and the two are indistinguishable; they stop being
 indistinguishable the moment the card system exists, and a counter that
 conflated them would then be silently wrong.
+
+**Passing is a move, not an absence.** A player passes the Power Step by
+saying so, and the Step ends only on two passes in a row. A player who has
+already passed may act again if the opponent then acts — that is what "in a
+row" means, and it is why a single pass cannot end the Step. Even with no cards
+in the game, the two passes happen; the Step is empty, not skipped.
+
+**Every Action Step resolves exactly one core action, including one the active
+player did not choose.** A player who does not choose takes **Guard** (§6) on
+the first of their fighters, in deployment order (§4), that is eligible to
+Guard — not defeated, and not held by the lockout rule in §6. A player with no
+eligible fighter resolves nothing, and the Action Step ends having changed
+nothing.
+
+*Why the rule exists at all:* a Turn that can stall has no end, and a timed
+game needs a defined outcome when the clock runs out. What triggers "did not
+choose" — a clock, a disconnect, a player declining — is an implementation
+concern and deliberately not specified here. That there is exactly one answer
+when it happens is a rule, and this is it.
+
+*Why Guard:* it is the only core action that is purely defensive. It cannot
+target an opponent, cannot move a fighter, cannot deal damage and cannot score.
+A player who fails to act should not thereby advance, and every other core
+action would let them.
+
+*Why the first eligible fighter and not the best-placed one:* the default is
+meant to be legal and dull, not good. Chosen without regard to where the
+fighting is, a default Guard is usually worth little — which is what stops
+running the clock down from being a play worth making. A default that chose
+well would turn the timeout into a free defensive action, and players would
+farm it.
 
 ### 5.4 The End Segment
 
