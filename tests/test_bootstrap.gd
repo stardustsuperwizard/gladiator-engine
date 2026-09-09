@@ -116,7 +116,7 @@ func _check_engine_version() -> bool:
 		get_tree().quit(1)
 		return false
 
-	var features := config.get_value("application", "config/features", [])
+	var features: PackedStringArray = config.get_value("application", "config/features", [])
 
 	if features is not PackedStringArray or features.is_empty():
 		printerr("ERROR: No engine version found in project.godot application/config/features")
@@ -127,7 +127,7 @@ func _check_engine_version() -> bool:
 	# have numeric parts on both sides.
 	var declared_version: String = ""
 	for feature in features:
-		var parts := feature.split(".")
+		var parts: PackedStringArray = feature.split(".")
 		if parts.size() >= 2 and parts[0].is_valid_int() and parts[1].is_valid_int():
 			declared_version = feature
 			break
@@ -138,13 +138,13 @@ func _check_engine_version() -> bool:
 		return false
 
 	# Compare against running engine version
-	var version_info := Engine.get_version_info()
+	var version_info: Dictionary = Engine.get_version_info()
 	var running_major: int = version_info["major"]
 	var running_minor: int = version_info["minor"]
-	var running_version := "%d.%d" % [running_major, running_minor]
+	var running_version: String = "%d.%d" % [running_major, running_minor]
 
 	# Parse declared version
-	var declared_parts := declared_version.split(".")
+	var declared_parts: PackedStringArray = declared_version.split(".")
 	if declared_parts.size() < 2:
 		printerr("ERROR: Invalid version format in project.godot: %s" % declared_version)
 		get_tree().quit(1)
@@ -170,14 +170,14 @@ func _check_harness_liveness() -> bool:
 	# Try tree-wide probe first: test each suite's Callable
 	for suite in _suites:
 		var callable: Callable = suite["run"]
-		var obj = callable.get_object()
+		var obj: Variant = callable.get_object()
 
 		if obj == null:
 			continue
 
 		# Check if this object has the _expect method
 		if obj.has_method("_expect"):
-			var result = obj.call("_expect", false, "harness liveness probe")
+			var result: Variant = obj.call("_expect", false, "harness liveness probe")
 
 			# Type guard is part of the failure condition: must be non-empty Array
 			if not (result is Array and not result.is_empty()):
@@ -195,7 +195,7 @@ func _check_harness_liveness() -> bool:
 
 	# Fallback: probe HexCoordTest directly if tree-wide found no probes
 	# This is used only if dynamic dispatch through Callable doesn't work
-	var result = HexCoordTest._expect(false, "harness liveness probe")
+	var result: Variant = HexCoordTest._expect(false, "harness liveness probe")
 
 	# Type guard is part of the failure condition: must be non-empty Array
 	if not (result is Array and not result.is_empty()):
@@ -209,13 +209,13 @@ func _check_harness_liveness() -> bool:
 
 func _finalize() -> void:
 	_report()
-	var truncated := _passes.size() + _failures.size() < _suites.size()
+	var truncated: bool = _passes.size() + _failures.size() < _suites.size()
 	get_tree().quit(1 if not _failures.is_empty() or truncated else 0)
 
 
 func _report() -> void:
-	var actual := _passes.size() + _failures.size()
-	var expected := _suites.size()
+	var actual: int = _passes.size() + _failures.size()
+	var expected: int = _suites.size()
 
 	# Fewer suites ran than exist: something aborted partway. Report which
 	# never ran rather than a pass count that looks fine on its own.
