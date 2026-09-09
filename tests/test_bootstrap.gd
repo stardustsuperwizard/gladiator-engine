@@ -10,13 +10,27 @@
 ## Before running any suite, two guards verify the harness is functional:
 ## 1. Engine version floor: reads the required version from project.godot's
 ##    application/config/features and aborts if the running engine is below it.
-## 2. Harness liveness probe: attempts to call _expect(false, "...") on every
-##    suite through its registered Callable, and aborts if any returns an empty
-##    array, indicating the harness cannot detect failures. Attempts dynamic
-##    dispatch through each Callable's object; if that succeeds, probes that
-##    suite. If no callable suites are found, falls back to a direct static
-##    call on HexCoordTest. Always prints the probed suite count against the
-##    total count so a collapse to zero is visible in the log.
+## 2. Harness liveness probe: puts _expect(false, "...") through every suite in
+##    _suites that defines it, reached through the Callable already registered
+##    there, and aborts if any returns an empty array -- which would mean the
+##    harness cannot detect assertion failures on the running engine.
+##
+##    How the dispatch works, measured on 4.7.1-stable rather than assumed.
+##    Callable.get_object() on a static-method Callable returns the GDScript
+##    resource itself, and Object.has_method() on that resource DOES resolve
+##    the script's own static methods: it answers false for the six contract
+##    suites that define no _expect and true for the twenty-eight that do.
+##    Script.has_static_method() is documented but is NOT bound for scripting
+##    on this engine -- calling it raises "Invalid call. Nonexistent function
+##    'has_static_method' in base 'GDScript'". So the existence check has to be
+##    has_method(), and it has to happen before the call: Object.call() on a
+##    method the object lacks is not a call that returns null, it is a runtime
+##    error that halts the calling function outright.
+##
+##    Because the tree-wide form works, the narrowed single-suite fallback the
+##    Issue permitted is not used. A collapse to zero probed suites is itself
+##    treated as a harness failure, and the probed count is printed against the
+##    suite count on every path so any partial collapse is visible in the log.
 ##
 ## Deliberately carries no class_name -- a global class sharing an autoload's
 ## name is a parse error in Godot 4 ("hides an autoload singleton").
@@ -174,58 +188,61 @@ func _check_engine_version() -> bool:
 
 
 func _check_harness_liveness() -> bool:
-	# Attempt to probe every suite's _expect through its registered Callable.
-	# This validates that the harness can detect failures on the running engine.
+	# Put a known-false assertion through every suite that defines _expect,
+	# reached through the Callable already registered in _suites. No second
+	# list: the one list is the source of what gets probed, as it is of what
+	# gets run.
 	var probed_count := 0
+	var without_expect: Array[String] = []
 
-	# Try tree-wide probe first: test each suite's Callable
 	for suite in _suites:
 		var callable: Callable = suite["run"]
-		var obj: Variant = callable.get_object()
+		var obj: Object = callable.get_object()
 
-		if obj == null:
+		# The existence check must precede the call. Object.call() on a method
+		# the object does not have is a runtime error that halts this function,
+		# not a call that returns null, so it cannot double as the check.
+		# has_method() on the GDScript resource resolves the script's statics;
+		# Script.has_static_method() is unbound for scripting on 4.7.1-stable.
+		if obj == null or not obj.has_method("_expect"):
+			without_expect.append(suite["name"])
 			continue
 
-		# Attempt to call _expect on this object's Callable.
-		# For static methods on a GDScript resource, Script.has_static_method() exists
-		# to check, but we attempt direct invocation instead and handle any result.
 		var result: Variant = obj.call("_expect", false, "harness liveness probe")
 
-		# Type guard is part of the failure condition: must be non-empty Array.
-		# Any non-Array result (including null) means the method doesn't exist or failed,
-		# so we skip this suite and continue to the next.
-		if result is Array and not result.is_empty():
-			probed_count += 1
-		elif result is Array and result.is_empty():
-			# The method exists but returned empty, which is a failure
+		# The type guard is part of the failure condition, not a precondition
+		# for detecting it: a non-Array return is as broken as an empty one.
+		if not (result is Array and not result.is_empty()):
 			printerr(
 				(
-					"ERROR: Harness liveness probe failed on %s: _expect(false, ...) returned empty array"
-					% suite["name"]
+					"ERROR: Harness liveness probe failed on %s: _expect(false, ...) returned %s"
+					% [suite["name"], result]
 				)
 			)
-			printerr(
-				"The test harness cannot detect assertion failures on this engine version."
-			)
+			printerr("The test harness cannot detect assertion failures on this engine version.")
 			get_tree().quit(1)
 			return false
-		# else: method doesn't exist on this suite, skip it
 
-	# Report coverage whether tree-wide probe succeeded or found nothing
-	print("Probed %d of %d suites for harness liveness" % [probed_count, _suites.size()])
+		probed_count += 1
 
-	# If tree-wide probe succeeded and found callable suites, we're done
-	if probed_count > 0:
-		return true
+	# Printed on every path, including zero, so a collapse in coverage shows up
+	# in the log instead of quietly reducing the guard to nothing.
+	print(
+		(
+			"Harness liveness probe: %d of %d suites probed (%d define no _expect: %s)"
+			% [
+				probed_count,
+				_suites.size(),
+				without_expect.size(),
+				", ".join(without_expect) if not without_expect.is_empty() else "none"
+			]
+		)
+	)
 
-	# Fallback: probe HexCoordTest directly if tree-wide found no probes
-	# This is used only if dynamic dispatch through Callable doesn't work on this engine
-	print("No callable suites found; using HexCoordTest fallback")
-	var result: Variant = HexCoordTest._expect(false, "harness liveness probe")
-
-	# Type guard is part of the failure condition: must be non-empty Array
-	if not (result is Array and not result.is_empty()):
-		printerr("ERROR: Harness liveness probe failed: _expect(false, ...) returned empty array")
+	# Zero probes is itself a harness collapse: the guard would be reporting
+	# success without having asserted anything.
+	if probed_count == 0:
+		printerr("ERROR: Harness liveness probe covered no suites; no suite defines _expect.")
 		printerr("The test harness cannot detect assertion failures on this engine version.")
 		get_tree().quit(1)
 		return false
