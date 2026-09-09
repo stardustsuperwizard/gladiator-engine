@@ -30,5 +30,5 @@ written against 4.7 and already compile.
 | Version | Relevance here |
 | --- | --- |
 | 4.5 | `Resource.duplicate(true)` narrowed — see `breaking-changes.md`. Directly affects the template/runtime split in `rules/fighters/`. |
-| 4.6 | `AStar*` returns an empty path from a disabled start point. Affects Move, which is the next work. `.tscn` format changed (backward- and forward-compatible). |
-| 4.7 | Overrides of a method with a typed return now inherit that return type. Affects every `TurnAction` subclass. |
+| 4.6 | `AStar*` returns an empty path from a disabled start point — recorded because Move deliberately does not use `AStar`. `.tscn` format changed (backward- and forward-compatible). |
+| 4.7 | Overrides of a method with a typed return now inherit that return type. Affects every `TurnAction` subclass, Charge included. |

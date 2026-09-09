@@ -16,10 +16,11 @@ Ordered by how likely each is to bite this project, not by version.
 > — *Upgrading to Godot 4.7*, GDScript
 
 **Why it matters here.** `rules/actions/` is nothing *but* overrides of
-`TurnAction`. `AttackAction` and `PassAction` already compile under 4.7, so the
-tree is clean — but Move, Guard and Charge are the next work, and each one is a
-new subclass. A branch of an overridden method that falls off the end without
-returning is now a compile error rather than an implicit `null`.
+`TurnAction`, whose `resolve()` returns `TurnResult`. Four subclasses compile
+under 4.7 today — `AttackAction`, `PassAction`, `MoveAction` and
+`GuardAction` — so the tree is clean, and Charge is still to come. A branch of
+an overridden `resolve()` that falls off the end without returning is now a
+compile error rather than an implicit `null`.
 
 This one is friendly: it fails at parse time, so CI catches it. It is listed
 because the *fix* is non-obvious if you have not seen the change.
@@ -71,24 +72,24 @@ why the sharing design stopped working.
 >
 > — *Upgrading to Godot 4.6*, Navigation
 
-**Why it matters here.** Move is the next action to build, and spec §12 warns
-that movement is a search problem rather than a coordinate calculation —
-routing *around* blocked and occupied hexes.
+**Why it matters here — and why this project is already clear of it.**
+Spec §12 warns that movement is a search problem rather than a coordinate
+calculation, routing *around* blocked and occupied hexes, which is the point at
+which the engine's own pathfinder looks like the obvious tool.
 
-`Board.reachable_from(origin, steps)` already exists and is hand-rolled, with
-`reachability_test.gd` behind it, so the settled answer is *not* `AStar`. This
-row is a warning against reaching for the engine's pathfinder as the obvious
-tool when Move needs an actual route rather than a reachable set.
+`MoveAction` (#133) does not use it. It resolves through
+`Board.reachable_from()`, hand-rolled with `reachability_test.gd` behind it,
+and its docstring says *"Reachability is `Board.reachable_from()`, and only
+that."* Charge composes Move, so it inherits that decision.
 
-If anyone does: `AStar2D` is a `RefCounted`, so the `rules/` base-class
-contract permits it, and the 4.6 change then applies. A fighter on a hex that
-has since been marked blocked or occupied is a disabled start point, and the
-call returns an empty path rather than erroring. An empty path and "no legal
-move" would be the same value and different facts — distinguish them in the
-action's `FAILURE_*` block rather than letting an empty array mean both.
-
-Extending `reachable_from`'s own search to return routes avoids the question
-entirely, and keeps the movement rules where the spec says they live.
+The row stays because the decision could be revisited. `AStar2D` is a
+`RefCounted`, so the `rules/` base-class contract permits it, and the 4.6
+change would then apply: a fighter on a hex since marked blocked or occupied is
+a disabled start point, and the call returns an empty path rather than erroring.
+An empty path and "no legal move" are the same value and different facts —
+they would need distinguishing in the action's `FAILURE_*` block rather than
+letting an empty array mean both. Extending `reachable_from`'s own search to
+return routes avoids the question entirely.
 
 ---
 
@@ -136,4 +137,4 @@ volumetric fog and Mobile renderer changes (no rendering); 4.7's
 `CPUParticles*`/`GPUParticles*`, `RichTextLabel`, `LookAtModifier3D` and macOS
 11 minimum (no particles, no UI yet, Linux CI); 4.5/4.6 navigation *server*
 changes (`NavigationServer2D` region merging and async iteration — this project
-does not use the navigation server, only possibly `AStar`).
+does not use the navigation server, and does not use `AStar` either).
