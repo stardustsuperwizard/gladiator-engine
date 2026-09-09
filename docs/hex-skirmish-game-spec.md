@@ -55,6 +55,11 @@ build order and architecture live in
 > fighter, and symbol-matched dice are replaced by a d6 against a target number
 > (§7).
 
+> **Revised 2026-09-09.** `CombatProfile` gained a `defeatAward` field: a flat,
+> authored point value awarded to the attacker's owner when a defeat occurs
+> (§9). Who scores when a fighter is defeated with no attacker (a §2 hazard, a
+> friendly card effect) is an open question.
+
 ### 3.1 Entities
 
 ```
@@ -79,6 +84,7 @@ CombatProfile {                     // one per game; every tuning dial in §7
   saveSurroundModifier               // ATTACKER surrounded
   guardModifier                      // defender guarded, §6
   minTarget, maxTarget               // the clamp, see §7.3
+  defeatAward                        // flat points awarded on defeat, §9 — 1
 }
 
 ConstructionBudget {                // §3.2; validates an authored fighter

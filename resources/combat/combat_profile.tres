@@ -17,3 +17,4 @@ save_surround_modifier = 3
 guard_modifier = 1
 min_target = 2
 max_target = 6
+defeat_award = 1

@@ -59,6 +59,16 @@
 ## counter at or above health, where `Fighter.is_defeated()` keeps answering
 ## true.
 ##
+## **Defeat also awards spec §9's flat point.** `_apply_hit()` credits
+## `_combat_profile.defeat_award` to `attacker.owner_id()`'s `PlayerState.score`
+## -- a flat, authored value, not anything read off either fighter's stats. A
+## missing `PlayerState` is skipped rather than refused, since the defeat
+## itself has already happened. This is the only seam that exists for the
+## award today; nothing routes it through `Authority` or `ActionRunner`. The
+## award draws nothing from `state.rng`. Who scores when a fighter is defeated
+## with no attacker (a §2 hazard, a friendly card effect) is an open spec
+## question this resolver does not answer.
+##
 ## **A push is optional, declared, and not a move -- spec §7.6-7.7.**
 ## `push_back` arrives through `_init()`, because spec §7.6 leaves whether to
 ## attempt the shove to the attacking player, not to this resolver; defaulting
@@ -71,7 +81,14 @@
 ## from `state.rng` -- the generator's position after an attack is pinned by
 ## the tests above, and a push must not shift it. And it sets no status flag
 ## at all: spec §6's `"moved"` flag belongs to a fighter's own chosen move, not
-## a shove it did not choose, and no `"moved"` constant exists yet regardless.
+## a shove it did not choose. `MoveAction.FLAG_MOVED` exists, and this class
+## still sets no flag of its own for a push.
+##
+## **Guard's two effects, spec §6 and §7.3.** A guarded target -- one holding
+## `GuardAction.FLAG_GUARDED` -- subtracts `guard_modifier` from the save
+## target, per `_guard_bonus()`, and is immune to the push above on a `HIT` or
+## a `DRAWN` alike. Guard blocks the push and nothing else: it does not reduce
+## damage, negate a hit, or touch the attacker's own pool.
 ##
 ## Adding this action required no edit to `ActionRunner` and none to
 ## `Authority`: generality comes from subclassing `resolve()`.
@@ -328,7 +345,7 @@ func _resolve_attack(state: GameState, attacker: Fighter, target: Fighter) -> vo
 	)
 
 	_attack_target = _resolved_attack_target(attacker, target)
-	_save_target = _resolved_save_target()
+	_save_target = _resolved_save_target(target)
 
 	var attack_roll := DicePool.roll_dice(attacker.attack(), _combat_profile.die_sides, state.rng)
 	var save_roll := DicePool.roll_dice(target.save(), _combat_profile.die_sides, state.rng)
@@ -341,7 +358,8 @@ func _resolve_attack(state: GameState, attacker: Fighter, target: Fighter) -> vo
 		_apply_hit(state, attacker, target)
 
 	var hit_or_drawn := _outcome == DicePool.Outcome.HIT or _outcome == DicePool.Outcome.DRAWN
-	if _push_back and hit_or_drawn and not _target_defeated:
+	var guarded := target.has_status_flag(GuardAction.FLAG_GUARDED)
+	if _push_back and hit_or_drawn and not _target_defeated and not guarded:
 		_apply_push(state, attacker, target)
 
 
@@ -363,16 +381,29 @@ func _resolved_attack_target(attacker: Fighter, target: Fighter) -> int:
 
 ## Spec §7.3's save chart: the profile's `save_target`, less the *attacker's*
 ## flanking priced from the `save_*` modifiers -- larger magnitudes than the
-## attack chart's, and keyed on the other fighter -- clamped.
+## attack chart's, and keyed on the other fighter -- less spec §6's Guard
+## bonus when `target` holds `GuardAction.FLAG_GUARDED`, clamped.
 ##
-## `extra` is `0`. Spec §7.3's other save-chart row is Guard, whose
-## `guard_modifier` this action deliberately leaves unread: the `guarded` flag
-## has no writer until the Guard action exists.
-func _resolved_save_target() -> int:
+## `_guard_bonus()` is passed as `target_modifier()`'s signed `extra`, already
+## negative, because every §7.3 row is a bonus, mirroring how
+## `_resolved_attack_target()` passes `_engagement_bonus()`.
+func _resolved_save_target(target: Fighter) -> int:
 	var modifier := DicePool.target_modifier(
-		_save_bonus, _combat_profile.save_flank_modifier, _combat_profile.save_surround_modifier, 0
+		_save_bonus,
+		_combat_profile.save_flank_modifier,
+		_combat_profile.save_surround_modifier,
+		_guard_bonus(target)
 	)
 	return _combat_profile.clamped_target(_combat_profile.save_target, modifier)
+
+
+## `-guard_modifier` when the target holds spec §6's guarded flag, `0`
+## otherwise. Negative because every §7.3 row is a bonus, and the profile
+## stores the magnitude positive.
+func _guard_bonus(target: Fighter) -> int:
+	if target.has_status_flag(GuardAction.FLAG_GUARDED):
+		return -_combat_profile.guard_modifier
+	return 0
 
 
 ## `-engagement_modifier` when the attacker stands at or within
@@ -391,8 +422,9 @@ func _engagement_bonus(attacker: Fighter, target: Fighter) -> int:
 	return 0
 
 
-## Applies the *attacker's* damage to `target`, commits the payload, and takes
-## the fighter off the board when the damage defeated it.
+## Applies the *attacker's* damage to `target`, commits the payload, takes the
+## fighter off the board when the damage defeated it, and on a defeat awards
+## spec §9's flat point to the attacker's owner.
 ##
 ## `attacker.damage()`, never the target's: the two fighters have different
 ## stats, and reading the wrong one is a wrong result rather than a crash.
@@ -400,13 +432,26 @@ func _engagement_bonus(attacker: Fighter, target: Fighter) -> int:
 ## The payload stays in `GameState` either way -- spec §9 removes a defeated
 ## fighter from the *board*, and `Fighter.is_defeated()` has to keep answering
 ## true for the stored record.
+##
+## The award is `_combat_profile.defeat_award`, a flat authored value rather
+## than anything read off either fighter -- §3.2 deleted `pointValue`, and this
+## is not its replacement in disguise. The recipient is `attacker.owner_id()`;
+## a state with no `PlayerState` for that id is skipped, not refused -- the
+## defeat itself has already happened by the time the award is reached, so
+## there is nothing left to refuse. Draws nothing from `state.rng`.
 func _apply_hit(state: GameState, attacker: Fighter, target: Fighter) -> void:
 	target.apply_damage(attacker.damage())
 	state.update_fighter(_target_id, target.to_dict())
 
 	_target_defeated = target.is_defeated()
-	if _target_defeated:
-		state.board.remove_occupant(target.position())
+	if not _target_defeated:
+		return
+
+	state.board.remove_occupant(target.position())
+
+	var scorer := state.player(attacker.owner_id())
+	if scorer != null:
+		scorer.score += _combat_profile.defeat_award
 
 
 ## Spec §7.6-7.7: shoves `target` one hex directly away from `attacker`, on a

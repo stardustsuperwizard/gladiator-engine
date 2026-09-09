@@ -45,6 +45,11 @@ extends Resource
 ## Clamp ceiling -- a natural 6 always succeeds.
 @export var max_target: int = 0
 
+## Spec §9's flat point awarded to the defeating attacker's owner when a
+## fighter is defeated. A flat value, not per-fighter -- §3.2 deleted
+## `pointValue`, and this dial is what replaced it.
+@export var defeat_award: int = 0
+
 
 ## The target number after `modifier`, clamped to [min_target, max_target].
 ## `modifier` is signed and, as every §7.3 row is a bonus, ordinarily negative.

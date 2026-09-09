@@ -278,6 +278,14 @@ Because the rules module is `RefCounted` and dependency-free, these tests need
 no scene, no `SceneTree` fixtures, and no mocking framework — which is the
 practical payoff of §1 above.
 
+**Engine version.** The minimum supported Godot version is declared in
+`project.godot`'s `application/config/features` array (e.g.,
+`PackedStringArray("4.7")`). The bootstrap autoload enforces this on headless
+runs: if the running engine's major.minor version is below the declared version,
+the run aborts with a non-zero exit and an error message. This prevents silent
+test failures where the test harness cannot detect assertion violations. Running
+the project in the editor on an older engine does not abort.
+
 ---
 
 ## 8. Version control
