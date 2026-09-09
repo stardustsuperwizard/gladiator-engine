@@ -16,16 +16,18 @@ Ordered by how likely each is to bite this project, not by version.
 > — *Upgrading to Godot 4.7*, GDScript
 
 **Why it matters here.** `TurnAction.resolve()` returns `TurnResult`, and
-every player action overrides it. Four subclasses compile under 4.7 today —
-`AttackAction`, `PassAction`, `MoveAction` and `GuardAction` — so the tree is
-clean, and `ChargeAction` is still to come. A branch of an overridden
-`resolve()` that falls off the end without returning is now a compile error
-rather than an implicit `null`.
+every player action overrides it — so this lands on the whole of
+`rules/actions/`, and on every action added after it. A branch of an
+overridden `resolve()` that falls off the end without returning is now a
+compile error rather than an implicit `null`.
 
-Note that *`rules/actions/` file* and *`TurnAction` subclass* are not the same
-set: `ChargeLockout` lives there and `extends RefCounted`, because it is spec
-§6's shared legality predicate rather than an action. Count by base class, not
-by directory.
+Deliberately no inventory here of which subclasses exist. That list changed
+twice while this file was being written, and a count in prose is exactly the
+thing that goes stale; `.claude/hooks/session-start.sh` derives it at session
+start instead. What is worth writing down is that *`rules/actions/` file* and
+*`TurnAction` subclass* are not the same set — `ChargeLockout` lives there and
+`extends RefCounted`, because it is spec §6's shared legality predicate rather
+than an action — so anything counting actions counts base classes.
 
 This one is friendly: it fails at parse time, so CI catches it. It is listed
 because the *fix* is non-obvious if you have not seen the change.

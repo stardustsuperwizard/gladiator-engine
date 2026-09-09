@@ -45,7 +45,10 @@ if [ -d rules/actions ]; then
 	echo "Actions built (TurnAction subclasses): ${actions:-none}"
 fi
 
-# The three named in AGENTS.md as the next work, in its order.
+# Spec §6's core actions, by name. The one hardcoded list in this file, and
+# so the one line here that can go stale: it is keyed on a document rather
+# than derived. It prints nothing once all of them exist, which is the state
+# as of ChargeAction (#146). Add a name here if spec §6 ever gains an action.
 missing=""
 for a in move_action guard_action charge_action; do
 	[ -f "rules/actions/$a.gd" ] || missing="$missing ${a%_action}"
