@@ -1,13 +1,17 @@
 ## Spec §6's Move: a fighter steps to a reachable destination.
 ##
 ## `resolve()` refuses first, changing nothing, then commits the board and the
-## payload together: `Board.place_occupant()` at the destination, then
-## `Board.remove_occupant()` at the origin, then the fighter's own position and
-## its new `"moved"` flag, then the payload back into `GameState`. That order --
-## secure the destination before freeing the origin -- is `AttackAction`'s own
-## `_apply_push()` documented as an architecture constraint, and it applies here
-## for the identical reason: a refused relocation must never leave a fighter
-## standing on no hex at all.
+## payload together: `Relocation.relocate()` for the board and the fighter's
+## own position, then its new `"moved"` flag, then the payload back into
+## `GameState`.
+##
+## **The relocation itself lives in `Relocation`, not here.** The place-then-
+## free ordering, and why a refused relocation must never leave a fighter
+## standing on no hex at all, are documented on that class -- it is the one
+## primitive this action and `ChargeAction` both commit their board change
+## through, so a second copy of the ordering cannot drift. What stays here is
+## everything that is Move's rather than relocation's: the refusal order, the
+## reachability check, and the `"moved"` flag.
 ##
 ## **Reachability is `Board.reachable_from()`, and only that.** It is a
 ## breadth-first search that routes *around* `BLOCKED` and occupied hexes,
@@ -100,8 +104,12 @@ func _init(actor_id: String, destination: Vector3i, actor_template: FighterTempl
 ## Refuses first, changing nothing at all -- `_refusal()` fixes the order the
 ## reasons are tried in, so a request failing more than one condition always
 ## reports the same one. Then, in exactly the order the class docstring gives:
-## secures the destination on the board, frees the origin, moves the fighter,
-## sets `FLAG_MOVED`, and commits the payload.
+## relocates through `Relocation.relocate()`, which secures the destination
+## before freeing the origin, then sets `FLAG_MOVED`, then commits the payload.
+##
+## A `Relocation.relocate()` that returns `false` has changed nothing, and is
+## reported as `FAILURE_DESTINATION_UNREACHABLE` -- the same constant
+## `_refusal()` gives for a destination the search never reached.
 func resolve(state: GameState) -> TurnResult:
 	var fighter := _read_fighter(state)
 
@@ -109,12 +117,9 @@ func resolve(state: GameState) -> TurnResult:
 	if not reason.is_empty():
 		return TurnResult.failure(reason)
 
-	var origin := fighter.position()
-	if not state.board.place_occupant(_destination, StringName(actor_id())):
+	if not Relocation.relocate(state.board, fighter, _destination):
 		return TurnResult.failure(FAILURE_DESTINATION_UNREACHABLE)
 
-	state.board.remove_occupant(origin)
-	fighter.move_to(_destination)
 	fighter.set_status_flag(FLAG_MOVED)
 	state.update_fighter(actor_id(), fighter.to_dict())
 	return TurnResult.ok()

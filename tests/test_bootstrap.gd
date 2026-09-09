@@ -83,6 +83,12 @@ var _suites: Array[Dictionary] = [
 	{"name": "Guard Action Test", "run": GuardActionTest.run},
 	{"name": "Attack Action Guard Test", "run": AttackActionGuardTest.run},
 	{"name": "Charge Lockout Test", "run": ChargeLockoutTest.run},
+	# Charge Action Equivalence Test is a suite of record rather than a nested
+	# call inside Charge Action Test: the split exists to stay under
+	# .gdlintrc's 1000-line cap, and registering it directly keeps its name in
+	# the headless run's output. See its own docstring.
+	{"name": "Charge Action Test", "run": ChargeActionTest.run},
+	{"name": "Charge Action Equivalence Test", "run": ChargeActionEquivalenceTest.run},
 	{"name": "Determinism Test", "run": DeterminismTest.run},
 	{"name": "Fighter Template Test", "run": FighterTemplateTest.run},
 	{"name": "Fighter Test", "run": FighterTest.run},

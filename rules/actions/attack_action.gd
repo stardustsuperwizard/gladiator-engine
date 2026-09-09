@@ -270,6 +270,39 @@ func pushed() -> bool:
 	return _pushed
 
 
+## Why an attack launched from `attacker_position` could not resolve, or `&""`
+## when it could. Reads the state; changes nothing and draws nothing.
+##
+## The attacker is parsed exactly as `resolve()` parses it and then moved to
+## `attacker_position` in memory only -- the throwaway `Fighter` is never
+## committed, and neither the board nor the stored payload is touched. The
+## answer comes from `_refusal()` below, which stays the single implementation
+## of attack legality; this seam adds no second copy of any rule.
+##
+## **The pre-check is exact, and that is what lets `ChargeAction` refuse before
+## it moves.** Of the terms `_refusal()` reads, only two are
+## position-dependent: `HexCoord.distance()` against `range_hexes()`, and
+## `Board.has_line_of_sight()`. `has_line_of_sight()` is documented as blocked
+## by BLOCKED terrain and missing hexes only, explicitly **not** by occupancy,
+## so vacating the origin cannot open a line and arriving at the destination
+## cannot close one. The attacker's own position is therefore the only term the
+## move changes, and evaluating the predicate at the destination gives
+## precisely the answer the post-move attack will give. That invariant is what
+## `ChargeAction`'s resolution sequence rests on.
+##
+## A `null` attacker -- no such fighter, or a payload that will not parse -- is
+## passed straight through without `move_to()`; `_refusal()` already turns that
+## into the right constant.
+func refusal_from(state: GameState, attacker_position: Vector3i) -> StringName:
+	var attacker := _read_fighter(state.fighter(actor_id()), _attacker_template)
+	var target := _read_fighter(state.fighter(_target_id), _target_template)
+
+	if attacker != null:
+		attacker.move_to(attacker_position)
+
+	return _refusal(state, attacker, target)
+
+
 ## Why this attack cannot resolve, or `&""` when it can.
 ##
 ## The single implementation of the predicate, in three steps and one fixed
