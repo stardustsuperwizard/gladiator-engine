@@ -21,6 +21,12 @@
 ## `Fighter.from_dict()` rejects a non-`String` entry. The `FAILURE_*`
 ## constants below stay `StringName` because `TurnResult.failure()` takes one.
 ##
+## **The string itself now lives in `StatusFlags`.** `FLAG_GUARDED` is
+## retained as a re-export so this class keeps naming the flag in its own
+## vocabulary, but `StatusFlags.GUARDED` is the canonical literal, needed once
+## a clearing step must enumerate every round-level flag at once. See that
+## class's docstring.
+##
 ## **A Guard by an already-guarded fighter is not a refusal.** It resolves,
 ## returns `TurnResult.ok()`, and is a no-op: `Fighter.set_status_flag()`
 ## already returns `false` for a flag it holds, and the committed payload is
@@ -54,7 +60,9 @@ class_name GuardAction
 extends TurnAction
 
 ## Spec §6's `"guarded"` flag, set on the acting fighter by a successful Guard.
-const FLAG_GUARDED := "guarded"
+## Re-exported from `StatusFlags`, the canonical home; see the class
+## docstring.
+const FLAG_GUARDED := StatusFlags.GUARDED
 
 ## `actor_template` is `null`, or the state holds a payload for `actor_id()`
 ## that will not parse.
