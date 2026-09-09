@@ -3,13 +3,47 @@
 | Field | Value |
 | --- | --- |
 | **Pinned version** | `4.7.1-stable` |
-| **Where the pin lives** | `.github/actions/setup-godot/action.yml` (`godot-version` default); `project.godot` declares `config/features=PackedStringArray("4.7")` |
+| **Canonical pin** | `.github/actions/setup-godot/action.yml`, the `godot-version` input default |
 | **Docs last verified** | 2026-09-09 against `godotengine/godot-docs` @ `stable` |
 
-Both pins have to move together. `setup-godot` downloads
-`Godot_v${GODOT_VERSION}_linux.x86_64.zip` from `godotengine/godot-builds`, and
-every call site passes the default, so changing the default changes CI
-everywhere at once.
+`setup-godot` downloads `Godot_v${GODOT_VERSION}_linux.x86_64.zip` from
+`godotengine/godot-builds`.
+
+## Where the pin actually lives
+
+Six places, and they have to move together:
+
+| Site | Form |
+| --- | --- |
+| `.github/actions/setup-godot/action.yml` | the `godot-version` input default — canonical |
+| `.github/workflows/godot-validation.yml` | its own `godot-version` input default, forwarded to `setup-godot` |
+| `.github/workflows/agent-02-implement.yml` | an explicit `godot-version:` at the call site |
+| `.github/workflows/copilot-setup-steps.yml` | an explicit `godot-version:` at the call site |
+| `.github/workflows/gdscript-lint.yml` | an explicit `godot-version:` at the call site |
+| `project.godot` | `config/features` carries the same major.minor; the test bootstrap enforces it as a runtime floor |
+
+> **Revised 2026-09-09, later the same day.** This section previously listed
+> two sites and said "every call site passes the default, so changing the
+> default changes CI everywhere at once." That was false when written. Three
+> workflows pass an explicit version that overrides the default, and
+> `godot-validation.yml` declares a fourth. Bumping the default alone would
+> have left four surfaces on the old engine — silently, because each would
+> still have gone green on it.
+
+Do not hand-check this list. Part 7 of `.github/scripts/test-workflow-logic.sh`
+fails the build when any site disagrees with the canonical pin, when
+`project.godot` disagrees on major.minor, or when this file stops naming the
+version it documents. Adding a new call site needs no edit here; adding a new
+*kind* of site does.
+
+**Part 7 asks only whether the pins agree, never whether they are current.**
+"Is there a newer Godot, and should we take it" needs the network and a
+judgement, so it belongs to a command rather than a test — `/godot-upgrade`,
+filed as #153 and not yet built. Until it exists, that check is the manual
+procedure in `README.md`.
+
+`4.7.2-stable` is out and this project is on `4.7.1-stable`; whether to take
+it is #154.
 
 ## The knowledge gap
 
