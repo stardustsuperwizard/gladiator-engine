@@ -92,6 +92,13 @@
 ##
 ## Adding this action required no edit to `ActionRunner` and none to
 ## `Authority`: generality comes from subclassing `resolve()`.
+##
+## **Spec §6's Charge lockout.** `ChargeLockout.locks_out()` is consulted as
+## its own step in `_refusal()`, between `_identity_refusal()` and
+## `_targeting_refusal()`: the first answers whether there is an attack to
+## resolve at all and the second whether this is a legal target, and the
+## lockout is neither. See `ChargeLockout`'s own docstring for the rule and
+## why it owns `"charged"` rather than `ChargeAction`.
 class_name AttackAction
 extends TurnAction
 
@@ -122,6 +129,9 @@ const FAILURE_TARGET_ALREADY_DEFEATED := &"attack_target_already_defeated"
 ## One of the three injected objects is `null`, or a fighter payload could not
 ## be parsed. Refusing beats crashing, and beats resolving against a guess.
 const FAILURE_MISSING_DATA := &"attack_missing_data"
+
+## Spec §6's Charge lockout refuses this actor -- see `ChargeLockout`.
+const FAILURE_CHARGE_LOCKOUT := &"attack_charge_lockout"
 
 ## The fighter this action attacks. Set once, at construction.
 var _target_id: String
@@ -262,19 +272,23 @@ func pushed() -> bool:
 
 ## Why this attack cannot resolve, or `&""` when it can.
 ##
-## The single implementation of the predicate, in two halves and one fixed
-## order: is there an attack to resolve at all, and then is this a legal target.
-## `Authority.refusal()` sets the shape -- one predicate, one order, no second
-## copy -- though the two answer entirely separate questions in entirely
-## separate vocabularies and neither may be expressed in the other's terms.
+## The single implementation of the predicate, in three steps and one fixed
+## order: is there an attack to resolve at all, then spec §6's Charge lockout,
+## then is this a legal target. `Authority.refusal()` sets the shape -- one
+## predicate, one order, no second copy -- though the three answer entirely
+## separate questions in entirely separate vocabularies and none may be
+## expressed in another's terms.
 ##
 ## `attacker` and `target` are the parsed payloads, either of which may be
 ## `null` here; `_identity_refusal()` is what guarantees they are not by the
-## time `_targeting_refusal()` reads them.
+## time the lockout or `_targeting_refusal()` reads them.
 func _refusal(state: GameState, attacker: Fighter, target: Fighter) -> StringName:
 	var identity := _identity_refusal(state, attacker, target)
 	if not identity.is_empty():
 		return identity
+
+	if ChargeLockout.locks_out(state, attacker):
+		return FAILURE_CHARGE_LOCKOUT
 
 	return _targeting_refusal(state, attacker, target)
 

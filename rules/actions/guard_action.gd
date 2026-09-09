@@ -45,6 +45,11 @@
 ## request; `rules/tests/ambient_rng_contract_test.gd` and
 ## `rules/tests/ambient_rng_scanner_test.gd` enforce that no generator call
 ## appears here.
+##
+## **Spec §6's Charge lockout.** `ChargeLockout.locks_out()` is consulted
+## right after the fighter's identity is settled, the last check in this
+## predicate. See `ChargeLockout`'s own docstring for the rule and why it owns
+## `"charged"` rather than `ChargeAction`.
 class_name GuardAction
 extends TurnAction
 
@@ -57,6 +62,9 @@ const FAILURE_MISSING_DATA := &"guard_missing_data"
 
 ## The state holds no fighter with this action's `actor_id()`.
 const FAILURE_NO_SUCH_FIGHTER := &"guard_no_such_fighter"
+
+## Spec §6's Charge lockout refuses this actor -- see `ChargeLockout`.
+const FAILURE_CHARGE_LOCKOUT := &"guard_charge_lockout"
 
 ## The authored data this resolver needs to parse the actor's payload,
 ## injected rather than resolved.
@@ -93,7 +101,7 @@ func resolve(state: GameState) -> TurnResult:
 ## Why this Guard cannot resolve, or `&""` when it can.
 ##
 ## The single implementation of the predicate, in a fixed order: the injected
-## data first, then the fighter's identity.
+## data first, then the fighter's identity, then spec §6's Charge lockout.
 func _refusal(state: GameState, fighter: Fighter) -> StringName:
 	if _template == null:
 		return FAILURE_MISSING_DATA
@@ -101,6 +109,9 @@ func _refusal(state: GameState, fighter: Fighter) -> StringName:
 	if fighter == null:
 		var ids := state.fighter_ids()
 		return FAILURE_NO_SUCH_FIGHTER if actor_id() not in ids else FAILURE_MISSING_DATA
+
+	if ChargeLockout.locks_out(state, fighter):
+		return FAILURE_CHARGE_LOCKOUT
 
 	return &""
 

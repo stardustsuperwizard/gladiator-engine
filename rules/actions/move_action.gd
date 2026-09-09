@@ -47,6 +47,12 @@
 ## and the `move()` stat; `rules/tests/ambient_rng_contract_test.gd` and
 ## `rules/tests/ambient_rng_scanner_test.gd` enforce that no generator call
 ## appears here.
+##
+## **Spec §6's Charge lockout.** `ChargeLockout.locks_out()` is consulted right
+## after the fighter's identity is settled and before the destination is
+## looked at -- the actor's own legality comes before any geometry. See
+## `ChargeLockout`'s own docstring for the rule and why it owns `"charged"`
+## rather than `ChargeAction`.
 class_name MoveAction
 extends TurnAction
 
@@ -68,6 +74,9 @@ const FAILURE_DESTINATION_IS_ORIGIN := &"move_destination_is_origin"
 ## longer than `move()`. Every one of those reports this single constant; see
 ## the class docstring.
 const FAILURE_DESTINATION_UNREACHABLE := &"move_destination_unreachable"
+
+## Spec §6's Charge lockout refuses this actor -- see `ChargeLockout`.
+const FAILURE_CHARGE_LOCKOUT := &"move_charge_lockout"
 
 ## Where this action moves the actor. Set once, at construction.
 var _destination: Vector3i
@@ -114,8 +123,9 @@ func resolve(state: GameState) -> TurnResult:
 ## Why this Move cannot resolve, or `&""` when it can.
 ##
 ## The single implementation of the predicate, in a fixed order: the injected
-## data and the fighter's identity first, then whether there is anywhere to go
-## at all, then whether the search can actually get there.
+## data and the fighter's identity first, then spec §6's Charge lockout, then
+## whether there is anywhere to go at all, then whether the search can
+## actually get there.
 func _refusal(state: GameState, fighter: Fighter) -> StringName:
 	if _template == null:
 		return FAILURE_MISSING_DATA
@@ -123,6 +133,9 @@ func _refusal(state: GameState, fighter: Fighter) -> StringName:
 	if fighter == null:
 		var ids := state.fighter_ids()
 		return FAILURE_NO_SUCH_FIGHTER if actor_id() not in ids else FAILURE_MISSING_DATA
+
+	if ChargeLockout.locks_out(state, fighter):
+		return FAILURE_CHARGE_LOCKOUT
 
 	if _destination == fighter.position():
 		return FAILURE_DESTINATION_IS_ORIGIN
