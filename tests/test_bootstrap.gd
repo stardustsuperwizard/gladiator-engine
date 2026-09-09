@@ -75,6 +75,13 @@ var _suites: Array[Dictionary] = [
 	{"name": "Pass Action Test", "run": PassActionTest.run},
 	{"name": "Attack Action Test", "run": AttackActionTest.run},
 	{"name": "Move Action Test", "run": MoveActionTest.run},
+	# Guard Action Test and Attack Action Guard Test are registered directly
+	# here rather than reached through a call inside another suite --
+	# attack_action_test.gd already sits at .gdlintrc's 1000-line cap, so
+	# adding one more call there is not an option. See
+	# rules/tests/attack_action_guard_test.gd's own docstring.
+	{"name": "Guard Action Test", "run": GuardActionTest.run},
+	{"name": "Attack Action Guard Test", "run": AttackActionGuardTest.run},
 	{"name": "Determinism Test", "run": DeterminismTest.run},
 	{"name": "Fighter Template Test", "run": FighterTemplateTest.run},
 	{"name": "Fighter Test", "run": FighterTest.run},

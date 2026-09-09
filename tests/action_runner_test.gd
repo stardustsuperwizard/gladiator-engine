@@ -27,6 +27,7 @@ static func run() -> bool:
 	violations.append_array(_test_run_reason_matches_refusal())
 	violations.append_array(_test_permitted_attack_resolves_through_the_runner())
 	violations.append_array(_test_move_authority_gate())
+	violations.append_array(_test_guard_authority_gate())
 
 	if violations.is_empty():
 		return true
@@ -458,6 +459,88 @@ static func _test_move_authority_gate() -> Array[String]:
 				and board.occupant_at(origin) == Board.EMPTY_OCCUPANT
 			),
 			"a permitted Move resolved through the runner must move the fighter on the board"
+		)
+	)
+
+	return violations
+
+
+## `GuardAction` submits through the very same `run()` every other command
+## uses -- generality comes from subclassing `resolve()`, and adding it needed
+## no edit to `ActionRunner` or `Authority`.
+##
+## Two requests, both from the active player `p1`, against two different
+## fighters: a Guard of `f2`, owned by `p2`, refused with
+## `REFUSED_NOT_YOUR_FIGHTER` before `resolve()` is ever reached -- asserted by
+## no fighter gaining the "guarded" flag, the same external-proof shape
+## `_test_move_authority_gate()` uses -- and a Guard of `f1`, `p1`'s own
+## fighter, which resolves and sets the flag.
+static func _test_guard_authority_gate() -> Array[String]:
+	var violations: Array[String] = []
+
+	var template := FighterTemplate.new()
+	template.template_id = "action-runner-guard-test-fighter"
+
+	var origin := Vector3i(0, 0, 0)
+	var other_hex := Vector3i(1, 0, -1)
+
+	var board := Board.new()
+	board.add_hex(origin, Board.HexType.NORMAL)
+	board.add_hex(other_hex, Board.HexType.NORMAL)
+
+	var state := GameState.new(board, DeterministicRng.new(5))
+	state.add_player("p1")
+	state.add_player("p2")
+	state.add_fighter("f1", Fighter.new("f1", template, "p1", origin).to_dict())
+	state.add_fighter("f2", Fighter.new("f2", template, "p2", other_hex).to_dict())
+	board.place_occupant(origin, &"f1")
+	board.place_occupant(other_hex, &"f2")
+
+	var refused := GuardAction.new("f2", template)
+	var refusal_result := ActionRunner.new(Authority.new(state)).run(refused, "p1")
+
+	violations.append_array(
+		_expect(
+			refusal_result.reason == Authority.REFUSED_NOT_YOUR_FIGHTER,
+			(
+				"a Guard submitted by a player who does not own the fighter must be refused with "
+				+ "REFUSED_NOT_YOUR_FIGHTER"
+			)
+		)
+	)
+
+	var refused_f2 := Fighter.from_dict(state.fighter("f2"), template)
+	var refused_f1 := Fighter.from_dict(state.fighter("f1"), template)
+	violations.append_array(
+		_expect(
+			(
+				refused_f2 != null
+				and not refused_f2.has_status_flag(GuardAction.FLAG_GUARDED)
+				and refused_f1 != null
+				and not refused_f1.has_status_flag(GuardAction.FLAG_GUARDED)
+			),
+			(
+				"a refused Guard must leave no fighter holding GuardAction.FLAG_GUARDED, proving "
+				+ "resolve() was never reached"
+			)
+		)
+	)
+
+	var permitted := GuardAction.new("f1", template)
+	var permitted_result := ActionRunner.new(Authority.new(state)).run(permitted, "p1")
+
+	violations.append_array(
+		_expect(
+			permitted_result.success,
+			"a Guard submitted by the owning active player must resolve through the runner"
+		)
+	)
+
+	var permitted_f1 := Fighter.from_dict(state.fighter("f1"), template)
+	violations.append_array(
+		_expect(
+			permitted_f1 != null and permitted_f1.has_status_flag(GuardAction.FLAG_GUARDED),
+			"a permitted Guard resolved through the runner must set GuardAction.FLAG_GUARDED"
 		)
 	)
 
