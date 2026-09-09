@@ -12,9 +12,11 @@
 ##    application/config/features and aborts if the running engine is below it.
 ## 2. Harness liveness probe: attempts to call _expect(false, "...") on every
 ##    suite through its registered Callable, and aborts if any returns an empty
-##    array, indicating the harness cannot detect failures. If the tree-wide
-##    probe finds no callable suites, falls back to a direct static call on
-##    HexCoordTest. Prints the probed suite count so a collapse to zero is
+##    array, indicating the harness cannot detect failures. Checks for static
+##    methods using Object.has_static_method() when the Callable's object is a
+##    Script, or Object.has_method() otherwise. If no callable suites are found,
+##    falls back to a direct static call on HexCoordTest. Always prints the
+##    probed suite count against the total count so a collapse to zero is
 ##    visible in the log.
 ##
 ## Deliberately carries no class_name -- a global class sharing an autoload's
@@ -118,7 +120,7 @@ func _check_engine_version() -> bool:
 
 	var features: PackedStringArray = config.get_value("application", "config/features", [])
 
-	if features is not PackedStringArray or features.is_empty():
+	if features.is_empty():
 		printerr("ERROR: No engine version found in project.godot application/config/features")
 		get_tree().quit(1)
 		return false
@@ -185,8 +187,18 @@ func _check_harness_liveness() -> bool:
 		if obj == null:
 			continue
 
-		# Check if this object has the _expect method
-		if obj.has_method("_expect"):
+		# Check if this object has the _expect static method.
+		# For static methods on a GDScript resource, we must check obj.script.has_static_method(),
+		# as Object.has_method() resolves against ClassDB entries, not the script's statics.
+		var is_script: bool = obj is Script
+		var has_expect: bool = false
+
+		if is_script:
+			has_expect = obj.has_static_method("_expect")
+		else:
+			has_expect = obj.has_method("_expect")
+
+		if has_expect:
 			var result: Variant = obj.call("_expect", false, "harness liveness probe")
 
 			# Type guard is part of the failure condition: must be non-empty Array
@@ -205,13 +217,16 @@ func _check_harness_liveness() -> bool:
 
 			probed_count += 1
 
-	# If tree-wide probe succeeded and found callable suites, report coverage
+	# Report coverage whether tree-wide probe succeeded or found nothing
+	print("Probed %d of %d suites for harness liveness" % [probed_count, _suites.size()])
+
+	# If tree-wide probe succeeded and found callable suites, we're done
 	if probed_count > 0:
-		print("Probed %d suites for harness liveness" % probed_count)
 		return true
 
 	# Fallback: probe HexCoordTest directly if tree-wide found no probes
-	# This is used only if dynamic dispatch through Callable doesn't work
+	# This is used only if dynamic dispatch through Callable doesn't work on this engine
+	print("No callable suites found; using HexCoordTest fallback")
 	var result: Variant = HexCoordTest._expect(false, "harness liveness probe")
 
 	# Type guard is part of the failure condition: must be non-empty Array
