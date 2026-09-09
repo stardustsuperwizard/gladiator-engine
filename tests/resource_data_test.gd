@@ -1,6 +1,8 @@
-## Game-side data suite for the four authored `.tres` files under `resources/`:
+## Game-side data suite for the five authored `.tres` files under `resources/`:
 ## `resources/fighters/warrior.tres`, `resources/fighters/archer.tres`,
-## `resources/fighters/construction_budget.tres`, and `resources/combat/combat_profile.tres`.
+## `resources/fighters/construction_budget.tres`,
+## `resources/combat/combat_profile.tres`, and
+## `resources/round/round_profile.tres`.
 ##
 ## **There were seven.** `resources/weapons/` and `resources/dice/` are gone,
 ## deleted along with the two resource classes they were authored against:
@@ -17,8 +19,9 @@
 ##
 ## Every number pinned here is authored content, not a balance decision:
 ## `AGENTS.md` says outright that dice counts, damage values, and point costs
-## are expected to be tuned. Only `_test_field_values_match_authored_content()`
-## and `_test_combat_profile_loads_correctly()` name those numbers as
+## are expected to be tuned. Only `_test_field_values_match_authored_content()`,
+## `_test_combat_profile_loads_correctly()` and
+## `_test_round_profile_loads_correctly()` name those numbers as
 ## literals -- they exist to pin what the files contain. Every other test below
 ## reads its expected values back off a loaded resource and compares runtime
 ## behaviour against them, never against a second literal, so retuning a
@@ -30,6 +33,7 @@ const WARRIOR_PATH := "res://resources/fighters/warrior.tres"
 const ARCHER_PATH := "res://resources/fighters/archer.tres"
 const COMBAT_PROFILE_PATH := "res://resources/combat/combat_profile.tres"
 const CONSTRUCTION_BUDGET_PATH := "res://resources/fighters/construction_budget.tres"
+const ROUND_PROFILE_PATH := "res://resources/round/round_profile.tres"
 
 ## Where the "retuning is a file edit" test saves its duplicated, retuned
 ## warrior. Never a path under `res://resources/` -- no test may write there.
@@ -47,6 +51,7 @@ static func run() -> bool:
 	violations.append_array(_test_fighter_from_archer_reports_template_stats())
 	violations.append_array(_test_retuning_is_a_file_edit())
 	violations.append_array(_test_combat_profile_loads_correctly())
+	violations.append_array(_test_round_profile_loads_correctly())
 	violations.append_array(_test_all_fighters_satisfy_construction_budget())
 
 	if violations.is_empty():
@@ -83,6 +88,11 @@ static func _test_files_load_as_expected_class() -> Array[String]:
 	var profile: Variant = load(COMBAT_PROFILE_PATH)
 	violations.append_array(
 		_expect(profile is CombatProfile, "combat_profile.tres must load as a CombatProfile")
+	)
+
+	var round_profile: Variant = load(ROUND_PROFILE_PATH)
+	violations.append_array(
+		_expect(round_profile is RoundProfile, "round_profile.tres must load as a RoundProfile")
 	)
 
 	return violations
@@ -480,6 +490,29 @@ static func _test_combat_profile_loads_correctly() -> Array[String]:
 				profile.attack_surround_modifier != profile.save_surround_modifier,
 				"attack_surround_modifier (2) must differ from save_surround_modifier (3)"
 			)
+		)
+
+	return violations
+
+
+## The round profile loads as a RoundProfile with correct authored values.
+static func _test_round_profile_loads_correctly() -> Array[String]:
+	var violations: Array[String] = []
+
+	var profile: Variant = load(ROUND_PROFILE_PATH)
+	violations.append_array(
+		_expect(profile is RoundProfile, "round_profile.tres must load as a RoundProfile")
+	)
+
+	if profile is RoundProfile:
+		violations.append_array(
+			_expect(profile.profile_id == "standard", "profile_id must be 'standard'")
+		)
+		violations.append_array(
+			_expect(profile.turns_per_player == 4, "turns_per_player must be 4")
+		)
+		violations.append_array(
+			_expect(profile.rounds_per_match == 3, "rounds_per_match must be 3")
 		)
 
 	return violations
