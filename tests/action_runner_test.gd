@@ -28,6 +28,7 @@ static func run() -> bool:
 	violations.append_array(_test_permitted_attack_resolves_through_the_runner())
 	violations.append_array(_test_move_authority_gate())
 	violations.append_array(_test_guard_authority_gate())
+	violations.append_array(_test_charge_authority_gate())
 
 	if violations.is_empty():
 		return true
@@ -541,6 +542,138 @@ static func _test_guard_authority_gate() -> Array[String]:
 		_expect(
 			permitted_f1 != null and permitted_f1.has_status_flag(GuardAction.FLAG_GUARDED),
 			"a permitted Guard resolved through the runner must set GuardAction.FLAG_GUARDED"
+		)
+	)
+
+	return violations
+
+
+## `ChargeAction` submits through the very same `run()` every other command
+## uses -- generality comes from subclassing `resolve()`, and adding it needed
+## no edit to `ActionRunner` or `Authority`.
+##
+## Two requests, both from the active player `p1`, against two different
+## fighters: a Charge of `f2`, owned by `p2`, refused with
+## `REFUSED_NOT_YOUR_FIGHTER` before `resolve()` is ever reached -- asserted by
+## the board being left unchanged and no fighter gaining the "charged" flag,
+## the two external proofs `_test_move_authority_gate()` and
+## `_test_guard_authority_gate()` use between them -- and a Charge of `f1`,
+## `p1`'s own fighter, which resolves, relocates it and flags it.
+##
+## This case lives here rather than in `rules/tests/charge_action_test.gd` for
+## the reason that suite's docstring gives: `rules/` names no game-side class,
+## and `ActionRunner` and `Authority` are game-side.
+static func _test_charge_authority_gate() -> Array[String]:
+	var violations: Array[String] = []
+
+	var template := FighterTemplate.new()
+	template.template_id = "action-runner-charge-test-fighter"
+	template.move = 1
+	template.save = 2
+	template.health = 5
+	template.range_hexes = 1
+	template.attack = 3
+	template.damage = 1
+
+	# An attack target every face of the die meets and a save target no face
+	# meets, so the attack half's outcome is the rule under test rather than
+	# the seed.
+	var profile := CombatProfile.new()
+	profile.profile_id = "action-runner-charge-test-profile"
+	profile.die_sides = 6
+	profile.attack_target = 1
+	profile.save_target = 7
+	profile.min_target = 1
+	profile.max_target = 7
+
+	var origin := Vector3i(0, 0, 0)
+	var other_hex := Vector3i(1, 0, -1)
+	var destination := Vector3i(1, -1, 0)
+	var target_hex := Vector3i(2, -2, 0)
+
+	var board := Board.new()
+	for coord in [origin, other_hex, destination, target_hex]:
+		board.add_hex(coord, Board.HexType.NORMAL)
+
+	var state := GameState.new(board, DeterministicRng.new(5))
+	state.add_player("p1")
+	state.add_player("p2")
+	state.add_fighter("f1", Fighter.new("f1", template, "p1", origin).to_dict())
+	state.add_fighter("f2", Fighter.new("f2", template, "p2", other_hex).to_dict())
+	state.add_fighter("f3", Fighter.new("f3", template, "p2", target_hex).to_dict())
+	board.place_occupant(origin, &"f1")
+	board.place_occupant(other_hex, &"f2")
+	board.place_occupant(target_hex, &"f3")
+
+	var refused := ChargeAction.new("f2", destination, "f3", template, template, profile)
+	var refusal_result := ActionRunner.new(Authority.new(state)).run(refused, "p1")
+
+	violations.append_array(
+		_expect(
+			refusal_result.reason == Authority.REFUSED_NOT_YOUR_FIGHTER,
+			(
+				"a Charge submitted by a player who does not own the fighter must be refused with "
+				+ "REFUSED_NOT_YOUR_FIGHTER"
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			(
+				board.occupant_at(other_hex) == &"f2"
+				and board.occupant_at(destination) == Board.EMPTY_OCCUPANT
+			),
+			"a refused Charge must leave the board unchanged, proving resolve() was never reached"
+		)
+	)
+
+	for fighter_id in ["f1", "f2", "f3"]:
+		var stored := Fighter.from_dict(state.fighter(fighter_id), template)
+		violations.append_array(
+			_expect(
+				stored != null and not stored.has_status_flag(ChargeLockout.FLAG_CHARGED),
+				(
+					"a refused Charge must leave no fighter holding ChargeLockout.FLAG_CHARGED, "
+					+ "proving resolve() was never reached"
+				)
+			)
+		)
+
+	var permitted := ChargeAction.new("f1", destination, "f3", template, template, profile)
+	var permitted_result := ActionRunner.new(Authority.new(state)).run(permitted, "p1")
+
+	violations.append_array(
+		_expect(
+			permitted_result.success,
+			"a Charge submitted by the owning active player must resolve through the runner"
+		)
+	)
+	violations.append_array(
+		_expect(
+			(
+				board.occupant_at(destination) == &"f1"
+				and board.occupant_at(origin) == Board.EMPTY_OCCUPANT
+			),
+			"a permitted Charge resolved through the runner must move the fighter on the board"
+		)
+	)
+
+	var permitted_charger := Fighter.from_dict(state.fighter("f1"), template)
+	violations.append_array(
+		_expect(
+			(
+				permitted_charger != null
+				and permitted_charger.has_status_flag(ChargeLockout.FLAG_CHARGED)
+			),
+			"a permitted Charge resolved through the runner must set ChargeLockout.FLAG_CHARGED"
+		)
+	)
+
+	var struck := Fighter.from_dict(state.fighter("f3"), template)
+	violations.append_array(
+		_expect(
+			struck != null and struck.damage_counter() == template.damage,
+			"a Charge resolved through the runner must have applied its attack half's damage"
 		)
 	)
 
