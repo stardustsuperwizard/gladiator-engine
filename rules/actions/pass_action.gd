@@ -1,11 +1,23 @@
-## Spend a turn doing nothing. Spec §6's simplest core action.
+## The engine's do-nothing Action Step command. Not one of spec §6's core
+## actions -- §6 has never listed Pass; its core actions are Move, Attack,
+## Charge, Guard and Focus/Mulligan. §5.3's default Action Step, taken by a
+## player who does not choose, is Guard, not this. `PassAction` came in as
+## Slice 0 scaffolding to prove the pipeline resolved something real without
+## waiting on Attack, and that label was never accurate.
 ##
-## The trivial command that proves the pipeline resolves something real without
-## waiting on Attack. It records that a turn was taken and nothing more: it
-## must not touch `round_number`, must not rotate whose turn it is, and must
-## not read or write any other field of the state. `turns_taken` is the
-## observable proof that `resolve()` ran, which is what makes "a refused
-## command never reaches `resolve()`" assertable at all.
+## It resolves successfully against a known actor and changes nothing in the
+## state at all -- not `turns_taken`, not `round_number`, not any other field.
+## Spec §5.3's Turn-completion rule settles that a Turn is not over until its
+## Power Step has ended, and anything counting Turns counts *completed* Turns,
+## not resolved actions; no action increments that counter, this one included.
+##
+## **Why it is kept rather than retired.** Three reasons: `ChargeLockout`
+## documents Pass as "the action a locked-out fighter still has," and §6's
+## lockout is in force. `tests/action_runner_test.gd`, `tests/authority_test.gd`
+## and `tests/command_taxonomy_contract_test.gd` all exercise the gate with it
+## -- it is the module's minimal concrete `TurnAction`, and that is a real job.
+## And retiring it would ripple through those suites for no rule that needs it
+## gone.
 ##
 ## **It knows nothing about permission.** An action knows how to resolve itself
 ## against a `GameState`; who was allowed to submit it is the game side's
@@ -25,12 +37,11 @@ extends TurnAction
 const FAILURE_NO_SUCH_FIGHTER := &"pass_no_such_fighter"
 
 
-## Records one taken turn: increments `state.turns_taken` by exactly one and
-## returns a successful result. Returns `FAILURE_NO_SUCH_FIGHTER`, changing
-## nothing at all, when `actor_id()` names no fighter in `state`.
+## Returns a successful result, changing nothing in `state` at all. Returns
+## `FAILURE_NO_SUCH_FIGHTER`, also changing nothing, when `actor_id()` names no
+## fighter in `state`.
 func resolve(state: GameState) -> TurnResult:
 	if actor_id() not in state.fighter_ids():
 		return TurnResult.failure(FAILURE_NO_SUCH_FIGHTER)
 
-	state.turns_taken += 1
 	return TurnResult.ok()
