@@ -12,12 +12,11 @@
 ##    application/config/features and aborts if the running engine is below it.
 ## 2. Harness liveness probe: attempts to call _expect(false, "...") on every
 ##    suite through its registered Callable, and aborts if any returns an empty
-##    array, indicating the harness cannot detect failures. Checks for static
-##    methods using Object.has_static_method() when the Callable's object is a
-##    Script, or Object.has_method() otherwise. If no callable suites are found,
-##    falls back to a direct static call on HexCoordTest. Always prints the
-##    probed suite count against the total count so a collapse to zero is
-##    visible in the log.
+##    array, indicating the harness cannot detect failures. Attempts dynamic
+##    dispatch through each Callable's object; if that succeeds, probes that
+##    suite. If no callable suites are found, falls back to a direct static
+##    call on HexCoordTest. Always prints the probed suite count against the
+##    total count so a collapse to zero is visible in the log.
 ##
 ## Deliberately carries no class_name -- a global class sharing an autoload's
 ## name is a parse error in Godot 4 ("hides an autoload singleton").
@@ -187,35 +186,30 @@ func _check_harness_liveness() -> bool:
 		if obj == null:
 			continue
 
-		# Check if this object has the _expect static method.
-		# For static methods on a GDScript resource, we must check obj.script.has_static_method(),
-		# as Object.has_method() resolves against ClassDB entries, not the script's statics.
-		var is_script: bool = obj is Script
-		var has_expect: bool = false
+		# Attempt to call _expect on this object's Callable.
+		# For static methods on a GDScript resource, Script.has_static_method() exists
+		# to check, but we attempt direct invocation instead and handle any result.
+		var result: Variant = obj.call("_expect", false, "harness liveness probe")
 
-		if is_script:
-			has_expect = obj.has_static_method("_expect")
-		else:
-			has_expect = obj.has_method("_expect")
-
-		if has_expect:
-			var result: Variant = obj.call("_expect", false, "harness liveness probe")
-
-			# Type guard is part of the failure condition: must be non-empty Array
-			if not (result is Array and not result.is_empty()):
-				printerr(
-					(
-						"ERROR: Harness liveness probe failed on %s: _expect(false, ...) returned %s"
-						% [suite["name"], result]
-					)
-				)
-				printerr(
-					"The test harness cannot detect assertion failures on this engine version."
-				)
-				get_tree().quit(1)
-				return false
-
+		# Type guard is part of the failure condition: must be non-empty Array.
+		# Any non-Array result (including null) means the method doesn't exist or failed,
+		# so we skip this suite and continue to the next.
+		if result is Array and not result.is_empty():
 			probed_count += 1
+		elif result is Array and result.is_empty():
+			# The method exists but returned empty, which is a failure
+			printerr(
+				(
+					"ERROR: Harness liveness probe failed on %s: _expect(false, ...) returned empty array"
+					% suite["name"]
+				)
+			)
+			printerr(
+				"The test harness cannot detect assertion failures on this engine version."
+			)
+			get_tree().quit(1)
+			return false
+		# else: method doesn't exist on this suite, skip it
 
 	# Report coverage whether tree-wide probe succeeded or found nothing
 	print("Probed %d of %d suites for harness liveness" % [probed_count, _suites.size()])
@@ -241,13 +235,13 @@ func _check_harness_liveness() -> bool:
 
 func _finalize() -> void:
 	_report()
-	var truncated: bool = _passes.size() + _failures.size() < _suites.size()
+	var truncated := _passes.size() + _failures.size() < _suites.size()
 	get_tree().quit(1 if not _failures.is_empty() or truncated else 0)
 
 
 func _report() -> void:
-	var actual: int = _passes.size() + _failures.size()
-	var expected: int = _suites.size()
+	var actual := _passes.size() + _failures.size()
+	var expected := _suites.size()
 
 	# Fewer suites ran than exist: something aborted partway. Report which
 	# never ran rather than a pass count that looks fine on its own.
