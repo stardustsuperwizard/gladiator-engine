@@ -82,6 +82,7 @@ var _suites: Array[Dictionary] = [
 	# rules/tests/attack_action_guard_test.gd's own docstring.
 	{"name": "Guard Action Test", "run": GuardActionTest.run},
 	{"name": "Attack Action Guard Test", "run": AttackActionGuardTest.run},
+	{"name": "Charge Lockout Test", "run": ChargeLockoutTest.run},
 	{"name": "Determinism Test", "run": DeterminismTest.run},
 	{"name": "Fighter Template Test", "run": FighterTemplateTest.run},
 	{"name": "Fighter Test", "run": FighterTest.run},
