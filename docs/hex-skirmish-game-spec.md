@@ -14,7 +14,7 @@ build order and architecture live in
 
 - 2 players, each controlling a small roster of fighters (3–5 is typical).
 - Played over a fixed number of rounds (e.g. 3).
-- Each round = a **Combat Phase** (players alternate taking turns) followed by an **End Phase** (scoring, hand refresh, cleanup).
+- Each round = a **Combat Segment** (players alternate taking Turns) followed by an **End Segment** (scoring, hand refresh, cleanup). See §5.1 for the four layers and what each is called.
 - Players win by accumulating the most points across the game.
 
 ---
@@ -218,14 +218,117 @@ game.
 
 ## 5. Round Structure
 
-- Fixed number of rounds (e.g. 3).
-- **Combat Phase:** players alternate turns until each has taken a set number of turns (e.g. 4 each).
-  - Turn order for round 1 decided by roll-off; loser gets a bonus ability-card draw as compensation.
-  - In later rounds, ties on the roll-off favor whichever player is currently behind on points.
-- **Turn = Action Step + Power Step:**
-  - **Action Step:** pick exactly one core action (below) and resolve it.
-  - **Power Step:** players alternately play instant-speed cards, use standing abilities, or pass; the step ends when both players pass in a row.
-- **End Phase** runs once both players have used all their turns for the round (see Section 10).
+> **Revised 2026-09-09.** This section previously named the two round-level
+> divisions the **Combat Phase** and the **End Phase**, placing "phase" one
+> layer *above* Turn. That inverts both traditions this game draws on. In
+> wargames a phase is a sub-part of a turn naming what the active player may do
+> — Movement Phase, Shooting Phase, Morale Phase. In Magic a turn contains
+> phases and a phase contains steps. Under either reading, a division that
+> spans eight alternating turns is the one thing "phase" cannot mean, and a
+> reader who knows either tradition does not stop and ask — they confidently
+> misread the structure.
+>
+> Both are now **Segments**. **Turn**, **Action Step** and **Power Step** are
+> unchanged: a step sitting directly inside a turn is Magic's own usage and
+> reads correctly to both traditions.
+>
+> The renaming is not a rules change: nothing about what happens, in what
+> order, or who may act is different. The old names came in from the source
+> game and were never chosen against this hierarchy — see `EXTRACTION_LOG.md`
+> #52.
+>
+> **§5.3's closing paragraph is a rules addition, and is not part of the
+> renaming.** The old text said "Turn = Action Step + Power Step", which
+> implies a Turn contains both but never said when a Turn *ends*, and nothing
+> anywhere said what a count of Turns counts. §5.3 now settles both: a Turn
+> ends when its Power Step ends, and anything counting Turns counts completed
+> Turns rather than resolved actions. With no card system the Power Step ends
+> immediately, so the two readings are indistinguishable today and diverge the
+> moment cards exist — an implementation that counted resolved actions would
+> pass every test now and be silently wrong then. Settled here, in the
+> document, rather than left to whichever resolver reaches it first. Owner
+> decision, 2026-09-09.
+>
+> **§5.3 also gains a default action, also a rules addition.** The old text
+> said the active player "picks exactly one core action and resolves it" and
+> never said what happens if they do not pick one — while §6's core actions
+> have never included a Pass, so declining was not expressible either. An
+> Action Step that can stall has no end, and a timed game needs a defined
+> outcome when a clock expires. The default is **Guard**, on the first eligible
+> fighter in deployment order. Owner decision, 2026-09-09. The trigger for it —
+> clock, disconnect, or a player declining — is left to implementations on
+> purpose; only the outcome is a rule.
+
+### 5.1 The layers
+
+Four structures nest, and this table defines each. Nothing else in this
+document names a division of play, and none of these four names a division it
+does not own here.
+
+| Layer | Divided into | Who may act |
+| --- | --- | --- |
+| **Round** | two Segments, in order | — |
+| **Segment** | *Combat:* every Turn of the round. *End:* §10's sequence | — |
+| **Turn** | two Steps, in order | exactly one player — the **active player** |
+| **Step** | *Action:* one core action (§6). *Power:* instant-speed cards and abilities | *Action:* the active player alone. *Power:* both, alternating |
+
+A **Round** is one full cycle of play, and the game is a fixed number of them
+(e.g. 3). A **Turn** belongs to one player: the active player acts, and the
+opponent may only react, and only during the Power Step.
+
+### 5.2 The Combat Segment
+
+- Players alternate Turns until each has taken a set number of Turns (e.g. 4 each).
+- Turn order for round 1 is decided by roll-off; the loser gets a bonus ability-card draw as compensation.
+- In later rounds, ties on the roll-off favor whichever player is currently behind on points.
+
+### 5.3 A Turn
+
+A Turn is an **Action Step** followed by a **Power Step**, in that order.
+
+- **Action Step:** the active player picks exactly one core action (§6) and resolves it.
+- **Power Step:** players alternately play instant-speed cards, use standing abilities, or pass; the Step ends when both players pass in a row.
+
+**A Turn is not over until its Power Step has ended.** Anything counting Turns
+counts completed Turns, not resolved actions. With no cards in the game the
+Power Step ends immediately and the two are indistinguishable; they stop being
+indistinguishable the moment the card system exists, and a counter that
+conflated them would then be silently wrong.
+
+**Passing is a move, not an absence.** A player passes the Power Step by
+saying so, and the Step ends only on two passes in a row. A player who has
+already passed may act again if the opponent then acts — that is what "in a
+row" means, and it is why a single pass cannot end the Step. Even with no cards
+in the game, the two passes happen; the Step is empty, not skipped.
+
+**Every Action Step resolves exactly one core action, including one the active
+player did not choose.** A player who does not choose takes **Guard** (§6) on
+the first of their fighters, in deployment order (§4), that is eligible to
+Guard — not defeated, and not held by the lockout rule in §6. A player with no
+eligible fighter resolves nothing, and the Action Step ends having changed
+nothing.
+
+*Why the rule exists at all:* a Turn that can stall has no end, and a timed
+game needs a defined outcome when the clock runs out. What triggers "did not
+choose" — a clock, a disconnect, a player declining — is an implementation
+concern and deliberately not specified here. That there is exactly one answer
+when it happens is a rule, and this is it.
+
+*Why Guard:* it is the only core action that is purely defensive. It cannot
+target an opponent, cannot move a fighter, cannot deal damage and cannot score.
+A player who fails to act should not thereby advance, and every other core
+action would let them.
+
+*Why the first eligible fighter and not the best-placed one:* the default is
+meant to be legal and dull, not good. Chosen without regard to where the
+fighting is, a default Guard is usually worth little — which is what stops
+running the clock down from being a play worth making. A default that chose
+well would turn the timeout into a free defensive action, and players would
+farm it.
+
+### 5.4 The End Segment
+
+Runs once both players have used all their Turns for the round. See §10.
 
 ---
 
@@ -545,7 +648,7 @@ number.)*
 
 ---
 
-## 10. End of Round Sequence
+## 10. The End Segment
 
 1. **Score:** check each scoring card in hand; if its condition is met, reveal and score it, move it to a scored pile.
 2. **Equip:** play any attachment cards (capped so total attached value never exceeds current points).
@@ -554,7 +657,7 @@ number.)*
 5. Clear round-level status flags on the board.
 6. Next round begins — or, on the final round, run only steps 1–2, then go to victory determination.
 
-**Surge-type scoring cards** (optional variant): instead of waiting for end phase, these score immediately the instant their condition is met, if held in hand; draw a replacement right away.
+**Surge-type scoring cards** (optional variant): instead of waiting for the End Segment, these score immediately the instant their condition is met, if held in hand; draw a replacement right away.
 
 ---
 
@@ -573,7 +676,7 @@ fighters the sum and the count order the same way.)*
 
 ## 12. Implementation Notes
 
-- The dice-pool + target-number combat resolution is the core loop worth getting right first; everything else (cards, tokens, phases) layers on top of it.
+- The dice-pool + target-number combat resolution is the core loop worth getting right first; everything else (cards, tokens, round structure) layers on top of it.
 - **Make the dice an explicit input, not a hidden one.** Resolution should be a
   function of state and action only: same state + same action + same generator
   position → same result, every time, in a fresh process. Never read a global
@@ -606,7 +709,7 @@ fighters the sum and the count order the same way.)*
   play and an easy one to prevent with a test.
 - Ability tags on fighters and cards are best modeled as a simple string/enum set with a small rules engine checking "does fighter X have tag Y" rather than hardcoding interactions — that mirrors how the tabletop original scales its own complexity.
 - Push/move distinction matters: pushes shouldn't set a "moved" flag, since some effects key off of it.
-- Suggested build order: board + fighter placement → Move/Attack core actions → combat resolution math → status effects (flank/surround/guard) → card system → scoring/end phase → win conditions.
+- Suggested build order: board + fighter placement → Move/Attack core actions → combat resolution math → status effects (flank/surround/guard) → card system → scoring/End Segment → win conditions.
 - Before that full build order, prove the smallest slice that can be checked
   against these rules by hand: a board with blocked hexes, two fighters, one
   Attack, a fixed seed, and tests asserting the result — including a flanked

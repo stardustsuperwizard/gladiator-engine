@@ -70,7 +70,7 @@ Round-level flag clearing (§10 step 5) arrives with the first flag that needs
 clearing, which is Guard's.
 
 After that, the rest of §5.2 in the spec's own build order (§12): status effects
-→ the card system → scoring and the end phase → victory conditions.
+→ the card system → scoring and the End Segment → victory conditions.
 `PlayerState` already carries the empty `hand`, `deck`, `discard` and `scored`
 arrays the card system fills; `rules/cards/` does not exist yet. There is still
 no UI and no hotseat loop — `scripts/` holds `Authority` and `ActionRunner`, and
