@@ -135,7 +135,10 @@ static func _test_guarded_defender_lowers_the_save_target() -> Array[String]:
 
 	return _expect(
 		action.save_target() == 4,
-		"a guarded, unflanked defender must report save_target() == 4, got %d" % action.save_target()
+		(
+			"a guarded, unflanked defender must report save_target() == 4, got %d"
+			% action.save_target()
+		)
 	)
 
 
@@ -152,7 +155,10 @@ static func _test_unguarded_defender_is_the_control() -> Array[String]:
 
 	return _expect(
 		action.save_target() == 5,
-		"an unguarded, unflanked defender must report save_target() == 5, got %d" % action.save_target()
+		(
+			"an unguarded, unflanked defender must report save_target() == 5, got %d"
+			% action.save_target()
+		)
 	)
 
 
@@ -176,12 +182,15 @@ static func _test_stacking_guarded_and_attacker_flanked() -> Array[String]:
 			"this scenario must actually flank the attacker for the stacking claim to mean anything"
 		)
 	)
-	violations.append_array(
-		_expect(
-			action.save_target() == 2,
-			(
-				"a guarded defender whose attacker is flanked must report save_target() == 2, got %d"
-				% action.save_target()
+	(
+		violations
+		. append_array(
+			_expect(
+				action.save_target() == 2,
+				(
+					"a guarded defender whose attacker is flanked must report save_target() == 2, got %d"
+					% action.save_target()
+				)
 			)
 		)
 	)
@@ -209,29 +218,35 @@ static func _test_stacking_guarded_and_attacker_surrounded_clamps() -> Array[Str
 	violations.append_array(
 		_expect(
 			unclamped == 1,
-			(
-				"this scenario's unclamped arithmetic must be exactly 1 (5 - 1 - 3), got %d"
-				% unclamped
-			)
+			"this scenario's unclamped arithmetic must be exactly 1 (5 - 1 - 3), got %d" % unclamped
 		)
 	)
 
 	var action := AttackAction.new("a1", "b1", template, template, profile)
 	action.resolve(state)
 
-	violations.append_array(
-		_expect(
-			action.save_bonus_count() == Flanking.SURROUNDED,
-			"this scenario must actually surround the attacker for the stacking claim to mean anything"
+	(
+		violations
+		. append_array(
+			_expect(
+				action.save_bonus_count() == Flanking.SURROUNDED,
+				"this scenario must actually surround the attacker for the stacking claim to mean anything"
+			)
 		)
 	)
-	violations.append_array(
-		_expect(
-			action.save_target() == 2,
-			(
-				"a guarded defender whose attacker is surrounded must report save_target() == 2 "
-				+ "after the clamp raises it off 1, got %d"
-			) % action.save_target()
+	(
+		violations
+		. append_array(
+			_expect(
+				action.save_target() == 2,
+				(
+					(
+						"a guarded defender whose attacker is surrounded must report save_target() == 2 "
+						+ "after the clamp raises it off 1, got %d"
+					)
+					% action.save_target()
+				)
+			)
 		)
 	)
 
@@ -256,7 +271,9 @@ static func _test_push_immunity_on_a_hit() -> Array[String]:
 	)
 	var result := action.resolve(state)
 
-	violations.append_array(_expect(result.success, "a guarded Hit must still resolve successfully"))
+	violations.append_array(
+		_expect(result.success, "a guarded Hit must still resolve successfully")
+	)
 	violations.append_array(
 		_expect(action.outcome() == DicePool.Outcome.HIT, "this scenario must resolve to a HIT")
 	)
@@ -269,10 +286,13 @@ static func _test_push_immunity_on_a_hit() -> Array[String]:
 			"a guarded target's stored position must be unchanged after a Hit"
 		)
 	)
-	violations.append_array(
-		_expect(
-			state.board.occupant_at(TARGET_HEX) == &"b1",
-			"Board.occupant_at() must still report the guarded target at its original hex after a Hit"
+	(
+		violations
+		. append_array(
+			_expect(
+				state.board.occupant_at(TARGET_HEX) == &"b1",
+				"Board.occupant_at() must still report the guarded target at its original hex after a Hit"
+			)
 		)
 	)
 
@@ -310,10 +330,13 @@ static func _test_push_immunity_on_a_drawn() -> Array[String]:
 			"a guarded target's stored position must be unchanged after a Drawn"
 		)
 	)
-	violations.append_array(
-		_expect(
-			state.board.occupant_at(TARGET_HEX) == &"b1",
-			"Board.occupant_at() must still report the guarded target at its original hex after a Drawn"
+	(
+		violations
+		. append_array(
+			_expect(
+				state.board.occupant_at(TARGET_HEX) == &"b1",
+				"Board.occupant_at() must still report the guarded target at its original hex after a Drawn"
+			)
 		)
 	)
 
@@ -335,7 +358,9 @@ static func _test_push_control_unguarded_target_is_still_pushed() -> Array[Strin
 	)
 	var result := action.resolve(state)
 
-	violations.append_array(_expect(result.success, "the control Hit must still resolve successfully"))
+	violations.append_array(
+		_expect(result.success, "the control Hit must still resolve successfully")
+	)
 	violations.append_array(
 		_expect(action.pushed(), "an unguarded target on the same fixture must still be pushed()")
 	)
@@ -389,9 +414,7 @@ static func _test_guard_blocks_only_the_push() -> Array[String]:
 		)
 	)
 	violations.append_array(
-		_expect(
-			not defeat_action.pushed(), "a defeated, guarded target must not report pushed()"
-		)
+		_expect(not defeat_action.pushed(), "a defeated, guarded target must not report pushed()")
 	)
 
 	return violations
@@ -418,11 +441,16 @@ static func _test_rng_position_is_unaffected_by_guard() -> Array[String]:
 	_place(unguarded_state, "b1", "p2", TARGET_HEX, template)
 	AttackAction.new("a1", "b1", template, template, _standard_profile()).resolve(unguarded_state)
 
-	violations.append_array(
-		_expect(
-			guarded_state.rng.get_state() == unguarded_state.rng.get_state(),
-			"resolving against a guarded defender must leave state.rng at the same position as an "
-			+ "unguarded one, from the same seed and fixture"
+	(
+		violations
+		. append_array(
+			_expect(
+				guarded_state.rng.get_state() == unguarded_state.rng.get_state(),
+				(
+					"resolving against a guarded defender must leave state.rng at the same position as an "
+					+ "unguarded one, from the same seed and fixture"
+				)
+			)
 		)
 	)
 

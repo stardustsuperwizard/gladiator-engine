@@ -90,9 +90,7 @@ static func _test_legal_guard_sets_the_flag_and_persists_through_state() -> Arra
 	var action := GuardAction.new("a1", template)
 	var result := action.resolve(state)
 
-	violations.append_array(
-		_expect(result.success, "a legal Guard must return TurnResult.ok()")
-	)
+	violations.append_array(_expect(result.success, "a legal Guard must return TurnResult.ok()"))
 	violations.append_array(
 		_expect(result.reason == &"", 'a successful Guard result must have reason == &""')
 	)
@@ -116,10 +114,16 @@ static func _test_legal_guard_sets_the_flag_and_persists_through_state() -> Arra
 		return violations
 
 	var restored_fighter := _stored_fighter(restored, "a1", template)
-	violations.append_array(
-		_expect(
-			restored_fighter != null and restored_fighter.has_status_flag(GuardAction.FLAG_GUARDED),
-			"the round-tripped fighter must still have has_status_flag(GuardAction.FLAG_GUARDED) == true"
+	(
+		violations
+		. append_array(
+			_expect(
+				(
+					restored_fighter != null
+					and restored_fighter.has_status_flag(GuardAction.FLAG_GUARDED)
+				),
+				"the round-tripped fighter must still have has_status_flag(GuardAction.FLAG_GUARDED) == true"
+			)
 		)
 	)
 
@@ -157,19 +161,13 @@ static func _test_legal_guard_changes_nothing_else() -> Array[String]:
 		)
 	)
 	violations.append_array(
-		_expect(
-			stored.damage_counter() == 0, "a legal Guard must not change the damage_counter"
-		)
+		_expect(stored.damage_counter() == 0, "a legal Guard must not change the damage_counter")
 	)
 	violations.append_array(
-		_expect(
-			state.turns_taken == before_turns, "a legal Guard must not touch turns_taken"
-		)
+		_expect(state.turns_taken == before_turns, "a legal Guard must not touch turns_taken")
 	)
 	violations.append_array(
-		_expect(
-			state.round_number == before_round, "a legal Guard must not touch round_number"
-		)
+		_expect(state.round_number == before_round, "a legal Guard must not touch round_number")
 	)
 	violations.append_array(
 		_expect(
@@ -197,7 +195,9 @@ static func _test_repeat_guard_is_idempotent() -> Array[String]:
 	var result := GuardAction.new("a1", template).resolve(state)
 
 	violations.append_array(
-		_expect(result.success, "a repeat Guard on an already-guarded fighter must resolve, not refuse")
+		_expect(
+			result.success, "a repeat Guard on an already-guarded fighter must resolve, not refuse"
+		)
 	)
 	violations.append_array(
 		_expect(
@@ -268,10 +268,13 @@ static func _test_unparseable_payload_is_refused() -> Array[String]:
 
 	var result := GuardAction.new("a1", template).resolve(state)
 
-	violations.append_array(
-		_expect(
-			result.reason == GuardAction.FAILURE_MISSING_DATA,
-			"a Guard naming a fighter whose payload will not parse must be refused with FAILURE_MISSING_DATA"
+	(
+		violations
+		. append_array(
+			_expect(
+				result.reason == GuardAction.FAILURE_MISSING_DATA,
+				"a Guard naming a fighter whose payload will not parse must be refused with FAILURE_MISSING_DATA"
+			)
 		)
 	)
 	violations.append_array(_expect(not result.success, "the refusal must not crash resolve()"))
