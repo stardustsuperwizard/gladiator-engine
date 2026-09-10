@@ -133,8 +133,7 @@ static func _test_returns_third_fighter_in_deployment_order() -> Array[String]:
 		action != null and action.actor_id() == "eligible",
 		(
 			"action_for() must skip the defeated and locked-out fighters and return a "
-			+ "GuardAction on the third, got %s"
-			% (action.actor_id() if action != null else "null")
+			+ "GuardAction on the third, got %s" % (action.actor_id() if action != null else "null")
 		)
 	)
 
@@ -158,8 +157,10 @@ static func _test_first_eligible_wins_over_better_placed() -> Array[String]:
 		action != null and action.actor_id() == "earlier",
 		(
 			"action_for() must return the earlier, alone, fighter rather than the later one "
-			+ "standing adjacent to an enemy, got %s"
-			% (action.actor_id() if action != null else "null")
+			+ (
+				"standing adjacent to an enemy, got %s"
+				% (action.actor_id() if action != null else "null")
+			)
 		)
 	)
 
@@ -269,8 +270,10 @@ static func _test_missing_template_and_unparseable_payload_skipped() -> Array[St
 		action != null and action.actor_id() == "eligible",
 		(
 			"action_for() must skip a fighter absent from templates and one whose payload will "
-			+ "not parse, and return the genuinely eligible fighter, got %s"
-			% (action.actor_id() if action != null else "null")
+			+ (
+				"not parse, and return the genuinely eligible fighter, got %s"
+				% (action.actor_id() if action != null else "null")
+			)
 		)
 	)
 
@@ -398,7 +401,9 @@ static func _test_action_returned_unresolved() -> Array[String]:
 		)
 	)
 	violations.append_array(
-		_expect(state.digest() == digest_before, "action_for() must leave the state digest unchanged")
+		_expect(
+			state.digest() == digest_before, "action_for() must leave the state digest unchanged"
+		)
 	)
 
 	if action != null:
@@ -437,7 +442,8 @@ static func _test_rng_unchanged_across_every_scenario() -> Array[String]:
 		DefaultActionStep.action_for(state, entry["player_id"], entry["templates"])
 		violations.append_array(
 			_expect(
-				state.rng.get_state() == rng_before, "%s: action_for() must not advance state.rng" % label
+				state.rng.get_state() == rng_before,
+				"%s: action_for() must not advance state.rng" % label
 			)
 		)
 
@@ -471,9 +477,7 @@ static func _test_rng_unchanged_across_every_scenario() -> Array[String]:
 	_place(all_locked_state, "blocker", "p1", HEX_B, template)
 	_flag(all_locked_state, "locked", template)
 	var all_locked_rng_before := all_locked_state.rng.get_state()
-	DefaultActionStep.action_for(
-		all_locked_state, "p1", {"defeated": template, "locked": template}
-	)
+	DefaultActionStep.action_for(all_locked_state, "p1", {"defeated": template, "locked": template})
 	violations.append_array(
 		_expect(
 			all_locked_state.rng.get_state() == all_locked_rng_before,

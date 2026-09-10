@@ -54,9 +54,7 @@ extends RefCounted
 ##
 ## Returns `null` when no fighter satisfies all five, when `player_id` names
 ## no player in `state.turn_order()`, and when `templates` is empty.
-static func action_for(
-	state: GameState, player_id: String, templates: Dictionary
-) -> GuardAction:
+static func action_for(state: GameState, player_id: String, templates: Dictionary) -> GuardAction:
 	if player_id not in state.turn_order():
 		return null
 
