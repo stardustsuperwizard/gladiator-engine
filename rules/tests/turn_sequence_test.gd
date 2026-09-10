@@ -39,9 +39,7 @@ static func _build_state(player_ids: Array[String], turns_per_player: int) -> Ga
 	var state := GameState.new(Board.new(), DeterministicRng.new(7))
 	for player_id in player_ids:
 		state.add_player(player_id)
-		state.add_fighter(
-			"f_%s" % player_id, {"id": "f_%s" % player_id, "owner_id": player_id}
-		)
+		state.add_fighter("f_%s" % player_id, {"id": "f_%s" % player_id, "owner_id": player_id})
 	state.turns_per_player = turns_per_player
 	return state
 
@@ -100,9 +98,7 @@ static func _test_segment_complete_returns_empty() -> Array[String]:
 	state.turns_taken = 8
 
 	violations.append_array(
-		_expect(
-			state.combat_segment_complete(), "turns_taken 8 of a 2 x 4 round must be complete"
-		)
+		_expect(state.combat_segment_complete(), "turns_taken 8 of a 2 x 4 round must be complete")
 	)
 	violations.append_array(
 		_expect(
@@ -195,8 +191,10 @@ static func _test_round_trip_reports_the_same_active_player() -> Array[String]:
 	violations.append_array(_expect(restored != null, "a mid-round state must round trip"))
 	violations.append_array(
 		_expect(
-			restored != null
-			and TurnSequence.active_player(restored) == TurnSequence.active_player(state),
+			(
+				restored != null
+				and TurnSequence.active_player(restored) == TurnSequence.active_player(state)
+			),
 			"a restored state must report the identical active player"
 		)
 	)
