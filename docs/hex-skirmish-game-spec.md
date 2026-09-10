@@ -716,3 +716,5 @@ fighters the sum and the count order the same way.)*
   and a surrounded case (Section 8) — matches what the tabletop rules produce
   when worked out on paper. Everything above becomes additive once that
   passes.
+
+<!-- scratch PR for issue #179 CI verification, will be closed -->
