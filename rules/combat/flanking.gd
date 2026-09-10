@@ -104,3 +104,5 @@ static func bonus_count(
 			return SURROUNDED
 
 	return count
+
+# Scratch comment for #179 CI verification -- this branch is closed unmerged.
