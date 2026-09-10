@@ -1,0 +1,417 @@
+name: CI
+
+# The one pull-request-triggered workflow. It always reports a single
+# aggregate status check, `ci`, whatever a pull request touched -- so branch
+# protection has exactly one required check to name, ever, rather than one
+# per verification job that has to be kept in sync by hand.
+#
+# Triggers are deliberately unfiltered. `godot-ci-validation.yml` and
+# `control-plane-tests.yml` -- the two workflows this one absorbs and
+# replaces -- each gated on `paths`/`paths-ignore` at the trigger, and
+# godot-ci-validation.yml carried this warning about that shape:
+#
+#   BEWARE if this ever becomes a required status check: a workflow skipped
+#   by a path filter reports no status at all, so PRs would hang forever on
+#   "Expected -- Waiting for status to be reported". Unlike a job skipped by
+#   `if:`, which reports success. At that point keep the trigger unfiltered
+#   and gate the job instead.
+#
+# That is exactly the situation `ci` is built for: a required status check
+# needs a report on every pull request, always. So the filtering moves from
+# the trigger into each job's own `if:`, decided once by the `changes` job
+# below, and the `ci` job -- gated only on `always()` -- is what actually
+# reports. A job skipped by `if:` still counts as reported ("skipped"),
+# which is what keeps a docs-only PR from hanging.
+on:
+  pull_request:
+  # Deliberately also on push to the default branch, carried over from
+  # control-plane-tests.yml's own rationale: a `pull_request`-only trigger
+  # means a merge queue or a direct push could land a change that no pull
+  # request check ever saw. Unfiltered for the same reason the pull_request
+  # trigger is: gating happens in `changes` and each job's `if:`.
+  push:
+    branches:
+      - main
+  # The escape hatch: run every job by hand against any branch, whatever the
+  # `changes` job would otherwise decide.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Decides which of the two expensive gates below actually need to run,
+  # so verification stays fanned out in parallel behind `if:` guards instead
+  # of behind separate trigger path filters. On `push` and `workflow_dispatch`
+  # there is no pull request diff to read, so both gates open unconditionally
+  # -- a direct push to main or a manual run is exactly the case the old
+  # push-trigger coverage existed to catch, and it must not be skippable by a
+  # missing diff.
+  changes:
+    name: Changed File Gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      godot: ${{ steps.gate.outputs.godot }}
+      control_plane: ${{ steps.gate.outputs.control_plane }}
+    steps:
+      - name: Determine Gates
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "godot=true" >> "$GITHUB_OUTPUT"
+            echo "control_plane=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Read from the pull request's paginated changed-file list, not
+          # `gh pr view --json files` -- that one is GraphQL and stops at the
+          # first 100 files, so a large pull request touching a restricted
+          # path past that boundary would read as clean. `--paginate` has no
+          # such ceiling. Same reasoning as agent-05-fix.yml's identical read.
+          gh api --paginate \
+            "repos/$REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[].filename' > "$RUNNER_TEMP/pr-files.txt"
+
+          python3 - "$RUNNER_TEMP/pr-files.txt" <<'PY' >> "$GITHUB_OUTPUT"
+          import re
+          import sys
+
+          paths = [line.strip() for line in open(sys.argv[1]) if line.strip()]
+
+          def glob_to_regex(pattern):
+              # GitHub's own path-filter semantics: an unescaped "**" spans
+              # directory separators (and, with nothing before it but the
+              # start of the pattern or a "/", may match zero directories --
+              # which is what lets "**.md" match a root-level file like
+              # AGENTS.md, not only a nested one). A lone "*" matches within
+              # one path segment only.
+              out = []
+              i = 0
+              while i < len(pattern):
+                  if pattern[i:i + 2] == "**":
+                      out.append(".*")
+                      i += 2
+                  elif pattern[i] == "*":
+                      out.append("[^/]*")
+                      i += 1
+                  elif pattern[i] == "?":
+                      out.append("[^/]")
+                      i += 1
+                  else:
+                      out.append(re.escape(pattern[i]))
+                      i += 1
+              return "^" + "".join(out) + "$"
+
+          def matches_any(patterns, path):
+              return any(re.match(glob_to_regex(p), path) for p in patterns)
+
+          # Carried over verbatim in content from
+          # godot-ci-validation.yml:31-102. A deny-list on purpose: an
+          # allow-list (`paths: ['**.gd', ...]`) fails unsafe, because the day
+          # someone adds a new asset directory, validation silently stops
+          # covering it. A deny-list fails safe -- an unrecognized new path
+          # runs the check, and a false positive costs two minutes of a free
+          # runner. That matters here because the Godot surface is scattered
+          # across `rules/`, `scripts/`, `scenes/`, `resources/` and `tests/`,
+          # while the files that provably cannot break `--import`/`--quit`
+          # are the concentrated ones: markdown, Issue templates, agent
+          # prompts.
+          #
+          # The list stops short of the validation harness itself
+          # (`.github/scripts/validate-godot.sh`, `.github/actions/setup-godot/`,
+          # and this workflow, `ci.yml` -- not added here on purpose): changing
+          # how validation runs must still run validation.
+          GODOT_DENY = [
+              # "**.md", not "**/*.md" -- the latter is ambiguous about
+              # matching root-level files like AGENTS.md.
+              "**.md",
+              "LICENSE",
+              "docs/**",
+              # Agent control plane. Prompts, templates and the dashboard
+              # renderer cannot affect whether the engine boots.
+              ".github/ISSUE_TEMPLATE/**",
+              ".github/agents/**",
+              ".github/instructions/**",
+              ".github/workflows/agent-*.yml",
+              ".github/workflows/gdscript-lint.yml",
+              ".github/workflows/issue-linking.yml",
+              ".github/workflows/issue-dependencies.yml",
+              ".github/scripts/render-dashboard.py",
+              ".github/scripts/classify-copilot-outcome.py",
+              ".github/scripts/classify-claude-outcome.py",
+              # Issue bookkeeping. These read Issue bodies and call `gh`; they
+              # have their own check, run by the `issue-deps` job below.
+              ".github/scripts/issue_dependencies.py",
+              ".github/scripts/sync-issue-dependencies.py",
+              ".github/scripts/test-issue-dependencies.sh",
+              # The control plane's own test harness. Neither it nor this
+              # workflow loads the Godot project.
+              ".github/scripts/test-workflow-logic.sh",
+              ".github/workflows/control-plane-tests.yml",
+              # Label bootstrap. Creates the labels every trigger is keyed on;
+              # it calls `gh` and never touches the Godot project. Listed
+              # individually like the rest -- this block names scripts rather
+              # than the directory, because `.github/scripts/validate-godot.sh`
+              # lives there too and a change to how validation runs must
+              # still run validation.
+              ".github/scripts/bootstrap-labels.sh",
+              # The agent workflows' own composite actions -- prompt-building
+              # and CLI plumbing, none of it touches the Godot project.
+              # `setup-godot/` is deliberately NOT here: it controls how the
+              # engine gets installed for this very check, so a change to it
+              # should still run validation.
+              ".github/actions/build-review-request/**",
+              ".github/actions/build-fix-request/**",
+              ".github/actions/run-agent-session/**",
+              ".github/actions/extract-review-verdict/**",
+              ".github/actions/lint-gdscript/**",
+              # Task-scope helper for the planner. Control plane, like the
+              # entries above.
+              ".github/scripts/task_scope.py",
+              # Dependency preparation for Copilot agent sessions. It
+              # provisions an agent's environment; it does not change the
+              # project.
+              ".github/workflows/copilot-setup-steps.yml",
+              # Claude Code control plane -- the counterpart of
+              # `.github/agents/**` for the other toolchain: subagent
+              # definitions, slash commands, and shared project settings.
+              # Ignored as a directory rather than left to "**.md", because
+              # that only ever covered it by accident: everything under
+              # `.claude/` happened to be markdown until `settings.json`
+              # landed, and the day it did, a pure-infrastructure pull
+              # request booted a Godot runner.
+              ".claude/**",
+              # Repository plumbing. `.gitignore` decides what git tracks,
+              # not what Godot loads.
+              ".gitignore",
+              # gdlint configuration, read by `gdscript-lint.yml` and
+              # `.github/actions/lint-gdscript/` and never by
+              # `validate-godot.sh`. Style is a separate gate from whether
+              # the project imports and boots.
+              ".gdlintrc",
+          ]
+
+          # Carried over verbatim in content from
+          # control-plane-tests.yml:30-38. A single shared allow-list gating
+          # all three control-plane jobs below, not three narrower per-job
+          # filters -- a change under any of these paths can affect any of
+          # the three harnesses (Part 6 of test-workflow-logic.sh alone reads
+          # `.github/agents/`, `.claude/agents/` and `.claude/commands/`
+          # together).
+          CONTROL_PLANE_ALLOW = [
+              ".github/workflows/**",
+              ".github/actions/**",
+              ".github/scripts/**",
+              ".github/agents/**",
+              ".claude/agents/**",
+              ".claude/commands/**",
+              "project.godot",
+              "docs/engine-reference/godot/VERSION.md",
+          ]
+
+          # A PR runs the Godot check if *any* changed file falls outside the
+          # deny-list, so a branch touching both `docs/DESIGN.md` and
+          # `rules/combat/resolver.gd` is validated. Only pure-prose PRs skip.
+          godot = any(not matches_any(GODOT_DENY, p) for p in paths)
+
+          # The control-plane check runs if *any* changed file falls inside
+          # the allow-list.
+          control_plane = any(matches_any(CONTROL_PLANE_ALLOW, p) for p in paths)
+
+          print(f"godot={'true' if godot else 'false'}")
+          print(f"control_plane={'true' if control_plane else 'false'}")
+          PY
+
+  # The job body lives in `godot-validation.yml`, called rather than inlined,
+  # so the agent workflows can run the identical job against the commits they
+  # push instead of depending on this workflow's `pull_request` trigger
+  # firing for them -- which in the source repo repeatedly failed to do,
+  # landing in `action_required` and never executing.
+  #
+  # No `head-sha` is passed. A `pull_request` run already attaches its status
+  # to the right commit, so an explicit check run here would only duplicate
+  # what GitHub reports for free -- and `checks: write` stays unneeded.
+  #
+  # Run in parallel with the other three jobs, not sequenced behind them:
+  # Godot validation is the expensive check, and gating it behind the cheap
+  # ones would only add latency to the common case where both end up running.
+  godot:
+    name: Godot Validation
+    needs: changes
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.godot == 'true' }}
+    uses: ./.github/workflows/godot-validation.yml
+    permissions:
+      contents: read
+
+  # The three control-plane jobs below (`workflow-logic`, `issue-deps`,
+  # `actionlint`) run the checks control-plane-tests.yml added because,
+  # before it existed, nothing did. `.github/scripts/test-issue-dependencies.sh`
+  # was written as a regression check, committed, and then never invoked by
+  # any workflow -- godot-ci-validation.yml even listed it under
+  # `paths-ignore` with a comment saying those scripts "have their own check",
+  # which was true of the file and false of CI. A test nothing runs is a test
+  # that passes forever.
+
+  # Logic embedded inside workflow YAML -- the `shell: python` steps and
+  # `--jq` programs no other test can reach (#68). See
+  # `.github/scripts/test-workflow-logic.sh`'s own header for the full,
+  # per-part cost history of what this catches.
+  #
+  # No setup step, deliberately: the harness states it needs nothing but
+  # python3 (and jq, used if present and skipped with a notice otherwise), and
+  # `ubuntu-latest` ships both. A control-plane test that needed provisioning
+  # would be one more thing that can fail for a reason unrelated to the code
+  # it checks.
+  workflow-logic:
+    name: Workflow Logic
+    needs: changes
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.control_plane == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Workflow-Embedded Logic
+        shell: bash
+        run: .github/scripts/test-workflow-logic.sh
+
+  # The two `.github/scripts/` modules that read Issue bodies and drive `gh`.
+  # Needs no network, credentials, the GitHub CLI, or a real repository, so
+  # this job stays fast and cannot flake on a rate limit -- same reasoning as
+  # `workflow-logic` above for skipping a setup step.
+  issue-deps:
+    name: Issue Dependency Contract
+    needs: changes
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.control_plane == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Issue Dependency Contract
+        shell: bash
+        run: .github/scripts/test-issue-dependencies.sh
+
+  # Workflow schema, expression syntax, and action-reference checking.
+  actionlint:
+    name: Actionlint
+    needs: changes
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.control_plane == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Pinned by version AND checksum. This is the one thing in the job that
+      # comes from off the runner, and an unpinned linter is a supply-chain
+      # hole that runs on every control-plane change.
+      - name: Install actionlint
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: >-
+            023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          set -euo pipefail
+
+          TARBALL="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+
+          curl -sSLf \
+            -o "$RUNNER_TEMP/$TARBALL" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${TARBALL}"
+
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/$TARBALL" | sha256sum -c -
+
+          tar -xzf "$RUNNER_TEMP/$TARBALL" -C "$RUNNER_TEMP" actionlint
+
+      - name: Actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # shellcheck and pyflakes integration are OFF, deliberately.
+          #
+          # actionlint shells out to both when they are on PATH, and they are
+          # on ubuntu-latest. Pointed at this repository that means linting
+          # every embedded bash and python block as though it were a
+          # standalone program -- thousands of lines of it, most of the
+          # findings style rather than defects, and none of it what #99 asked
+          # for. The embedded programs have their own check:
+          # test-workflow-logic.sh Part 1 compiles every python step and
+          # parses every jq program. This step checks the workflow schema.
+          #
+          # The ignore is a false positive, not a silenced defect.
+          # `copilot-requests` is a real permission scope -- five agent
+          # workflows need it to open a Copilot session -- and actionlint
+          # 1.7.7 simply predates it. Drop this when a release knows the
+          # scope; leaving it in only re-hides a genuinely unknown scope.
+          "$RUNNER_TEMP/actionlint" \
+            -no-color \
+            -oneline \
+            -shellcheck= \
+            -pyflakes= \
+            -ignore 'unknown permission scope "copilot-requests"'
+
+  # The single aggregate status check. Its id and name are both the literal
+  # string `ci` because branch protection is configured against that string
+  # -- one required check, however many jobs run behind it.
+  #
+  # `if: always()` is what makes this run whatever happened upstream,
+  # including when `godot` or one of the other three was skipped by its own
+  # `if:`. `success` and `skipped` both count as passing; anything else is
+  # named by job id in the log, so a failure here says which job failed
+  # rather than only that something did.
+  ci:
+    name: ci
+    needs: [changes, godot, workflow-logic, issue-deps, actionlint]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check Required Jobs
+        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          passing = {"success", "skipped"}
+
+          failed = sorted(
+              job_id for job_id, data in needs.items()
+              if data.get("result") not in passing
+          )
+
+          if failed:
+              for job_id in failed:
+                  result = needs[job_id].get("result", "unknown")
+                  print(f"::error::{job_id} did not pass (result={result})")
+              sys.exit(1)
+
+          print("All needed jobs passed or were skipped: "
+                + ", ".join(sorted(needs)))
+          PY
