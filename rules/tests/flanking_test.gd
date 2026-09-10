@@ -17,6 +17,9 @@ const ORIGIN := Vector3i(0, 0, 0)
 static func run() -> bool:
 	var violations: Array[String] = []
 
+	# Deliberate failure for #179 CI verification. Scratch-only, unmerged.
+	violations.append("scratch: deliberate failure for #179 CI verification")
+
 	violations.append_array(_test_no_adjacent_fighters_returns_none())
 	violations.append_array(_test_one_adjacent_enemy_returns_flanked())
 	violations.append_array(_test_two_adjacent_enemies_return_surrounded())
