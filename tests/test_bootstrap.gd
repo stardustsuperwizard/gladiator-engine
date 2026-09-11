@@ -104,6 +104,12 @@ var _suites: Array[Dictionary] = [
 	{"name": "Action Runner Test", "run": ActionRunnerTest.run},
 	{"name": "Power Step Gate Test", "run": PowerStepGateTest.run},
 	{"name": "End Segment Round Test", "run": EndSegmentRoundTest.run},
+	# Round Driver Decline Test is a suite of record rather than a nested call
+	# inside Round Driver Test: the split exists to stay under .gdlintrc's
+	# 1000-line cap, and registering it directly keeps its name in the headless
+	# run's output. See its own docstring.
+	{"name": "Round Driver Test", "run": RoundDriverTest.run},
+	{"name": "Round Driver Decline Test", "run": RoundDriverDeclineTest.run},
 	{"name": "Command Taxonomy Contract Test", "run": CommandTaxonomyContractTest.run},
 	{"name": "Fighter Templates Test", "run": FighterTemplatesTest.run},
 ]
