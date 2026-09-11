@@ -53,10 +53,6 @@ const SEED := 17
 ## take. Reaching it is a failure.
 const MAX_TURNS := 24
 
-## The Turns `p2` takes in a round, as the authored profile sets it. Read back
-## off the state rather than restated as a literal.
-const EXPECTED_DECLINES := 4
-
 
 static func run() -> bool:
 	var violations: Array[String] = []
@@ -197,6 +193,11 @@ static func _test_a_round_of_declines_completes() -> Array[String]:
 	var opening := _snapshot(state)
 	var declines := 0
 
+	# The Turns `p2` takes in a round: read back off the state, which
+	# `_build_state()` seeded from the authored profile, rather than restated
+	# here as a literal.
+	var expected_declines := state.turns_per_player
+
 	var played := 0
 	while not driver.active_player_id().is_empty():
 		played += 1
@@ -219,8 +220,8 @@ static func _test_a_round_of_declines_completes() -> Array[String]:
 
 	violations.append_array(
 		_expect(
-			declines == EXPECTED_DECLINES,
-			"p2 must have declined %d Turns, got %d" % [EXPECTED_DECLINES, declines]
+			declines == expected_declines,
+			"p2 must have declined %d Turns, got %d" % [expected_declines, declines]
 		)
 	)
 	violations.append_array(
