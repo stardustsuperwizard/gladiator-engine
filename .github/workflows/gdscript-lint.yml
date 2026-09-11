@@ -38,23 +38,23 @@ name: GDScript Lint
 
 on:
   pull_request:
-    # Allow-listed, not denied, unlike godot-ci-validation.yml -- this job
+    # Allow-listed, not denied, unlike ci.yml's `changes` job -- this job
     # only ever touches `.gd` files, so most of the repo genuinely can't
     # affect it. But it does pull in dependencies beyond `.gd` files
     # themselves, and those need to be listed explicitly or a change to
     # them goes untested here:
     #   - lint-gdscript/: does the actual gdformat/gdlint work.
     #   - setup-godot/: installs the engine `validate-godot.sh` needs below
-    #     -- same reasoning godot-ci-validation.yml gives for keeping it
-    #     out of *its* ignore list.
+    #     -- same reasoning ci.yml's `changes` job gives for keeping it
+    #     out of *its* deny-list.
     #   - run-agent-session/: runs the gdlint auto-fix session.
     #   - validate-godot.sh: gates both auto-fix commits below.
     #   - .gdlintrc: the rule set gdlint is checked against. Changing a
     #     threshold here changes what passes, so it has to run the linter.
-    #     It was previously covered only by godot-ci-validation.yml's
-    #     fail-safe deny-list, which booted a Godot runner to answer a
-    #     question about lint style; that file now ignores it, so this is
-    #     where it has to be listed instead.
+    #     It used to be covered only by a fail-safe deny-list that booted a
+    #     Godot runner to answer a question about lint style; ci.yml's
+    #     `changes` job deny-lists it directly instead now, so this is
+    #     where it has to be listed as well.
     paths:
       - '**.gd'
       - '.gdlintrc'

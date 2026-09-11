@@ -40,8 +40,8 @@ on:
   #
   # This is the expensive trigger: it fires on every PR event including
   # `opened`, so it stacks a render onto the moment a PR is created --
-  # alongside `agent-04-review.yml` and `godot-ci-validation.yml`, which is
-  # exactly the pile-up worth avoiding. Re-enable it only if the control
+  # alongside `agent-04-review.yml` and `ci.yml`, which is exactly the
+  # pile-up worth avoiding. Re-enable it only if the control
   # plane going stale between manual refreshes turns out to cost more than
   # the noise.
   #

@@ -155,14 +155,19 @@ has run, stop waiting. It has two causes and they do not mean the same thing
 — work out which one you are in and report that, rather than reporting "no
 checks" and leaving the reader to guess:
 
-- **Path filters.** `godot-ci-validation.yml` ignores prose and
-  the whole agent control plane — `.github/agents/**`, `.claude/**`,
-  `.gitignore`, the `agent-*` workflows; `gdscript-lint.yml`
-  only fires on `**.gd`, `.gdlintrc` and its own tooling. A PR touching none
-  of the watched paths legitimately runs nothing. This is green: say that no
-  checks applied, and to which paths. Read the workflow's own list rather
-  than trusting this summary — it is a summary, and the list is the
-  authority.
+- **Path filters.** `gdscript-lint.yml` only fires on `**.gd`, `.gdlintrc`
+  and its own tooling, so a PR touching none of those legitimately gets no
+  run from it at all. `ci.yml` itself is not filtered this way — its trigger
+  is unconditional, and the deny/allow-lists that used to sit on a trigger
+  now sit on each of its jobs' own `if:`, decided once by its `changes` job.
+  That means a PR touching only prose or the whole agent control plane —
+  `.github/agents/**`, `.claude/**`, `.gitignore`, the `agent-*`
+  workflows — still gets a `ci` check, reporting success with those jobs
+  `skipped`, rather than no check at all. Either way this is green: say
+  which checks applied and which were skipped and why, or that
+  `gdscript-lint.yml` did not run because of its own path filter. Read the
+  workflow's own list rather than trusting this summary — it is a summary,
+  and the list is the authority.
 - **The PR's author cannot start workflows.** GitHub does not start
   `pull_request` runs for a PR opened by `GITHUB_TOKEN`, which is what an
   Actions run opens PRs as unless `AGENT_GITHUB_TOKEN` is set —
