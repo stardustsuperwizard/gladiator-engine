@@ -1887,11 +1887,20 @@ Six things about that loop are decisions rather than obvious consequences:
   here is path-filtered — `ci.yml`'s verification jobs by the `changes` job's
   deny/allow-lists, decided once and read by each job's own `if:` so a
   skipped job still reports (see *The single aggregate status check* above);
-  `gdscript-lint.yml` by `paths` at its own trigger, unchanged — so a PR
-  touching only prose or the agent control plane still gets a `ci` check
-  reporting green, with those jobs skipped rather than an empty list; only
-  `gdscript-lint.yml`'s own check is absent, because it is still filtered at
-  its trigger. A PR that changes `**.gd` and still has no checks at all is
+  `gdscript-lint.yml` by `paths` at its own trigger, unchanged — so there is
+  a `ci` check to read whatever the PR touched, and what varies is how many
+  of its jobs ran rather than whether anything reports. A prose-only PR
+  skips all four: nothing it changed falls outside the `changes` job's Godot
+  deny-list, and nothing falls inside its control-plane allow-list. A
+  control-plane PR skips only `godot`; `workflow-logic`, `issue-deps` and
+  `actionlint` all run, because `.github/workflows/**`, `.github/actions/**`,
+  `.github/scripts/**`, `.github/agents/**`, `.claude/agents/**` and
+  `.claude/commands/**` are precisely what that allow-list covers. Either
+  way `ci` itself reports green with its skipped jobs listed rather than an
+  empty list; the one check that can be absent outright is
+  `gdscript-lint.yml`'s, because it is still filtered at its trigger — and
+  it too runs on a control-plane PR that happens to touch its own
+  allow-list. A PR that changes `**.gd` and still has no checks at all is
   the other case: without `AGENT_GITHUB_TOKEN`, pull requests opened by
   `GITHUB_TOKEN` get no `pull_request` runs at all, and no approval step can
   rescue that because there is no parked run to approve. The gates did not
