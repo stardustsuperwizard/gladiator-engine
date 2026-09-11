@@ -604,7 +604,7 @@ jobs:
       # the outer "Re-run Validation" / "Apply GDScript Formatting" /
       # "Evaluate Pre-PR Fix" steps all shell out to it later too. Every
       # other workflow that calls validate-godot.sh installs Godot first
-      # (see godot-ci-validation.yml) --
+      # (see ci.yml's `godot` job, via godot-validation.yml) --
       # this one was missing it, so validate-godot.sh's own
       # `command -v godot` guard was hitting its `exit 127` unconditionally.
       - name: Setup Godot

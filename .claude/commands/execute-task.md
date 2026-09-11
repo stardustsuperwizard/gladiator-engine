@@ -155,14 +155,23 @@ has run, stop waiting. It has two causes and they do not mean the same thing
 — work out which one you are in and report that, rather than reporting "no
 checks" and leaving the reader to guess:
 
-- **Path filters.** `godot-ci-validation.yml` ignores prose and
-  the whole agent control plane — `.github/agents/**`, `.claude/**`,
-  `.gitignore`, the `agent-*` workflows; `gdscript-lint.yml`
-  only fires on `**.gd`, `.gdlintrc` and its own tooling. A PR touching none
-  of the watched paths legitimately runs nothing. This is green: say that no
-  checks applied, and to which paths. Read the workflow's own list rather
-  than trusting this summary — it is a summary, and the list is the
-  authority.
+- **Path filters.** `gdscript-lint.yml` only fires on `**.gd`, `.gdlintrc`
+  and its own tooling, so a PR touching none of those legitimately gets no
+  run from it at all. `ci.yml` itself is not filtered this way — its trigger
+  is unconditional, and the deny/allow-lists that used to sit on a trigger
+  now sit on each of its jobs' own `if:`, decided once by its `changes` job.
+  That means there is always a `ci` check, whatever the PR touched; what
+  varies is how many of its jobs ran. A prose-only PR gets all four
+  `skipped`. A PR touching the agent control plane — `.github/workflows/**`,
+  `.github/actions/**`, `.github/scripts/**`, `.github/agents/**`,
+  `.claude/agents/**`, `.claude/commands/**` — skips only `godot`, and
+  *runs* `workflow-logic`, `issue-deps` and `actionlint`: those paths are
+  the `changes` job's control-plane allow-list, so editing an `agent-*`
+  workflow or a subagent definition is exactly what turns them on. Either
+  way this is green: say which checks applied and which were skipped and
+  why, or that `gdscript-lint.yml` did not run because of its own path
+  filter. Read the workflow's own list rather than trusting this summary —
+  it is a summary, and the list is the authority.
 - **The PR's author cannot start workflows.** GitHub does not start
   `pull_request` runs for a PR opened by `GITHUB_TOKEN`, which is what an
   Actions run opens PRs as unless `AGENT_GITHUB_TOKEN` is set —

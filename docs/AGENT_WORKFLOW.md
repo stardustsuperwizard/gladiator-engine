@@ -1189,14 +1189,16 @@ callers:
 
 | Caller | Ref checked out | `head-sha` |
 | --- | --- | --- |
-| `godot-ci-validation.yml` | the caller's default (the PR merge ref) | none |
+| `ci.yml`'s `godot` job | the caller's default (the PR merge ref) | none |
 | `agent-02-implement.yml` | the implementer's pushed SHA | that SHA |
 | `agent-05-fix.yml` | the fixer's pushed SHA | that SHA |
 
-`godot-ci-validation.yml` still owns the human-authored `pull_request` path,
-with its `paths-ignore` deny-list and its `workflow_dispatch` escape hatch,
-unchanged. It passes no `head-sha`, because a `pull_request` run already
-reports its status against the right commit.
+`ci.yml`'s `godot` job still owns the human-authored `pull_request` path, and
+still has the same `workflow_dispatch` escape hatch. Its deny-list moved from
+a trigger-level `paths-ignore` to a job-level `if:`, decided once by `ci.yml`'s
+`changes` job — see *The single aggregate status check* below for why. It
+passes no `head-sha`, because a `pull_request` run already reports its status
+against the right commit.
 
 The agent callers must pass one. Their runs are triggered by `issues` events,
 so the run's own head SHA is `main` — not the branch the session pushed — and
@@ -1224,6 +1226,30 @@ Run it by hand against any Issue number to re-check:
 ```bash
 gh workflow run agent-02-implement.yml -f issue_number=68
 ```
+
+#### The single aggregate status check
+
+`ci.yml` is the one `pull_request`-triggered workflow, and its `ci` job is the
+single status check branch protection is meant to require by name — one
+required check, however many jobs run behind it, rather than one per
+verification job that has to be kept in sync by hand every time a job is
+added or removed.
+
+It reports on *every* pull request, always, including a docs-only one that
+skips all four of `ci.yml`'s parallel jobs (`godot`, `workflow-logic`,
+`issue-deps`, `actionlint`). That is deliberate: those jobs are gated by each
+job's own `if:`, decided once by the `changes` job, rather than by the
+workflow's trigger. A job skipped by `if:` still reports — as `skipped`,
+which the `ci` job counts as passing — where a workflow skipped by a
+trigger-level `paths`/`paths-ignore` filter reports no status at all, and a
+required check with no status hangs a pull request on "Expected — Waiting for
+status to be reported" forever. `gdscript-lint.yml` still filters at its own
+trigger and is not part of `ci`, so it can be skipped this way; it is a
+separate, non-required check.
+
+Enabling branch protection on `main` to require the `ci` check has not been
+done — the workflow exists to give that setting one name to require, but
+turning it on is a repository-settings change nobody has made yet.
 
 ### Step 3 — Review
 
@@ -1585,8 +1611,8 @@ they can be restored with an editor and no thought:
 
 - **`pull_request`** — the expensive one. It fired on every PR event including
   `opened`, stacking a render onto PR creation alongside `agent-04-review.yml`
-  and `godot-ci-validation.yml`. Re-enable it if a stale control plane starts
-  costing more than the noise does.
+  and `ci.yml`. Re-enable it if a stale control plane starts costing more than
+  the noise does.
 - **`schedule`** (nightly `17 6 * * *`) — this was the staleness *bound*: a
   missed refresh could not leave the board wrong for longer than a day.
   Without it, staleness is bounded only by you remembering to press the
@@ -1858,13 +1884,26 @@ Six things about that loop are decisions rather than obvious consequences:
   hand; that instruction is for a session that stops before the review step,
   which this one does not.
 - **An empty check list ends the wait, and is not automatically green.** CI
-  here is path-filtered — `godot-ci-validation.yml` by `paths-ignore`,
-  `gdscript-lint.yml` by `paths` — so a PR touching only prose or the agent
-  control plane legitimately runs nothing, and that *is* green. A PR that
-  changes `**.gd` and still has no
-  checks is the other case: without `AGENT_GITHUB_TOKEN`, pull requests opened
-  by `GITHUB_TOKEN` get no `pull_request` runs at all, and no approval step
-  can rescue that because there is no parked run to approve. The gates did not
+  here is path-filtered — `ci.yml`'s verification jobs by the `changes` job's
+  deny/allow-lists, decided once and read by each job's own `if:` so a
+  skipped job still reports (see *The single aggregate status check* above);
+  `gdscript-lint.yml` by `paths` at its own trigger, unchanged — so there is
+  a `ci` check to read whatever the PR touched, and what varies is how many
+  of its jobs ran rather than whether anything reports. A prose-only PR
+  skips all four: nothing it changed falls outside the `changes` job's Godot
+  deny-list, and nothing falls inside its control-plane allow-list. A
+  control-plane PR skips only `godot`; `workflow-logic`, `issue-deps` and
+  `actionlint` all run, because `.github/workflows/**`, `.github/actions/**`,
+  `.github/scripts/**`, `.github/agents/**`, `.claude/agents/**` and
+  `.claude/commands/**` are precisely what that allow-list covers. Either
+  way `ci` itself reports green with its skipped jobs listed rather than an
+  empty list; the one check that can be absent outright is
+  `gdscript-lint.yml`'s, because it is still filtered at its trigger — and
+  it too runs on a control-plane PR that happens to touch its own
+  allow-list. A PR that changes `**.gd` and still has no checks at all is
+  the other case: without `AGENT_GITHUB_TOKEN`, pull requests opened by
+  `GITHUB_TOKEN` get no `pull_request` runs at all, and no approval step can
+  rescue that because there is no parked run to approve. The gates did not
   pass, they never ran, and the file says to report it that way. Either way
   the wait stops: waiting for a check that will never be created is the one
   way that step hangs forever.
@@ -2152,8 +2191,8 @@ are custom agents and MCP servers.
 | `.github/workflows/agent-04-review.yml` | Reviews a PR against its task contract, emits a verdict |
 | `.github/workflows/agent-05-fix.yml` | Applies a bounded correction against the latest `FIX` verdict, on `agent:fixer:copilot`; refuses fork PRs and diffs it cannot push before spending a session; ends with an independent validation job on the pushed SHA |
 | `.github/workflows/issue-dependencies.yml` | Turns an Issue's `## Dependencies` table into GitHub dependencies, on the `blocker` label or a dispatch; `sweep` rebuilds the whole chain |
-| `.github/workflows/godot-validation.yml` | The one reusable validation job (`workflow_call`); called by `godot-ci-validation.yml`, `agent-02-implement.yml`, and `agent-05-fix.yml` |
-| `.github/workflows/godot-ci-validation.yml` | Human-authored `pull_request` validation gate (`paths-ignore` deny-list) plus a manual dispatch; calls `godot-validation.yml` |
+| `.github/workflows/ci.yml` | The one `pull_request`-triggered workflow (also `push` to `main` and a manual dispatch); its `changes` job decides which gates apply, four jobs run in parallel behind that job's `if:` (`godot`, `workflow-logic`, `issue-deps`, `actionlint`), and the `ci` job aggregates all four into the single required status check |
+| `.github/workflows/godot-validation.yml` | The one reusable validation job (`workflow_call`); called by `ci.yml`'s `godot` job, `agent-02-implement.yml`, and `agent-05-fix.yml` |
 | `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt |
 | `.github/actions/build-fix-request` | Shared by `agent-05-fix.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the fixer prompt |
 | `.github/actions/run-agent-session` | The one place a vendor difference lives. Runs one agent session -- Copilot CLI, or Claude Code on either credential, chosen by its `vendor` input -- walking a model preference list and classifying how the session ended into a shared outcome schema. Not yet shared by the planner, which still carries its own copy of the loop |
