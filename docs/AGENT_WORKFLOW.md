@@ -1886,13 +1886,15 @@ Six things about that loop are decisions rather than obvious consequences:
 - **An empty check list ends the wait, and is not automatically green.** CI
   here is path-filtered — `ci.yml`'s verification jobs by the `changes` job's
   deny/allow-lists, decided once and read by each job's own `if:` so a
-  skipped job still reports (see *The single aggregate status check* below);
+  skipped job still reports (see *The single aggregate status check* above);
   `gdscript-lint.yml` by `paths` at its own trigger, unchanged — so a PR
-  touching only prose or the agent control plane legitimately runs nothing,
-  and that *is* green. A PR that changes `**.gd` and still has no
-  checks is the other case: without `AGENT_GITHUB_TOKEN`, pull requests opened
-  by `GITHUB_TOKEN` get no `pull_request` runs at all, and no approval step
-  can rescue that because there is no parked run to approve. The gates did not
+  touching only prose or the agent control plane still gets a `ci` check
+  reporting green, with those jobs skipped rather than an empty list; only
+  `gdscript-lint.yml`'s own check is absent, because it is still filtered at
+  its trigger. A PR that changes `**.gd` and still has no checks at all is
+  the other case: without `AGENT_GITHUB_TOKEN`, pull requests opened by
+  `GITHUB_TOKEN` get no `pull_request` runs at all, and no approval step can
+  rescue that because there is no parked run to approve. The gates did not
   pass, they never ran, and the file says to report it that way. Either way
   the wait stops: waiting for a check that will never be created is the one
   way that step hangs forever.
