@@ -45,10 +45,10 @@ body, title, state, or assignee.
 
 Usage:
 
-    sync-local-session-label.py --issue 168
-    sync-local-session-label.py --issue 168 --issue 169 --dry-run
-    sync-local-session-label.py --sweep            # every open Issue
-    sync-local-session-label.py --sweep --json
+    sync-human-credentials-label.py --issue 168
+    sync-human-credentials-label.py --issue 168 --issue 169 --dry-run
+    sync-human-credentials-label.py --sweep            # every open Issue
+    sync-human-credentials-label.py --sweep --json
 
 Requires `gh` authenticated against the repository, with write access to
 Issues. No third-party dependencies.
@@ -91,6 +91,12 @@ ACTION_NONE = "none"
 # Asked for explicitly, the same way sync-issue-dependencies.py does, rather
 # than paginated: a sweep is a repair tool and its cost should be visible as
 # one number here, not hidden behind an implicit page walk.
+#
+# A single request is only safe because `load_open_issues` refuses a full
+# page. Without that refusal the sweep's failure mode is the one thing it
+# must never do: report success having silently skipped Issues, leaving a
+# queue that looks complete and is not. Raise this number when the repository
+# outgrows it, or paginate -- but never let a full page pass quietly.
 PAGE_SIZE = 500
 
 
@@ -215,6 +221,17 @@ class Repository:
             ]) or []
         except GhError as error:
             raise GhError(f"could not list open Issues: {error}") from error
+
+        # A full page means `gh` had no room to return the rest, so this sweep
+        # is incomplete and cannot be reported as a repair. Fail rather than
+        # truncate: an operator reading "no Issues to derive" has to be able to
+        # believe it.
+        if len(issues) >= PAGE_SIZE:
+            raise GhError(
+                f"open Issues filled the {PAGE_SIZE}-item page, so the sweep"
+                " would be incomplete. Raise PAGE_SIZE or paginate"
+                " before trusting a sweep again."
+            )
 
         for issue in issues:
             self._issues[issue["number"]] = issue

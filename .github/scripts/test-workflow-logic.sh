@@ -999,7 +999,7 @@ PY
 # ---------------------------------------------------------------------------
 # Part 8: `human-credentials` label derivation (#227).
 #
-# `sync-local-session-label.py` is the repair for the label's coverage gaps:
+# `sync-human-credentials-label.py` is the repair for the label's coverage gaps:
 # it derives from `task_scope.py` -- never re-implementing the section or
 # path parsing -- and adds or removes the label to match. Run against a stub
 # `gh`, python3 only, no network, no credentials, no real repository, the
@@ -1015,7 +1015,7 @@ part8 () {
 
   cat > "$part_dir/bin/gh" <<'STUB'
 #!/usr/bin/env python3
-"""Stub `gh`, covering only the calls sync-local-session-label.py makes.
+"""Stub `gh`, covering only the calls sync-human-credentials-label.py makes.
 
 State is a JSON file so the driver's own idempotence can be tested across
 runs. Every invocation is also appended to $GH_STUB_LOG, one line per call,
@@ -1139,7 +1139,7 @@ JSON
     : > "$part_dir/calls.log"
     GH_STUB_STATE="$state" GH_STUB_LOG="$part_dir/calls.log" \
       PATH="$part_dir/bin:$PATH" \
-      "$repo_root/.github/scripts/sync-local-session-label.py" --repo o/r "$@"
+      "$repo_root/.github/scripts/sync-human-credentials-label.py" --repo o/r "$@"
   }
 
   label_of () {
@@ -1318,6 +1318,38 @@ sys.exit('no issue list call was made')
     fail "sweep did not request an adequate, explicit page size"
   fi
 
+  # -- a full page is refused rather than silently truncating the sweep. -----
+  write_state "$part_dir/s.json"
+  if GH_STUB_STATE="$part_dir/s.json" GH_STUB_LOG="$part_dir/calls.log" \
+     PATH="$part_dir/bin:$PATH" python3 -c "
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location(
+    'sync_human_credentials_label',
+    '$repo_root/.github/scripts/sync-human-credentials-label.py',
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+# The stub holds ten Issues; a page of two makes the first page full, which
+# is the condition a real sweep hits once the backlog outgrows PAGE_SIZE.
+module.PAGE_SIZE = 2
+repo = module.Repository('o/r')
+
+try:
+    repo.load_open_issues()
+except module.GhError as error:
+    assert 'incomplete' in str(error), error
+    sys.exit(0)
+
+sys.exit('a full page was accepted; the sweep would have silently truncated')
+"; then
+    pass "a full page fails the sweep instead of silently truncating it"
+  else
+    fail "sweep accepted a full page and would report an incomplete run as success"
+  fi
+
   # -- the script's derivation cannot drift from task_scope.evaluate(). -------
   if python3 -c "
 import importlib.util
@@ -1327,8 +1359,8 @@ sys.path.insert(0, '$repo_root/.github/scripts')
 import task_scope
 
 spec = importlib.util.spec_from_file_location(
-    'sync_local_session_label',
-    '$repo_root/.github/scripts/sync-local-session-label.py',
+    'sync_human_credentials_label',
+    '$repo_root/.github/scripts/sync-human-credentials-label.py',
 )
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
