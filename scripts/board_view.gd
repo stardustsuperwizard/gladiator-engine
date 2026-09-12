@@ -173,13 +173,14 @@ func _draw_fighter_marker(fighter_id: String) -> void:
 	if not flags.is_empty():
 		label += "\n" + ",".join(flags)
 
-	draw_string(
+	draw_multiline_string(
 		ThemeDB.fallback_font,
 		center + Vector2(-radius, -radius - LABEL_FONT_SIZE),
 		label,
 		HORIZONTAL_ALIGNMENT_CENTER,
 		radius * 2.0,
 		LABEL_FONT_SIZE,
+		-1,
 		INK_COLOR
 	)
 
@@ -205,6 +206,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
 		if not (mouse_event.pressed and mouse_event.button_index == MOUSE_BUTTON_LEFT):
+			return
+		if mouse_event.device == InputEvent.DEVICE_ID_EMULATION:
+			# Godot's default `emulate_mouse_from_touch` re-delivers every
+			# touch as an emulated mouse press; the `InputEventScreenTouch`
+			# branch below already handles the real touch, so acting on
+			# this one too would emit `hex_selected` twice per tap.
 			return
 		screen_position = mouse_event.position
 	elif event is InputEventScreenTouch:
