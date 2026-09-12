@@ -819,7 +819,7 @@ depends on the color. Checked live against the repository on 2026-08-22:
 | `planned` | `#0E8A16` | `agent-01-planner.yml` |
 | `implementation` | `#1D76DB` | `agent-01-planner.yml` |
 | `machine` | `#70A8BD` | `agent-01-planner.yml` |
-| `human-credentials` | `#D4C5F9` | `agent-01-planner.yml` |
+| `human-credentials` | `#D4C5F9` | `agent-01-planner.yml` and `sync-human-credentials-label.py` (duplicated, not shared) |
 | `blocker` | `#B23F00` | `agent-01-planner.yml` and `sync-issue-dependencies.py` (duplicated, not shared) |
 | `review:pass` | `#0E8A16` | `agent-04-review.yml` and `agent-02-implement.yml` (duplicated, not shared) |
 | `review:fix` | `#D93F0B` | `agent-04-review.yml` and `agent-02-implement.yml` (duplicated, not shared) |
@@ -1125,6 +1125,73 @@ instead** — Claude Code pushes with your own credentials. See *Claude Code as
 an additional environment*. Assigning the Copilot cloud agent does not help:
 that path is subject to the same restriction.
 
+#### The `human-credentials` queue
+
+The four statements above answer *is this one task restricted?* at the moment
+something is about to act on it. The remaining question is the inventory one —
+*which open Issues are waiting on a human-credentialed session?* — and answering
+it by reading every body is exactly the work a label exists to avoid. So the
+answer is materialised as `human-credentials`, and the saved view
+`is:issue is:open label:human-credentials` is the queue. See *Issue views*.
+
+**How it is derived.** `.github/scripts/sync-human-credentials-label.py` reads
+the Issue's `## Files or Subsystems Expected to Change` section with
+`task_scope.py` and applies the label when, and only when,
+`evaluate()["implementer_eligible"]` is false — which is the same test as
+`restricted_paths` being non-empty, because `evaluate()` sets one from the
+other. The label carries no rule of its own, and the workflow that calls the
+script carries none either: `issue-local-session.yml` is a caller, not a
+decision.
+
+**`task_scope.py` is authoritative; the label is an index.** Every gate that
+refuses work — the implementer's, the fixer's, the control plane's 🔑 — reads
+the module, never the label. Where the two disagree, the module is right and
+the label is stale, and the fix is to re-derive rather than to correct the
+label. Nothing downstream is allowed to start reading the label as a gate; the
+whole point of a materialised index is that it can be rebuilt from scratch and
+nothing notices.
+
+**It is never applied or removed by hand** — not by a human, not by an agent
+session. Exactly two machine paths write it and no other: `agent-01-planner.yml`
+at creation, and `sync-human-credentials-label.py` on edit, on a sweep, and for
+Issues the planner never made. A session that reasons its way to the label is a
+session disagreeing with the guard that will refuse the task anyway, so the
+planner role files on both surfaces forbid it outright. If a label looks wrong,
+the body is wrong: fix the expected-files section and the edit re-derives it.
+
+**Why the planner writes it directly rather than letting the trigger fire.**
+GitHub does not start workflow runs from events an Actions token produced, so
+`issues: opened` never fires for a sub-issue `agent-01-planner.yml` created —
+the planner must label at creation or the label never arrives. The same
+constraint shapes `issue-dependencies.yml`, which is why the planner calls
+`sync-issue-dependencies.py` itself instead of labelling and waiting to be
+noticed. The gap is not specific to the planner: it applies to any Issue any
+token creates, and the sweep (`workflow_dispatch` with `sweep` ticked) is the
+repair for those.
+
+**Unknown is represented as *not restricted*.** A missing expected-files
+section, an empty one, or one naming no recognisable path derives to no label,
+and removes the label if it is already there — the same uncertain-means-eligible
+posture the guards take. So **absence of `human-credentials` is not a
+certificate that a task is automatable**; it means nothing restricted was found
+in a body that may not have said. The run summary reports `no-section` and
+`no-paths` as distinct reasons even though they act identically, precisely so
+that distinction survives into the log. Nothing is ever labelled on suspicion.
+
+**The coverage boundary is tasks, not epics.** An epic carries no
+*Files or Subsystems Expected to Change* section at all, so a sweep leaves every
+open epic unlabelled and gives `no-section` as the reason. That is correct
+behaviour rather than a miss: the queue is task-scoped, matching the control
+plane's 🔑, because you dispatch tasks and not epics.
+
+**The pull request case is deliberately deferred.** Nothing labels a pull
+request whose diff touches these paths. `agent-05-fix.yml` already refuses such
+a PR, but it does so from the *changed files* the API reports, not from a body
+section — `evaluate_paths()` rather than `evaluate()`, a different code path
+with a different input, which a label derived from Issue bodies does not reach.
+Extending the queue to pull requests was considered and declined, not
+overlooked.
+
 #### Why the draft state carries the validation result
 
 Step 6 is the only statement *in the pull request body* about validation
@@ -1388,6 +1455,7 @@ The views worth having, and the queries behind them:
 | Planned epics | `is:issue is:open label:planned` |
 | Open tasks | `is:issue is:open label:implementation` |
 | Blocking something | `is:issue is:open label:blocker` |
+| Needs a local session | `is:issue is:open label:human-credentials` |
 | Awaiting review | `is:pr is:open draft:false -label:"review:pass","review:fix","review:planning-failure","review:design-ambiguity"` |
 | Needs your attention | `is:pr is:open label:"review:fix","review:planning-failure","review:design-ambiguity","validation:failed"` |
 | Ready to merge | `is:pr is:open label:"review:pass"` |
@@ -2201,6 +2269,7 @@ are custom agents and MCP servers.
 | `.github/scripts/render-dashboard.py` | Derives every task and epic state from the repository graph |
 | `.github/scripts/issue_dependencies.py` | The dependency-table grammar, shared by the planner, the sync script and the tests — the one definition of what `Blocked by` and `Blocks` mean |
 | `.github/scripts/sync-issue-dependencies.py` | The only writer of GitHub issue dependencies: reads tables, POSTs the relationships, applies `blocker`, reports drift |
+| `.github/scripts/sync-human-credentials-label.py` | Derives `human-credentials` from an Issue body's expected-files section via `task_scope.py` and adds or removes it to match; owns that one label and nothing else. Called by `issue-local-session.yml` on open, on edit, and on a sweep of the open backlog |
 | `.github/scripts/test-issue-dependencies.sh` | Pins the parser and the sync's `gh` calls against a stub CLI; no Godot, credentials or network |
 | `.github/scripts/task_scope.py` | The one path rule the pushing workflows share: the ⚠️ delicate-paths flag, implementer eligibility from an Issue's expected files (`agent-01-planner.yml`, `agent-02-implement.yml`, the control plane), and pushability from a pull request's changed files (`agent-05-fix.yml`) |
 | `.github/agents/01-planner.agent.md` | Planner role, Issue promotion criteria |

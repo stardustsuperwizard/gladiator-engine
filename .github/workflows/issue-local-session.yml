@@ -1,0 +1,146 @@
+name: Issue Local-Session Label
+
+# Derives the `human-credentials` label on an Issue from its
+# `## Files or Subsystems Expected to Change` section, by calling
+# `.github/scripts/sync-human-credentials-label.py`, which reads
+# `.github/scripts/task_scope.py` -- the single source of truth for which
+# paths `GITHUB_TOKEN` cannot push. The label is a materialised index over
+# that rule, so the queue of restricted-path work is one saved issue view
+# (`is:issue is:open label:human-credentials`) instead of a body read per
+# Issue.
+#
+# The Issue body is the source, so `edited` has to re-sync: `agent-01-planner.yml`
+# applies the label once at creation and nothing afterwards kept it in step
+# with a section that changed, a section that stopped naming a restricted
+# path, or a hand-written `[task]` Issue the planner never saw. This workflow
+# is that repair, and `sweep` re-derives the whole open backlog.
+#
+# No derivation logic lives here. Every decision, and every reason code in the
+# run summary, comes from the script, where it is tested by
+# `.github/scripts/test-workflow-logic.sh` Part 8. A rule that needs changing
+# changes there, not in this YAML.
+#
+# Spends no AI credits and needs no secrets beyond GITHUB_TOKEN.
+
+on:
+  # `opened` and `edited` only -- never `labeled`. This workflow writes
+  # labels, and a `labeled` subscription would be a loop waiting for the day
+  # something other than `GITHUB_TOKEN` writes them. Labels written with
+  # `GITHUB_TOKEN` do not start workflow runs, by GitHub's design; that is
+  # what makes this pair safe, and it is load-bearing rather than incidental
+  # -- the same fact `issue-dependencies.yml` records about its own triggers,
+  # and the same fact that makes `agent-01-planner.yml` label at creation
+  # instead of waiting for `opened` to fire for an Issue its own token made.
+  issues:
+    types:
+      - opened
+      - edited
+
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue whose `human-credentials` label should be re-derived"
+        required: false
+        type: number
+      sweep:
+        description: >-
+          Read every open Issue instead of one. The repair mode: re-derives
+          the label across the whole open backlog and reports a decision and
+          a reason per Issue.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # Per Issue, and never cancelled. Two edits in quick succession must both be
+  # read: the second one's body is the current one, but the first run may
+  # already be mid-write, and cancelling it would leave the label reflecting
+  # neither body with nothing recording that it happened.
+  group: issue-local-session-${{ github.event.issue.number || inputs.issue_number || 'sweep' }}
+  cancel-in-progress: false
+
+# No `if:` gate on the job. Unlike `issue-dependencies.yml` there is no
+# qualifying label to test -- every Issue is in scope, a run costs a runner
+# minute, and a gate would be one more place the queue can silently miss work.
+#
+# No Issue comments, either. The label is the product and the run summary is
+# the operator-visible output. This fires on every Issue edit in the
+# repository; a comment per run would make every Issue thread unreadable
+# within a week.
+jobs:
+  derive:
+    name: Issue Local-Session Label
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Derive the human-credentials Label
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STEP="Derive the human-credentials Label"
+
+          ARGS=()
+
+          if [ "${{ inputs.sweep }}" = "true" ]; then
+            ARGS+=(--sweep)
+          fi
+
+          # A dispatch may name an Issue, a sweep, or both -- naming one
+          # alongside a sweep is how a *closed* Issue gets re-derived, since
+          # the sweep only reads open ones.
+          ISSUE="${{ github.event.issue.number || inputs.issue_number }}"
+
+          if [ -n "$ISSUE" ]; then
+            ARGS+=(--issue "$ISSUE")
+            TARGET="#$ISSUE"
+          else
+            TARGET="the sweep"
+          fi
+
+          if [ ${#ARGS[@]} -eq 0 ]; then
+            echo "::error::$STEP: dispatch with an issue number, or tick sweep."
+            exit 1
+          fi
+
+          # Never `set -e`-fatal on its own: the script's markdown report is
+          # the only account of what it did, and it has to reach the summary
+          # before the job goes red.
+          set +e
+          .github/scripts/sync-human-credentials-label.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --json \
+            "${ARGS[@]}" \
+            > "$RUNNER_TEMP"/report.json
+          STATUS=$?
+          set -e
+
+          if [ ! -s "$RUNNER_TEMP"/report.json ]; then
+            echo "::error::$STEP: the derivation produced no report for" \
+                 "$TARGET."
+            exit 1
+          fi
+
+          jq -r '.markdown' "$RUNNER_TEMP"/report.json >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.markdown' "$RUNNER_TEMP"/report.json
+
+          # The script exits non-zero on a failed read or write *and* on a
+          # sweep that filled its Issue page. A truncated sweep is a failure,
+          # not a partial success: an operator reading the summary has to be
+          # able to believe the queue it describes is the whole queue.
+          if [ "$STATUS" != "0" ]; then
+            echo "::error::$STEP: deriving \`human-credentials\` for $TARGET" \
+                 "failed (exit $STATUS). See the job summary for the Issue" \
+                 "and the operation."
+            exit 1
+          fi
