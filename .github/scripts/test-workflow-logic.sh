@@ -28,6 +28,11 @@
 #   Part 7  The Godot version is pinned in several places that must move
 #           together, and VERSION.md wrongly claimed one default covered
 #           them all. A half-done bump would pass CI on the stale half.
+#   Part 8  #227 -- `human-credentials` was bootstrapped with two different
+#           descriptions in two files, and the label itself was only ever
+#           applied once, at Issue creation; editing the expected-files
+#           section afterwards, or hand-writing a [task] Issue, left it
+#           wrong or missing with nothing to notice.
 #
 # Like `test-issue-dependencies.sh`, this needs nothing but python3: no
 # network, no credentials, no GitHub CLI, and it never touches a real
@@ -991,6 +996,366 @@ sys.exit(0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 8: `human-credentials` label derivation (#227).
+#
+# `sync-local-session-label.py` is the repair for the label's coverage gaps:
+# it derives from `task_scope.py` -- never re-implementing the section or
+# path parsing -- and adds or removes the label to match. Run against a stub
+# `gh`, python3 only, no network, no credentials, no real repository, the
+# same posture `test-issue-dependencies.sh`'s Part 2 uses for its own
+# stub-`gh` driver.
+# ---------------------------------------------------------------------------
+
+part8 () {
+  local part_dir bad
+  part_dir="$(mktemp -d "$work_dir/part8.XXXXXX")"
+  mkdir -p "$part_dir/bin"
+  bad=0
+
+  cat > "$part_dir/bin/gh" <<'STUB'
+#!/usr/bin/env python3
+"""Stub `gh`, covering only the calls sync-local-session-label.py makes.
+
+State is a JSON file so the driver's own idempotence can be tested across
+runs. Every invocation is also appended to $GH_STUB_LOG, one line per call,
+so a test can assert *which* calls were made -- not just their effect --
+without inventing a second state machine to track it.
+"""
+import json
+import os
+import pathlib
+import sys
+
+state_path = pathlib.Path(os.environ["GH_STUB_STATE"])
+state = json.loads(state_path.read_text())
+args = sys.argv[1:]
+
+log_path = os.environ.get("GH_STUB_LOG")
+if log_path:
+    with open(log_path, "a") as handle:
+        handle.write(" ".join(args) + "\n")
+
+
+def emit(obj):
+    print(json.dumps(obj))
+
+
+def save():
+    state_path.write_text(json.dumps(state))
+
+
+if args[:2] == ["label", "list"]:
+    if "--jq" in args:
+        print("\n".join(state["labels"]))
+    else:
+        emit([{"name": name} for name in state["labels"]])
+
+elif args[:2] == ["label", "create"]:
+    name = args[2]
+    if name not in state["labels"]:
+        state["labels"].append(name)
+    save()
+
+elif args[:2] == ["issue", "list"]:
+    fields = args[args.index("--json") + 1].split(",")
+    rows = []
+    for number, issue in sorted(state["issues"].items(), key=lambda kv: int(kv[0])):
+        row = {}
+        for field in fields:
+            if field == "number":
+                row["number"] = int(number)
+            elif field == "labels":
+                row["labels"] = [{"name": n} for n in issue.get("labels", [])]
+            else:
+                row[field] = issue.get(field, "")
+        rows.append(row)
+    emit(rows)
+
+elif args[:2] == ["issue", "edit"]:
+    number = args[2]
+    op = label = None
+    if "--add-label" in args:
+        op, label = "add", args[args.index("--add-label") + 1]
+    elif "--remove-label" in args:
+        op, label = "remove", args[args.index("--remove-label") + 1]
+
+    if f"{op}:{number}" in state.get("fail_ops", []):
+        print(f"gh: could not edit issue #{number} (stubbed failure)",
+              file=sys.stderr)
+        sys.exit(1)
+
+    labels = state["issues"][number].setdefault("labels", [])
+    if op == "add" and label not in labels:
+        labels.append(label)
+    elif op == "remove" and label in labels:
+        labels.remove(label)
+    save()
+
+elif args[0] == "api":
+    path = args[1]
+    number = path.split("/issues/")[1].split("/")[0].split("?")[0]
+    if number not in state["issues"]:
+        print("gh: Not Found (HTTP 404)", file=sys.stderr)
+        sys.exit(1)
+    issue = dict(state["issues"][number])
+    issue["number"] = int(number)
+    issue["labels"] = [{"name": n} for n in issue.get("labels", [])]
+    emit(issue)
+
+else:
+    print("stub gh: unhandled call: " + " ".join(args), file=sys.stderr)
+    sys.exit(2)
+STUB
+  chmod +x "$part_dir/bin/gh"
+
+  pass() { echo "  ok   — $1"; }
+  fail() { echo "  FAIL — $1" >&2; bad=$((bad + 1)); }
+
+  write_state () {
+    cat > "$1" <<'JSON'
+{
+  "labels": ["implementation", "machine"],
+  "fail_ops": ["add:30"],
+  "issues": {
+    "12": {"body": "## Files or Subsystems Expected to Change\n\n- `.github/workflows/foo.yml`\n", "labels": []},
+    "13": {"body": "## Files or Subsystems Expected to Change\n\n- .github/actions/bar/action.yml\n", "labels": []},
+    "14": {"body": "## Files or Subsystems Expected to Change\n\n- `.github/workflows/foo.yml`\n", "labels": ["human-credentials"]},
+    "15": {"body": "## Files or Subsystems Expected to Change\n\n- rules/foo.gd\n", "labels": ["human-credentials"]},
+    "16": {"body": "## Scope\n\nA body written by hand against no template.\n", "labels": []},
+    "17": {"body": "## Scope\n\nA body written by hand against no template.\n", "labels": ["human-credentials"]},
+    "18": {"body": "## Files or Subsystems Expected to Change\n\n<!-- `.github/workflows/example.yml` -->\n", "labels": []},
+    "19": {"body": "## Files or Subsystems Expected to Change\n\n<!-- `.github/workflows/example.yml` -->\n", "labels": ["human-credentials"]},
+    "20": {"body": "## Files or Subsystems Expected to Change\n\n- rules/foo.gd\n", "labels": []},
+    "30": {"body": "## Files or Subsystems Expected to Change\n\n- `.github/workflows/foo.yml`\n", "labels": []}
+  }
+}
+JSON
+  }
+
+  run_label_sync () {
+    local state="$1"
+    shift
+    : > "$part_dir/calls.log"
+    GH_STUB_STATE="$state" GH_STUB_LOG="$part_dir/calls.log" \
+      PATH="$part_dir/bin:$PATH" \
+      "$repo_root/.github/scripts/sync-local-session-label.py" --repo o/r "$@"
+  }
+
+  label_of () {
+    python3 -c "
+import json, sys
+state = json.load(open(sys.argv[1]))
+print('human-credentials' in state['issues'][sys.argv[2]].get('labels', []))
+" "$1" "$2"
+  }
+
+  # -- row 1: restricted, unlabelled -> add. Backticked path. ----------------
+  write_state "$part_dir/s.json"
+  out="$(run_label_sync "$part_dir/s.json" --issue 12)"
+  if grep -q '#12 -- restricted: .github/workflows/foo.yml' <<<"$out" \
+     && grep -q '^\*\*Added\*\*$' <<<"$out"; then
+    pass "backticked restricted path adds the label (#12)"
+  else
+    fail "expected #12 added for a backticked restricted path; got:\n$out"
+  fi
+  if [ "$(label_of "$part_dir/s.json" 12)" = "True" ]; then
+    pass "#12 carries the label after the add"
+  else
+    fail "#12 should carry human-credentials after the add"
+  fi
+  if grep -q 'issue edit 12 .*--add-label human-credentials' "$part_dir/calls.log"; then
+    pass "exactly one add call was made for #12"
+  else
+    fail "expected an --add-label call for #12; log:\n$(cat "$part_dir/calls.log")"
+  fi
+
+  second="$(run_label_sync "$part_dir/s.json" --issue 12)"
+  if grep -q '^\*\*Unchanged\*\*$' <<<"$second" \
+     && ! grep -q 'issue edit' "$part_dir/calls.log"; then
+    pass "re-running #12 makes no write call"
+  else
+    fail "second run over #12 should be a no-op; got:\n$second"
+  fi
+
+  # -- row 1: restricted, unlabelled -> add. Bare bullet path. ----------------
+  write_state "$part_dir/s.json"
+  out="$(run_label_sync "$part_dir/s.json" --issue 13)"
+  if [ "$(label_of "$part_dir/s.json" 13)" = "True" ]; then
+    pass "a bare bullet restricted path also adds the label (#13)"
+  else
+    fail "expected #13 (bare bullet path) to be labelled; got:\n$out"
+  fi
+
+  # -- row 2: restricted, already labelled -> none. ---------------------------
+  write_state "$part_dir/s.json"
+  out="$(run_label_sync "$part_dir/s.json" --issue 14)"
+  if grep -q '^\*\*Unchanged\*\*$' <<<"$out" \
+     && ! grep -q 'issue edit' "$part_dir/calls.log"; then
+    pass "#14 (restricted, already labelled) makes no write call"
+  else
+    fail "expected #14 unchanged; got:\n$out"
+  fi
+
+  # -- row 3: no restricted paths, section had paths, labelled -> remove. ----
+  write_state "$part_dir/s.json"
+  out="$(run_label_sync "$part_dir/s.json" --issue 15)"
+  if grep -q '#15 -- no-restricted-paths' <<<"$out" \
+     && grep -q '^\*\*Removed\*\*$' <<<"$out" \
+     && grep -q 'issue edit 15 .*--remove-label human-credentials' "$part_dir/calls.log"; then
+    pass "#15 loses the label once its section no longer names a restricted path"
+  else
+    fail "expected #15 removed with reason no-restricted-paths; got:\n$out"
+  fi
+  if [ "$(label_of "$part_dir/s.json" 15)" = "False" ]; then
+    pass "#15 no longer carries the label"
+  else
+    fail "#15 should have lost human-credentials"
+  fi
+
+  # -- row 4: no restricted paths, section had paths, unlabelled -> none. -----
+  write_state "$part_dir/s.json"
+  out="$(run_label_sync "$part_dir/s.json" --issue 20)"
+  if grep -q '#20 -- no-restricted-paths' <<<"$out" \
+     && grep -q '^\*\*Unchanged\*\*$' <<<"$out"; then
+    pass "#20 (unrestricted paths, unlabelled) stays unchanged"
+  else
+    fail "expected #20 unchanged with reason no-restricted-paths; got:\n$out"
+  fi
+
+  # -- row 5/6: no `## Files or Subsystems Expected to Change` section. ------
+  write_state "$part_dir/s.json"
+  out16="$(run_label_sync "$part_dir/s.json" --issue 16)"
+  out17="$(run_label_sync "$part_dir/s.json" --issue 17)"
+  if grep -q '#16 -- no-section' <<<"$out16" && grep -q '^\*\*Unchanged\*\*$' <<<"$out16"; then
+    pass "#16 with no expected-files section stays unchanged (no-section)"
+  else
+    fail "expected #16 unchanged with reason no-section; got:\n$out16"
+  fi
+  if grep -q '#17 -- no-section' <<<"$out17" && grep -q '^\*\*Removed\*\*$' <<<"$out17"; then
+    pass "#17 with no expected-files section loses the label (no-section)"
+  else
+    fail "expected #17 removed with reason no-section; got:\n$out17"
+  fi
+
+  # -- row 7/8: section present but empty or unparseable. --------------------
+  write_state "$part_dir/s.json"
+  out18="$(run_label_sync "$part_dir/s.json" --issue 18)"
+  out19="$(run_label_sync "$part_dir/s.json" --issue 19)"
+  if grep -q '#18 -- no-paths' <<<"$out18" && grep -q '^\*\*Unchanged\*\*$' <<<"$out18"; then
+    pass "#18 with an empty expected-files section stays unchanged (no-paths)"
+  else
+    fail "expected #18 unchanged with reason no-paths; got:\n$out18"
+  fi
+  if grep -q '#19 -- no-paths' <<<"$out19" && grep -q '^\*\*Removed\*\*$' <<<"$out19"; then
+    pass "#19 with an empty expected-files section loses the label (no-paths)"
+  else
+    fail "expected #19 removed with reason no-paths; got:\n$out19"
+  fi
+
+  # -- a failing write exits non-zero and names the Issue and the operation. -
+  write_state "$part_dir/s.json"
+  if run_label_sync "$part_dir/s.json" --issue 30 > "$part_dir/failing.out" 2>&1; then
+    fail "a refused label write must exit non-zero"
+  else
+    if grep -q '#30' "$part_dir/failing.out" && grep -qi 'add' "$part_dir/failing.out"; then
+      pass "a refused add exits non-zero and names #30 and the add operation"
+    else
+      fail "expected a failure naming #30's add; got:\n$(cat "$part_dir/failing.out")"
+    fi
+  fi
+  if [ "$(label_of "$part_dir/s.json" 30)" = "False" ]; then
+    pass "#30 was not reported as succeeded; no label was written"
+  else
+    fail "#30 should not carry the label after a failed write"
+  fi
+
+  # -- --dry-run decides and reports, and writes nothing. ---------------------
+  write_state "$part_dir/s.json"
+  before="$(cat "$part_dir/s.json")"
+  out="$(run_label_sync "$part_dir/s.json" --issue 12 --dry-run)"
+  if grep -q '#12 -- restricted' <<<"$out" \
+     && [ "$before" = "$(cat "$part_dir/s.json")" ] \
+     && ! grep -q 'issue edit' "$part_dir/calls.log"; then
+    pass "--dry-run prints the decision and writes nothing"
+  else
+    fail "--dry-run should report #12 and change nothing; got:\n$out"
+  fi
+
+  # -- --json carries number, action, reason, restricted_paths, and markdown. -
+  write_state "$part_dir/s.json"
+  json_out="$(run_label_sync "$part_dir/s.json" --issue 12 --json)"
+  if python3 -c "
+import json, sys
+report = json.loads(sys.argv[1])
+entry = report['decisions'][0]
+assert entry['number'] == 12
+assert entry['action'] == 'add'
+assert entry['reason'] == 'restricted'
+assert entry['restricted_paths'] == ['.github/workflows/foo.yml']
+assert 'markdown' in report and isinstance(report['markdown'], str)
+" "$json_out"; then
+    pass "--json reports number, action, reason, restricted_paths and markdown"
+  else
+    fail "--json report missing an expected field; got:\n$json_out"
+  fi
+
+  # -- --sweep asks for open Issues with an explicit, adequate page size. -----
+  write_state "$part_dir/s.json"
+  run_label_sync "$part_dir/s.json" --sweep > /dev/null
+  if python3 -c "
+import re, sys
+for line in open(sys.argv[1]):
+    if line.startswith('issue list'):
+        m = re.search(r'--limit (\d+)', line)
+        assert m, f'no --limit in: {line}'
+        assert int(m.group(1)) >= 30, f'page size too small: {line}'
+        sys.exit(0)
+sys.exit('no issue list call was made')
+" "$part_dir/calls.log"; then
+    pass "--sweep requests open Issues with an explicit page size >= 30"
+  else
+    fail "sweep did not request an adequate, explicit page size"
+  fi
+
+  # -- the script's derivation cannot drift from task_scope.evaluate(). -------
+  if python3 -c "
+import importlib.util
+import sys
+
+sys.path.insert(0, '$repo_root/.github/scripts')
+import task_scope
+
+spec = importlib.util.spec_from_file_location(
+    'sync_local_session_label',
+    '$repo_root/.github/scripts/sync-local-session-label.py',
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+BODIES = [
+    '## Files or Subsystems Expected to Change\n\n- \`.github/workflows/x.yml\`\n',
+    '## Files or Subsystems Expected to Change\n\n- .github/actions/y/action.yml\n',
+    '## Files or Subsystems Expected to Change\n\n- rules/foo.gd\n',
+    '## Scope\n\nNo expected-files section at all.\n',
+    '## Files or Subsystems Expected to Change\n\n<!-- \`.github/workflows/z.yml\` -->\n',
+]
+
+for body in BODIES:
+    decision = module.decide(body, has_label=False)
+    scope = task_scope.evaluate(body)
+    derived_restricted = bool(decision['restricted_paths'])
+    planner_restricted = not scope['implementer_eligible']
+    assert derived_restricted == planner_restricted, (body, decision, scope)
+"; then
+    pass "derivation matches task_scope.evaluate()'s implementer_eligible on every case"
+  else
+    fail "the script's derivation drifted from task_scope.evaluate()"
+  fi
+
+  return $((bad > 0))
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -1001,6 +1366,7 @@ run_part "Part 4: marker reads are classified (#69)" part4
 run_part "Part 5: scratch stays out of the tree (#97/#98)" part5
 run_part "Part 6: agent roles stay in parity" part6
 run_part "Part 7: Godot version pins agree" part7
+run_part "Part 8: human-credentials label derivation (#227)" part8
 
 echo
 if [ "$failures" -eq 0 ]; then
