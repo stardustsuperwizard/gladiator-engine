@@ -53,7 +53,7 @@ static func _test_turn_order_and_round_structure() -> Array[String]:
 	violations.append_array(
 		_expect(
 			state.turn_order() == ["p1", "p2"],
-			"turn_order() must be [\"p1\", \"p2\"], got %s" % [state.turn_order()]
+			'turn_order() must be ["p1", "p2"], got %s' % [state.turn_order()]
 		)
 	)
 	violations.append_array(
@@ -176,8 +176,10 @@ static func _test_the_roster_and_its_placements() -> Array[String]:
 	violations.append_array(
 		_expect(
 			template_ids_used.size() >= 2,
-			"the roster must be built from more than one authored template, got %s"
-			% [template_ids_used]
+			(
+				"the roster must be built from more than one authored template, got %s"
+				% [template_ids_used]
+			)
 		)
 	)
 
@@ -211,12 +213,16 @@ static func _test_the_turn_sequence_starts_fresh() -> Array[String]:
 	violations.append_array(
 		_expect(
 			TurnSequence.active_player(state) == "p1",
-			"the freshly built state's active player must be p1, got %s"
-			% [TurnSequence.active_player(state)]
+			(
+				"the freshly built state's active player must be p1, got %s"
+				% [TurnSequence.active_player(state)]
+			)
 		)
 	)
 	violations.append_array(
-		_expect(not state.power_step_open, "the freshly built state must have the Power Step closed")
+		_expect(
+			not state.power_step_open, "the freshly built state must have the Power Step closed"
+		)
 	)
 	violations.append_array(
 		_expect(

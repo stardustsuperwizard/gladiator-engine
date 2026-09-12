@@ -93,21 +93,11 @@ static func build(match_seed: int = DEFAULT_SEED) -> GameState:
 
 	var fighter_templates := templates()
 	_place(
-		state,
-		fighter_templates,
-		P1_WARRIOR_ID,
-		PLAYER_ONE,
-		WARRIOR_TEMPLATE_ID,
-		P1_WARRIOR_START
+		state, fighter_templates, P1_WARRIOR_ID, PLAYER_ONE, WARRIOR_TEMPLATE_ID, P1_WARRIOR_START
 	)
 	_place(state, fighter_templates, P1_ARCHER_ID, PLAYER_ONE, ARCHER_TEMPLATE_ID, P1_ARCHER_START)
 	_place(
-		state,
-		fighter_templates,
-		P2_WARRIOR_ID,
-		PLAYER_TWO,
-		WARRIOR_TEMPLATE_ID,
-		P2_WARRIOR_START
+		state, fighter_templates, P2_WARRIOR_ID, PLAYER_TWO, WARRIOR_TEMPLATE_ID, P2_WARRIOR_START
 	)
 	_place(state, fighter_templates, P2_ARCHER_ID, PLAYER_TWO, ARCHER_TEMPLATE_ID, P2_ARCHER_START)
 
