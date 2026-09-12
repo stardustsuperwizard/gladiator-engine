@@ -74,25 +74,26 @@ wanted.
 
 ## Current state
 
-**2026-09-08:** Slice 0 (extraction plan §5.1) is built and merged — board,
-fighters, deterministic state, dice-pool combat with flanking, and Attack and
-Pass resolving through the authority gate. The spec revisions of the same day
-(§3, §6, §7 — the `Weapon` entity gone, six combat stats per fighter,
-symbol-matched dice replaced by d6 against a target number) are **reconciled**:
-epic #83 closed with all six tasks merged.
+**2026-09-12:** Slice 0, spec reconciliation, and the core action framework are
+built. All five core actions except Focus/Mulligan exist (Move, Guard, Charge,
+Attack, Pass). The Combat Segment turn sequencer (epic #181) and hotseat UI
+(epic #203) are merged.
 
 > **Revised 2026-09-08, later the same day.** This section previously said the
 > spec had moved ahead of the code and that reconciling the two was the next
 > work, coming before the rest of §5.2. It no longer is — that work is merged.
 
-**The next work is §6's remaining core actions**, now unblocked: Move, then
-Guard, then Charge. `AttackAction` and `PassAction` are the only two
-`TurnAction` subclasses in the tree. Focus/Mulligan needs a card system that
-does not exist and belongs with the card work instead.
+> **Revised 2026-09-12.** This section previously listed Move, Guard, and Charge
+> as "the next work" and said `AttackAction` and `PassAction` were the only two
+> `TurnAction` subclasses. All five core actions except Focus/Mulligan are now
+> merged. Epic #181 (turn sequencer) and epic #203 (hotseat UI) are merged.
+> §10 step 5 (round-level flag clearing) is implemented in `EndSegment`.
 
-After that, the rest of §5.2 in the spec's §12 build order. Everything in §5.3
-is explicitly deferred — check that list before building something that feels
-obviously missing, because it may be missing on purpose.
+**The next work**: §11 (victory determination) and §10 step 6's final-round branch
+(both via #173), and the card system (unblocking Focus/Mulligan and §10 steps
+1–4). Everything in §5.3 is explicitly
+deferred — check that list before building something that feels obviously
+missing, because it may be missing on purpose.
 
 `AGENTS.md` carries the fuller version of this, as it does everything else; if
 the two ever disagree, that one is right.
