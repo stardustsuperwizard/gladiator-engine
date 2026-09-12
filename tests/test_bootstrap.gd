@@ -116,6 +116,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Action Options Test", "run": ActionOptionsTest.run},
 	{"name": "Hex Layout Test", "run": HexLayoutTest.run},
 	{"name": "Match Setup Test", "run": MatchSetupTest.run},
+	{"name": "Hotseat Match Test", "run": HotseatMatchTest.run},
 ]
 
 var _passes: Array[String] = []
