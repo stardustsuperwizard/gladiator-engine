@@ -113,6 +113,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Command Taxonomy Contract Test", "run": CommandTaxonomyContractTest.run},
 	{"name": "Fighter Templates Test", "run": FighterTemplatesTest.run},
 	{"name": "Hex Layout Test", "run": HexLayoutTest.run},
+	{"name": "Match Setup Test", "run": MatchSetupTest.run},
 ]
 
 var _passes: Array[String] = []
