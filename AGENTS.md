@@ -56,23 +56,30 @@ behind both architectural commitments.
 
 **Built, against the spec's own sections:** §2's board in full. §3's data model —
 six-stat `FighterTemplate`, runtime `Fighter`, `CombatProfile`,
-`ConstructionBudget`, `GameState`, `DeterministicRng`. §7's resolution — d6
-against a target number, the two separate target-number charts, the engagement
-bonus, damage, defeat and push-back. §8's flanking and surrounding. §9's damage
-and defeat. §6's five core actions (all but Focus/Mulligan). §10's round
-structure and turn resolution, including step 5's flag clearing in `EndSegment`.
+`ConstructionBudget`, `GameState`, `DeterministicRng`. §5's round structure and
+turn resolution (Combat Segment, Turn, Action/Power Steps, auto-Guard default).
+§7's resolution — d6 against a target number, the two separate target-number
+charts, the engagement bonus, damage, defeat and push-back. §8's flanking and
+surrounding. §9's damage and defeat. §6's five core actions (all but
+Focus/Mulligan). §10's End Segment: only step 5's round-level flag clearing in
+`EndSegment` (steps 1–4 are card-system-blocked; step 6's final-round branch is
+unbuilt, #173).
 
-**Built but as a UI framework, not core mechanics:** Epic #181's turn sequencer
-lets `RoundDriver` play out a full round calling `TurnSequence`, which asks
-`DefaultActionStep` to fill in an auto-Guard if the player does not pick an
-action. Epic #203's hotseat scene lets two players sit down at `main.tscn`,
-draft fighters and settings with `MatchSetup`, and play the match through
-`HotseatMatch`, which routes actions through `ActionOptions` and renders the
-board with `BoardView`.
+**Built as core mechanics:** Epic #181's turn sequencer — `TurnSequence`
+(rules/state/turn_sequence.gd, determining which Turn is next) and
+`DefaultActionStep` (rules/actions/default_action_step.gd, providing auto-Guard)
+— both reside in `rules/` and drive the core action sequencing. `RoundDriver`
+(scripts/round_driver.gd) orchestrates these during a full round.
 
-**Not built, and the next work:** §11 (victory determination — the match can now
-end with no one deciding who won, making #173 urgent), and the card system,
-which unblocks Focus/Mulligan and the first four steps of §10. `PlayerState`
+**Built but as a UI framework, not core mechanics:** Epic #203's hotseat scene
+lets two players sit down at `main.tscn`, draft fighters and settings with
+`MatchSetup`, and play the match through `HotseatMatch`, which routes actions
+through `ActionOptions` and renders the board with `BoardView`.
+
+**Not built, and the next work:** §11 (victory determination) and §10 step 6's
+final-round branch (both via #173, which also addresses the match ending with no
+one deciding who won), and the card system, which unblocks Focus/Mulligan and
+steps 1–4 of §10. `PlayerState`
 carries empty `hand`, `deck`, `discard` and `scored` arrays that the card
 system fills; `rules/cards/` does not exist yet. Do not build ahead of §5.2's
 build order (§12), and check §5.3 before building something that feels

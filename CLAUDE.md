@@ -89,8 +89,9 @@ Attack, Pass). The Combat Segment turn sequencer (epic #181) and hotseat UI
 > merged. Epic #181 (turn sequencer) and epic #203 (hotseat UI) are merged.
 > §10 step 5 (round-level flag clearing) is implemented in `EndSegment`.
 
-**The next work**: §11 (victory determination — #173) and the card system
-(unblocking Focus/Mulligan and §10 steps 1–4). Everything in §5.3 is explicitly
+**The next work**: §11 (victory determination) and §10 step 6's final-round branch
+(both via #173), and the card system (unblocking Focus/Mulligan and §10 steps
+1–4). Everything in §5.3 is explicitly
 deferred — check that list before building something that feels obviously
 missing, because it may be missing on purpose.
 
