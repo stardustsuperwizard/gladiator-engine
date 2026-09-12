@@ -19,13 +19,14 @@ Three documents, three jobs — keep them that way:
 
 Do not put Godot specifics in the spec, and do not put mechanics in the guide.
 
-**Current state (2026-09-08): Slice 0 is built, and the code is reconciled with
-the revised spec.** Extraction plan §5.1 is merged — the hex board with cube
-distance and symmetric line of sight; the `FighterTemplate`/`Fighter` model over
-authored `.tres`; `DeterministicRng` and a serializable, digestible `GameState`;
-the dice pool with flanking and surrounding; and `AttackAction` and `PassAction`
-resolving through `Authority`/`ActionRunner`, with the hand-worked combat tests
-§5.1 asks for and contract tests behind both architectural commitments.
+**Current state (2026-09-12): Slice 0, spec reconciliation, and the core action
+framework are all built and merged.** Extraction plan §5.1 is in the tree: the
+hex board with cube distance and symmetric line of sight; the
+`FighterTemplate`/`Fighter` model over authored `.tres`; `DeterministicRng` and
+a serializable, digestible `GameState`; the dice pool with flanking and
+surrounding; and `AttackAction` and `PassAction` resolving through
+`Authority`/`ActionRunner` with hand-worked combat tests and contract tests
+behind both architectural commitments.
 
 > **Revised 2026-09-08, later the same day.** This section previously said the
 > code did not match spec §3, §6 and §7 as revised that morning, and that
@@ -38,45 +39,49 @@ resolving through `Authority`/`ActionRunner`, with the hand-worked combat tests
 > tests have been re-derived against target numbers. Do not plan reconciliation
 > work — it is done.
 
+> **Revised 2026-09-12.** This section previously said Move, Guard, and Charge
+> were "not built" and the "next work". All five core actions except Focus/Mulligan
+> are now merged: `MoveAction`, `GuardAction`, and `ChargeAction` (with
+> `ChargeLockout`) are in the tree alongside `AttackAction` and `PassAction`.
+> §10 step 5 (round-level flag clearing) was claimed to "arrive with the first
+> flag that needs clearing, which is Guard's" — that was stale even then (Move
+> shipped the first flag) and is now false entirely (`EndSegment` implements
+> clearing generally). Epic #181 (the Combat Segment turn sequencer) is merged:
+> `TurnSequence` (whose Turn is next), `DefaultActionStep`, and `RoundDriver`
+> let a full round play through the gate. Epic #203 (hotseat UI) is merged:
+> `scenes/main.tscn` is no longer a stub; `HotseatMatch`, `HotseatSession`,
+> `ActionOptions`, `BoardView`, and `MatchSetup` make it a real, playable
+> hotseat scene — two players can complete a Combat Segment start to finish
+> through it.
+
 **Built, against the spec's own sections:** §2's board in full. §3's data model —
 six-stat `FighterTemplate`, runtime `Fighter`, `CombatProfile`,
 `ConstructionBudget`, `GameState`, `DeterministicRng`. §7's resolution — d6
 against a target number, the two separate target-number charts, the engagement
 bonus, damage, defeat and push-back. §8's flanking and surrounding. §9's damage
-and defeat.
+and defeat. §6's five core actions (all but Focus/Mulligan). §10's round
+structure and turn resolution, including step 5's flag clearing in `EndSegment`.
 
-**Not built, and the next work: §6's remaining core actions.** `AttackAction`
-and `PassAction` are the only two `TurnAction` subclasses in the tree. Move,
-Charge and Guard are now unblocked — the reason to hold them, that they all
-touch resolution and resolution was about to change under them, no longer
-applies.
+**Built but as a UI framework, not core mechanics:** Epic #181's turn sequencer
+lets `RoundDriver` play out a full round calling `TurnSequence`, which asks
+`DefaultActionStep` to fill in an auto-Guard if the player does not pick an
+action. Epic #203's hotseat scene lets two players sit down at `main.tscn`,
+draft fighters and settings with `MatchSetup`, and play the match through
+`HotseatMatch`, which routes actions through `ActionOptions` and renders the
+board with `BoardView`.
 
-A suggested order within that, which is not quite §6's own listing:
+**Not built, and the next work:** §11 (victory determination — the match can now
+end with no one deciding who won, making #173 urgent), and the card system,
+which unblocks Focus/Mulligan and the first four steps of §10. `PlayerState`
+carries empty `hand`, `deck`, `discard` and `scored` arrays that the card
+system fills; `rules/cards/` does not exist yet. Do not build ahead of §5.2's
+build order (§12), and check §5.3 before building something that feels
+obviously missing — it may be missing on purpose.
 
-- **Move** first. §12 warns that movement and distance are different problems:
-  §2's distance is a direct coordinate calculation, while movement must route
-  *around* blocked and occupied hexes and needs a real search. It also needs the
-  `"moved"` status-flag constant, which does not exist yet — `Fighter` carries
-  the flag *mechanism* (`set_status_flag`, `has_status_flag`,
-  `clear_status_flag`) and no rule names a flag through it.
-- **Guard** next. Small, and `CombatProfile.guard_modifier` is authored in
-  `resources/combat/combat_profile.tres` and read by nothing until it exists.
-- **Charge** third. It is Move plus Attack composed, plus the `"charged"` flag
-  and §6's lockout rule, so it wants both of the above first.
-- **Focus/Mulligan** discards and draws cards, and there is no card system. It
-  belongs with the card work rather than with the other three.
-
-Round-level flag clearing (§10 step 5) arrives with the first flag that needs
-clearing, which is Guard's.
-
-After that, the rest of §5.2 in the spec's own build order (§12): status effects
-→ the card system → scoring and the End Segment → victory conditions.
-`PlayerState` already carries the empty `hand`, `deck`, `discard` and `scored`
-arrays the card system fills; `rules/cards/` does not exist yet. There is still
-no UI and no hotseat loop — `scripts/` holds `Authority` and `ActionRunner`, and
-`scenes/main.tscn` is a stub — so §5.4's "play a full 3-round match" is some way
-off. Do not build ahead of the order above, and check §5.3 before building
-something that feels obviously missing — it may be missing on purpose.
+**Known rough edges from the UI work:** #214 (the selected fighter is not
+cleared when passing to the next Turn, leaving the board display confused) and
+#215 (scene files lack `uid://` headers, making them fragile to refactoring).
+Neither blocks play, but both are worth fixing soonish.
 
 **The spec is the authority on mechanics, and an implementation session does
 not redesign them.** Most of the rules are inherited from a settled tabletop
