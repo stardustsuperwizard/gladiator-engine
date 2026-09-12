@@ -59,7 +59,7 @@ plan|0E8A16|Intake Issue awaiting decomposition into Implementation Tasks
 planned|0E8A16|Intake Issue that has been decomposed
 implementation|1D76DB|Implementation Task Issue, ready for an implementer
 machine|70A8BD|Work an agent session can complete unattended
-human-credentials|D4C5F9|Requires credentials or console access an agent does not have
+human-credentials|D4C5F9|Touches paths GITHUB_TOKEN cannot push; needs a human-credentialed session
 blocker|B23F00|This Issue blocks another; drives the native dependency relationship
 review:pass|0E8A16|Review verdict: accepted
 review:fix|D93F0B|Review verdict: bounded correction required on the same branch
