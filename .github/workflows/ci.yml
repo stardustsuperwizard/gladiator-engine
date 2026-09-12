@@ -155,6 +155,7 @@ jobs:
               # have their own check, run by the `issue-deps` job below.
               ".github/scripts/issue_dependencies.py",
               ".github/scripts/sync-issue-dependencies.py",
+              ".github/scripts/sync-human-credentials-label.py",
               ".github/scripts/test-issue-dependencies.sh",
               # The control plane's own test harness. Neither it nor this
               # workflow loads the Godot project.

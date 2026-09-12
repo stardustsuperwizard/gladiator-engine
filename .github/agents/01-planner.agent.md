@@ -430,4 +430,10 @@ Do not:
 - allow implementers to make unresolved architectural decisions;
 - silently resolve product ambiguity;
 - claim Issue relationships exist without verifying them;
-- claim an Issue was created if GitHub write access failed.
+- claim an Issue was created if GitHub write access failed;
+- apply or remove `human-credentials` on your own judgement — it is
+  machine-derived from `.github/scripts/task_scope.py`, applied by the
+  workflow step that creates each Issue and re-derived afterwards by
+  `.github/scripts/sync-human-credentials-label.py`, and a session
+  reasoning its way to the label is a session disagreeing with the guard
+  that will refuse the task anyway.
