@@ -148,6 +148,10 @@ jobs:
               ".github/workflows/gdscript-lint.yml",
               ".github/workflows/issue-linking.yml",
               ".github/workflows/issue-dependencies.yml",
+              # Issue-local-session workflow. Derives the `human-credentials`
+              # label by calling `.github/scripts/sync-human-credentials-label.py`
+              # (itself already denied) and never loads the Godot project.
+              ".github/workflows/issue-local-session.yml",
               ".github/scripts/render-dashboard.py",
               ".github/scripts/classify-copilot-outcome.py",
               ".github/scripts/classify-claude-outcome.py",
