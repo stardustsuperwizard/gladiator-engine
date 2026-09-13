@@ -46,7 +46,7 @@ on:
       pr_number:
         description: "Pull Request number to triage"
         required: true
-        type: number
+        type: string
 
 permissions:
   contents: read

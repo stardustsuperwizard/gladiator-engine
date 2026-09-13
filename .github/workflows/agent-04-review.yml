@@ -42,7 +42,7 @@ on:
       pr_number:
         description: "Pull Request number to review"
         required: true
-        type: number
+        type: string
 
       vendor:
         description: >

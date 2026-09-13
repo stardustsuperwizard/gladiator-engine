@@ -43,7 +43,7 @@ on:
       pr_number:
         description: "Pull Request number to fix"
         required: true
-        type: number
+        type: string
 
       vendor:
         description: >

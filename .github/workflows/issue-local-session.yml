@@ -39,9 +39,18 @@ on:
   workflow_dispatch:
     inputs:
       issue_number:
+        # `string`, not `number`, and that is load-bearing. A `number` input
+        # is rendered into a step's shell as a *float*: dispatching against
+        # #217 substitutes `217.0`, which the script rejects
+        # (`argument --issue: invalid int value: '217.0'`) before it makes a
+        # single `gh` call. Every single-Issue dispatch failed that way until
+        # this was changed, and the failure looks like a script bug rather
+        # than a type conversion, so it is recorded here rather than fixed by
+        # stripping the fraction downstream. Dispatch inputs cross the wire as
+        # strings whatever this says; `number` only adds the conversion.
         description: "Issue whose `human-credentials` label should be re-derived"
         required: false
-        type: number
+        type: string
       sweep:
         description: >-
           Read every open Issue instead of one. The repair mode: re-derives
@@ -102,6 +111,18 @@ jobs:
           ISSUE="${{ github.event.issue.number || inputs.issue_number }}"
 
           if [ -n "$ISSUE" ]; then
+            # Digits only. The script would reject anything else anyway, but
+            # it does so with an argparse usage dump that reads like the
+            # script is broken; say plainly what was wrong with the input
+            # instead.
+            case "$ISSUE" in
+              *[!0-9]*)
+                echo "::error::$STEP: issue_number must be digits only," \
+                     "got \`$ISSUE\`."
+                exit 1
+                ;;
+            esac
+
             ARGS+=(--issue "$ISSUE")
             TARGET="#$ISSUE"
           else

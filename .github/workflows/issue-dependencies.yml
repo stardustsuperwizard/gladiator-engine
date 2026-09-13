@@ -41,7 +41,7 @@ on:
       issue_number:
         description: "Issue whose Dependencies table should be realized"
         required: false
-        type: number
+        type: string
       sweep:
         description: >-
           Read every open Issue instead of one. The repair mode: rebuilds the

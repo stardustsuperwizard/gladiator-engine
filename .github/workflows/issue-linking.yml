@@ -80,7 +80,7 @@ on:
       issue_number:
         description: "Implementation Task Issue number to check"
         required: true
-        type: number
+        type: string
 
 permissions:
   contents: read

@@ -10,7 +10,7 @@ on:
       issue_number:
         description: "Intake Issue number to plan"
         required: true
-        type: number
+        type: string
 
       force:
         description: >

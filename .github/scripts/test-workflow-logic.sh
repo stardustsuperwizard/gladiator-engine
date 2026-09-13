@@ -33,6 +33,11 @@
 #           applied once, at Issue creation; editing the expected-files
 #           section afterwards, or hand-writing a [task] Issue, left it
 #           wrong or missing with nothing to notice.
+#   Part 9  A `workflow_dispatch` input declared `type: number` reaches a
+#           step's shell as a *float* -- #217 arrives as `217.0`. Every
+#           single-Issue dispatch of issue-local-session.yml failed on it,
+#           and the acceptance criterion covering that path had been ticked
+#           from reading the YAML, where it looks right.
 #
 # Like `test-issue-dependencies.sh`, this needs nothing but python3: no
 # network, no credentials, no GitHub CLI, and it never touches a real
@@ -1388,6 +1393,72 @@ for body in BODIES:
   return $((bad > 0))
 }
 
+# ---------------------------------------------------------------------------
+# Part 9: no `workflow_dispatch` input is declared `type: number`.
+#
+# GitHub renders a `number` input into a step's shell as a float: a dispatch
+# naming Issue 217 substitutes `217.0`. Anything that then treats it as an
+# integer -- an argparse `type=int`, a `gh` call, an arithmetic test -- fails
+# on input that looks correct everywhere a human reads it, the dispatch form
+# included. Dispatch inputs cross the wire as strings regardless, so `number`
+# buys nothing and costs this.
+#
+# Scanned repository-wide rather than scoped to the workflow that had the
+# bug: the trap is in the declaration, not in any particular consumer, so a
+# new workflow reaching for `type: number` should fail here rather than at
+# its first dispatch.
+# ---------------------------------------------------------------------------
+
+part9 () {
+  python3 - <<'PY'
+import pathlib
+import re
+import sys
+
+failures = []
+workflows = sorted(pathlib.Path('.github/workflows').glob('*.yml'))
+
+for path in workflows:
+    in_dispatch = False
+    dispatch_indent = 0
+
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        stripped = line.strip()
+
+        # A key at column 0 closes any block -- `jobs:` ends `on:`.
+        if line and not line[0].isspace() and not stripped.startswith('#'):
+            in_dispatch = False
+
+        if re.match(r'^\s+workflow_dispatch:\s*$', line):
+            in_dispatch = True
+            dispatch_indent = len(line) - len(line.lstrip())
+            continue
+
+        if not in_dispatch or not stripped or stripped.startswith('#'):
+            continue
+
+        # A sibling trigger at the same indentation closes the block.
+        if (len(line) - len(line.lstrip())) <= dispatch_indent:
+            in_dispatch = False
+            continue
+
+        if re.match(r'^\s*type:\s*number\s*$', line):
+            failures.append(
+                f'{path}:{number}: `type: number` in a workflow_dispatch'
+                ' input. Use `type: string` -- a number input reaches the'
+                ' shell as a float (217 becomes 217.0).'
+            )
+
+if failures:
+    for failure in failures:
+        print(f'  FAIL - {failure}', file=sys.stderr)
+    sys.exit(1)
+
+print(f'  ok   - no float-valued dispatch inputs across {len(workflows)} workflow(s)')
+sys.exit(0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -1399,6 +1470,7 @@ run_part "Part 5: scratch stays out of the tree (#97/#98)" part5
 run_part "Part 6: agent roles stay in parity" part6
 run_part "Part 7: Godot version pins agree" part7
 run_part "Part 8: human-credentials label derivation (#227)" part8
+run_part "Part 9: no float-valued dispatch inputs" part9
 
 echo
 if [ "$failures" -eq 0 ]; then

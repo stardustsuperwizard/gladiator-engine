@@ -98,7 +98,7 @@ on:
       issue_number:
         description: "Implementation Task Issue number to implement"
         required: true
-        type: number
+        type: string
 
       vendor:
         description: >

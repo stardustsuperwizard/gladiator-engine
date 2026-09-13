@@ -25,7 +25,7 @@ on:
       issue_number:
         description: "Parent epic number to re-evaluate"
         required: true
-        type: number
+        type: string
 
 permissions:
   contents: read
