@@ -739,9 +739,10 @@ PY
 # `AGENT_ROLE_DESIGN.md` sets the test a new role must pass. Neither is
 # checkable prose. This part makes the pairing itself checkable.
 #
-# The reviewer's tool list is checked separately and by name: "read-only
-# against code -- never edits files" is an architectural claim the file makes
-# about itself, and the only thing enforcing it is the absence of two strings.
+# The read-only roles' tool lists are checked separately and by name:
+# "read-only -- never edits files" is an architectural claim each file makes
+# about itself, and the only thing enforcing it is the absence of three
+# strings in its `tools:` line.
 # ---------------------------------------------------------------------------
 
 part6 () {
@@ -836,19 +837,23 @@ for name in sorted(local):
 for path in sorted(pathlib.Path(".claude/commands").glob("*.md")):
     check_frontmatter(path, ["description", "argument-hint"])
 
-# --- The reviewer holds no writing tool ------------------------------------
-# Stated in .claude/agents/reviewer.md, in AGENTS.md's role split, and in
-# AGENT_ROLE_DESIGN.md's tool-boundary test. Enforced by nothing else.
-reviewer = local.get("reviewer")
-if reviewer is None:
-    failures.append("no reviewer role found -- the read-only check cannot run")
-else:
-    tools = field(frontmatter(reviewer), "tools") or ""
+# --- Read-only roles hold no writing tool -----------------------------------
+# Stated in .claude/agents/reviewer.md and .claude/agents/plan-reviewer.md, in
+# AGENTS.md's role split, and in AGENT_ROLE_DESIGN.md's tool-boundary test.
+# Enforced by nothing else.
+for read_only_role in ("reviewer", "plan-reviewer"):
+    agent_path = local.get(read_only_role)
+    if agent_path is None:
+        failures.append(
+            f"no {read_only_role} role found -- the read-only check cannot run"
+        )
+        continue
+    tools = field(frontmatter(agent_path), "tools") or ""
     granted = {t.strip() for t in tools.split(",")}
     for forbidden in ("Edit", "Write", "NotebookEdit"):
         if forbidden in granted:
             failures.append(
-                f"{reviewer}: reviewer has the `{forbidden}` tool."
+                f"{agent_path}: {read_only_role} has the `{forbidden}` tool."
                 f" The role is read-only against code by design."
             )
 
@@ -859,7 +864,8 @@ if failures:
 
 print(
     f"  ok   — {len(cloud)} role(s) paired across .github/agents,"
-    f" .claude/agents and .claude/commands; reviewer holds no write tool"
+    f" .claude/agents and .claude/commands; reviewer and plan-reviewer hold"
+    f" no write tool"
 )
 sys.exit(0)
 PY
