@@ -1788,6 +1788,7 @@ run that agent:
 | Execute | `agent-02-implement.yml` / `.github/agents/02-implementer.agent.md` | `.claude/commands/implementer.md` / `.claude/agents/implementer.md` |
 | Review | `agent-04-review.yml` / `.github/agents/03-reviewer.agent.md` | `.claude/commands/reviewer.md` / `.claude/agents/reviewer.md` |
 | Fix | `agent-05-fix.yml` / `.github/agents/05-fixer.agent.md` | `.claude/commands/fixer.md` / `.claude/agents/fixer.md` |
+| Plan review | none in v1 | `.claude/commands/plan-reviewer.md` / `.claude/agents/plan-reviewer.md` |
 
 Each of those eight files opens with a **GitHub access** section, because the
 two Claude Code surfaces do not agree on how to reach GitHub. A desktop
@@ -1822,6 +1823,83 @@ CI failures and check-suite rollups back into a live session — is a cloud-side
 facility with no `gh` equivalent, so `/execute-task` subscribes on the cloud
 surface and polls `gh pr checks --watch` on the desktop one. Same step, two
 mechanisms, both written out, and neither pretending to be the other.
+
+### Plan review
+
+A fifth role, and the first with no GitHub-side workflow in v1:
+`/plan-reviewer <epic-number>` (subagent `plan-reviewer`, cloud profile
+`.github/agents/07-plan-reviewer.agent.md`) reads an epic and the sub-issues a
+planner wrote against it, and posts a `PLAN PASS` / `PLAN FIX` / `PLAN REJECT`
+verdict comment on the epic. No workflow, no `agent:*` label, and no dispatch
+gate exist for it — none of the three is added by this role, and describing
+one here would document a control-plane feature the repository does not have.
+
+**Why a role exists for this at all.** Every stage in this pipeline checks its
+output against the artifact one stage above it, and nothing checks the top of
+the chain:
+
+| Stage | Checks its output against | Cannot see |
+| --- | --- | --- |
+| Planner | the epic | a false premise in the epic |
+| Implementer | the task | a false premise in the task |
+| Reviewer | the task's acceptance criteria | a false premise in the criteria |
+
+A false premise written into an epic — #226 is the worked example — survives
+every downstream check, because each of those checks is bounded to the
+artifact directly above it rather than to the truth. Plan review closes that
+gap at the epic→plan boundary, which is also the cheapest place to catch it:
+an error found there costs an Issue edit, where the same error found at PR
+review costs an implementation session, a review session, and a fix cycle.
+
+**The context wall.** The review reads the epic, its human comments, the
+sub-issue bodies, the declared `## Dependencies` edges, and the repository
+tree — never the planner's session transcript, its plan comment, or any run
+log. `.github/scripts/build-plan-review-request.py` assembles that bundle
+deterministically and drops every comment whose body opens with an
+`<!-- agent-` marker before the request ever reaches the model, for the same
+reason #225 gives the PR reviewer: no stage trusts the preceding stage's own
+account of its reasoning.
+
+**The eight checks**, named only — the contract itself lives in
+`.claude/agents/plan-reviewer.md` and `.github/agents/07-plan-reviewer.agent.md`
+and is not restated here, to keep one copy of it rather than a second to drift
+from:
+
+1. Does this already exist?
+2. Every acceptance criterion in the epic is covered by at least one task.
+3. No task rests on a premise the epic asserts and the repository contradicts.
+4. Task boundaries leave no unshippable intermediate state.
+5. The `## Dependencies` tables match the real ordering.
+6. Every task declares plausible expected files.
+7. Model tiers are defensible against the planner's own tiering rubric.
+8. Task artifact names match the epic's vocabulary and the tree.
+
+Checks 6 and 8 are resolved deterministically by the assembler rather than
+left to model judgement, per this repository's standing preference for
+deterministic checks over model ones: `build-plan-review-request.py` reuses
+`task_scope.expected_paths()` for check 6, and resolves every artifact-like
+token a task names against the working tree, the epic body, and sibling task
+bodies for check 8, emitting both as report sections the reviewer reads
+rather than re-derives.
+
+**The three verdicts**, exactly one per review:
+
+- `PLAN PASS` — the plan implements the epic and duplicates nothing. Next
+  action: dispatch normally.
+- `PLAN FIX` — bounded defects: a missing task, a wrong tier, a bad
+  dependency edge. Next action: amend the tasks, re-review.
+- `PLAN REJECT` — the plan rests on a false premise, or builds what already
+  exists. Next action: fix the epic first; the plan is void.
+
+**The verdict is advice, not a gate, in v1.** No workflow reads it, no label
+routes on it, and nothing about `agent-01-planner.yml` or
+`agent-02-implement.yml` changes because a `PLAN FIX` or `PLAN REJECT`
+comment is sitting on an epic — a human reads the comment and decides whether
+to act on it. That is worth revisiting only once the verdict is made
+extractable by the control plane (a machine-readable comment on its own is
+not enough to gate on); until a dispatch path actually reads it, treat a
+plan-review comment as no more binding than any other human-readable comment
+on an epic.
 
 ### Verifying the local planner's label transition by hand
 
@@ -2273,10 +2351,12 @@ are custom agents and MCP servers.
 | `.github/scripts/sync-human-credentials-label.py` | Derives `human-credentials` from an Issue body's expected-files section via `task_scope.py` and adds or removes it to match; owns that one label and nothing else. Called by `issue-local-session.yml` on open, on edit, and on a sweep of the open backlog |
 | `.github/scripts/test-issue-dependencies.sh` | Pins the parser and the sync's `gh` calls against a stub CLI; no Godot, credentials or network |
 | `.github/scripts/task_scope.py` | The one path rule the pushing workflows share: the ⚠️ delicate-paths flag, implementer eligibility from an Issue's expected files (`agent-01-planner.yml`, `agent-02-implement.yml`, the control plane), and pushability from a pull request's changed files (`agent-05-fix.yml`) |
+| `.github/scripts/build-plan-review-request.py` | Deterministic plan-review request assembler: no network, no `gh`, no model; resolves the greppable half of checks 5, 6 and 8 (dependency edges, expected files, unresolved artifact names) into one context file for `plan-reviewer` |
 | `.github/agents/01-planner.agent.md` | Planner role, Issue promotion criteria |
 | `.github/agents/02-implementer.agent.md` | Implementer role, scope boundaries |
 | `.github/agents/03-reviewer.agent.md` | Reviewer role, verdict classification |
 | `.github/agents/05-fixer.agent.md` | Fixer role, bounded-correction contract |
+| `.github/agents/07-plan-reviewer.agent.md` | Plan-review role, the eight-check contract against an epic's plan — see *Plan review* |
 | `.github/scripts/validate-godot.sh` | Single source of truth for validation; CI and agents call it |
 | `.github/ISSUE_TEMPLATE/99-execute_task.md` | Planner-emitted bounded task |
 | `.github/pull_request_template.md` | Handoff record, verdict |
