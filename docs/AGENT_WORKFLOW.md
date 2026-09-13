@@ -1776,11 +1776,11 @@ Claude Code at those same files rather than duplicating them, so there is one
 contract, not two to keep in sync.
 
 `.claude/agents/*.md` and `.claude/commands/*.md` are local Claude Code
-counterparts of the four roles, invoked as `/planner`, `/implementer`,
-`/reviewer`, and `/fixer`, or their matching subagents (`planner`,
-`implementer`, `reviewer`, `fixer`). The command names match the agent names
-one-for-one, because the only thing each command does is guard its inputs and
-run that agent:
+counterparts of the five roles, invoked as `/planner`, `/implementer`,
+`/reviewer`, `/fixer`, and `/plan-reviewer`, or their matching subagents
+(`planner`, `implementer`, `reviewer`, `fixer`, `plan-reviewer`). The command
+names match the agent names one-for-one, because the only thing each command
+does is guard its inputs and run that agent:
 
 | Role | GitHub-side | Claude Code-side |
 | --- | --- | --- |
@@ -1790,7 +1790,7 @@ run that agent:
 | Fix | `agent-05-fix.yml` / `.github/agents/05-fixer.agent.md` | `.claude/commands/fixer.md` / `.claude/agents/fixer.md` |
 | Plan review | none in v1 | `.claude/commands/plan-reviewer.md` / `.claude/agents/plan-reviewer.md` |
 
-Each of those eight files opens with a **GitHub access** section, because the
+Each of those ten files opens with a **GitHub access** section, because the
 two Claude Code surfaces do not agree on how to reach GitHub. A desktop
 terminal has `gh`; a cloud session — Claude Code on the web, and therefore the
 Claude mobile app, which is a client for one — does not, and reaches GitHub
@@ -2361,7 +2361,7 @@ are custom agents and MCP servers.
 | `.github/ISSUE_TEMPLATE/99-execute_task.md` | Planner-emitted bounded task |
 | `.github/pull_request_template.md` | Handoff record, verdict |
 | `CLAUDE.md` | Points Claude Code at the same contract Copilot reads |
-| `.claude/agents/*.md`, `.claude/commands/*.md` | Local Claude Code counterparts of the four roles, plus `/feature-status` which reports where a feature stands — see *Claude Code as an additional environment* |
+| `.claude/agents/*.md`, `.claude/commands/*.md` | Local Claude Code counterparts of the five roles, including the plan-reviewer pair, plus `/feature-status` which reports where a feature stands — see *Claude Code as an additional environment* |
 
 ## Sources
 
