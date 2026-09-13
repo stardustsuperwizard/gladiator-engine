@@ -2259,6 +2259,7 @@ are custom agents and MCP servers.
 | `.github/workflows/agent-04-review.yml` | Reviews a PR against its task contract, emits a verdict |
 | `.github/workflows/agent-05-fix.yml` | Applies a bounded correction against the latest `FIX` verdict, on `agent:fixer:copilot`; refuses fork PRs and diffs it cannot push before spending a session; ends with an independent validation job on the pushed SHA |
 | `.github/workflows/issue-dependencies.yml` | Turns an Issue's `## Dependencies` table into GitHub dependencies, on the `blocker` label or a dispatch; `sweep` rebuilds the whole chain |
+| `.github/workflows/issue-local-session.yml` | Derives an Issue's `human-credentials` label from its `## Files or Subsystems Expected to Change` section by calling `sync-human-credentials-label.py`, on Issue open, on Issue edit, or on a dispatch; `sweep` re-derives the whole open backlog |
 | `.github/workflows/ci.yml` | The one `pull_request`-triggered workflow (also `push` to `main` and a manual dispatch); its `changes` job decides which gates apply, four jobs run in parallel behind that job's `if:` (`godot`, `workflow-logic`, `issue-deps`, `actionlint`), and the `ci` job aggregates all four into the single required status check |
 | `.github/workflows/godot-validation.yml` | The one reusable validation job (`workflow_call`); called by `ci.yml`'s `godot` job, `agent-02-implement.yml`, and `agent-05-fix.yml` |
 | `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt |
