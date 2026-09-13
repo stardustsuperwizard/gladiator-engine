@@ -1,0 +1,247 @@
+name: Build Plan Review Request
+description: >-
+  Gathers everything a plan review needs and writes one ready-to-run
+  prompt file. The counterpart of build-review-request for the plan
+  reviewer: it fetches an epic, its comments and its sub-issues with
+  `gh`, hands the capture to
+  `.github/scripts/build-plan-review-request.py`, and prepends
+  `.github/agents/07-plan-reviewer.agent.md` plus the verdict format
+  `extract-review-verdict` (mode `plan`) reads back. Purely
+  deterministic -- no model runs here.
+
+  This is a wrapper and holds no assembly logic of its own. Every
+  decision about which sections exist, which comments are the owner's,
+  which dependency edges point outside the plan and which artifact names
+  resolve nowhere belongs to the script, where it is covered by Part 10
+  of `.github/scripts/test-workflow-logic.sh`. A behaviour this action
+  seems to need is a change to the script, never a second copy here.
+
+  Nothing calls this yet, deliberately: the plan-reviewer role runs from
+  a human-credentialed session in v1, and wiring a trigger is a separate
+  decision from making the assembly reachable without rewriting it.
+
+inputs:
+  epic-number:
+    description: The epic whose plan -- its sub-issues -- is to be reviewed
+    required: true
+  max-tasks:
+    description: >-
+      Ceiling on how many sub-issues are fetched. A plan larger than this
+      is a planning failure long before it is a review problem, but the
+      limit keeps a runaway epic from spending a whole run on `gh`.
+    required: false
+    default: "50"
+
+outputs:
+  prompt-file:
+    description: Path to the built plan-reviewer prompt
+    value: ${{ runner.temp }}/plan-reviewer-prompt.txt
+  request-file:
+    description: >-
+      Path to the assembled context alone, without the role definition or
+      the verdict format -- what `build-plan-review-request.py` wrote
+    value: ${{ runner.temp }}/plan-review-request.md
+  task-count:
+    description: How many sub-issues were fetched and reviewed as the plan
+    value: ${{ steps.capture.outputs.task_count }}
+
+runs:
+  using: composite
+  steps:
+    # One `gh` read per Issue and nothing else. The bundle shape is the
+    # script's documented input, and the script performs no network access
+    # of its own precisely so that this step is the only place a fetch can
+    # go wrong.
+    - name: Capture Epic and Plan
+      id: capture
+      shell: bash
+      env:
+        EPIC_NUMBER: ${{ inputs.epic-number }}
+        MAX_TASKS: ${{ inputs.max-tasks }}
+      run: |
+        set -euo pipefail
+
+        gh issue view "$EPIC_NUMBER" \
+          --repo "$GITHUB_REPOSITORY" \
+          --json number,title,body,url,comments \
+          > "$RUNNER_TEMP"/plan-epic.json
+
+        # The planner files every task with `--parent`, so the native
+        # sub-issue relationship is authoritative here -- the "[task] [N]"
+        # title convention it also writes is a human affordance, and
+        # searching on it would pick up an Issue somebody titled by hand.
+        gh issue view "$EPIC_NUMBER" \
+          --repo "$GITHUB_REPOSITORY" \
+          --json subIssues \
+          --jq '.subIssues.nodes[]?.number' \
+          > "$RUNNER_TEMP"/plan-task-numbers.txt
+
+        : > "$RUNNER_TEMP"/plan-tasks.jsonl
+
+        COUNT=0
+
+        while read -r NUMBER; do
+          [ -n "$NUMBER" ] || continue
+
+          if [ "$COUNT" -ge "$MAX_TASKS" ]; then
+            echo "::warning::Epic #$EPIC_NUMBER has more than $MAX_TASKS" \
+                 "sub-issues; the rest were not fetched."
+            break
+          fi
+
+          gh issue view "$NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json number,title,body,url \
+            >> "$RUNNER_TEMP"/plan-tasks.jsonl
+
+          COUNT=$((COUNT + 1))
+        done < "$RUNNER_TEMP"/plan-task-numbers.txt
+
+        echo "task_count=$COUNT" >> "$GITHUB_OUTPUT"
+
+        # `null` bodies are passed through untouched rather than repaired
+        # or dropped: the script refuses the whole bundle by task number
+        # when it sees one, which is the behaviour the plan reviewer's
+        # failure path is written against.
+        jq -n \
+          --slurpfile epic "$RUNNER_TEMP/plan-epic.json" \
+          --slurpfile tasks "$RUNNER_TEMP/plan-tasks.jsonl" \
+          '{
+             epic: {
+               number: $epic[0].number,
+               title: $epic[0].title,
+               body: $epic[0].body,
+               url: $epic[0].url,
+               comments: [
+                 ($epic[0].comments // [])[]
+                 | {
+                     author: (.author.login // "unknown"),
+                     body: .body,
+                     created_at: .createdAt
+                   }
+               ]
+             },
+             tasks: $tasks
+           }' \
+          > "$RUNNER_TEMP"/plan-bundle.json
+
+    # The deterministic half of the review, in the one place it lives. A
+    # refusal here exits non-zero naming the epic or the task the capture
+    # is missing something for, and writes no output file -- which fails
+    # this step, which is what should happen: a review run against a
+    # request the assembler refused to build is a review of nothing.
+    - name: Assemble Request
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        python3 .github/scripts/build-plan-review-request.py \
+          --bundle "$RUNNER_TEMP/plan-bundle.json" \
+          --out "$RUNNER_TEMP/plan-review-request.md"
+
+    - name: Build Prompt
+      shell: python
+      run: |
+        import os
+        import pathlib
+
+        # Scratch lives in $RUNNER_TEMP, never the working tree.
+        SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+        root = pathlib.Path(".")
+
+        sections = []
+
+        # The plan-reviewer role definition is the same file used
+        # interactively in VS Code and by `.claude/agents/plan-reviewer.md`,
+        # so the two paths cannot drift apart.
+        role = root / ".github/agents/07-plan-reviewer.agent.md"
+
+        if role.exists():
+            sections.append(
+                "# PLAN REVIEWER ROLE DEFINITION\n\n"
+                + role.read_text(errors="replace")
+            )
+        else:
+            raise RuntimeError(
+                "Missing .github/agents/07-plan-reviewer.agent.md"
+            )
+
+        for filename in ("AGENTS.md", ".github/copilot-instructions.md"):
+            path = root / filename
+
+            if path.exists():
+                sections.append(
+                    f"# REPOSITORY FILE: {filename}\n\n"
+                    + path.read_text(errors="replace")[:20000]
+                )
+
+        sections.append(
+            (SCRATCH / "plan-review-request.md").read_text(errors="replace")
+        )
+
+        context = "\n\n---\n\n".join(sections)
+
+        # The verdict line comes first, and the marker does not: the
+        # publishing step prepends `<!-- agent-plan-review-verdict -->` the
+        # way agent-04-review.yml prepends its own marker, so the assistant
+        # text `extract-review-verdict` reads opens with VERDICT and
+        # survives exactly the truncation that removes the reasoning behind
+        # it.
+        prompt = f"""
+        You are the plan-review agent for Gladiator Engine.
+
+        You are NOT an implementation agent and NOT the pull request
+        reviewer.
+
+        Review the supplied plan -- the epic's Implementation Tasks --
+        against the epic it claims to implement, and report a verdict.
+
+        HARD RULES:
+
+        - Do not edit repository files.
+        - Do not create or modify GitHub Issues or comments yourself.
+        - Do not amend the epic or any task.
+        - Do not implement anything.
+        - Do not read the planner's session transcript, its plan comment,
+          or any run log. The plan is the task bodies, never the planner's
+          account of writing them.
+        - Do not re-derive the UNRESOLVED ARTIFACT NAMES or DECLARED
+          EXPECTED FILES sections by re-walking the repository. They are
+          already resolved for you; judge what they surface.
+        - Work all eight checks in the role definition above, in order.
+
+        Your first line MUST be exactly one of:
+
+        VERDICT: PLAN PASS
+        VERDICT: PLAN FIX
+        VERDICT: PLAN REJECT
+
+        After that line, output Markdown with these sections:
+
+        ## Checks
+
+        A table with columns: Check | Result | Evidence, one row per check
+        1-8. Cite what you actually looked at -- a file, a section of the
+        request, a search result -- not what a task claims.
+
+        ## Findings
+
+        Numbered, most serious first, each tied to a specific task Issue
+        number. Write "None" if there are none.
+
+        ## Required Before Dispatch
+
+        Bullet list of what must change before this plan is safe to
+        dispatch. Write "Nothing" when the verdict is PLAN PASS.
+
+        Be concise. Do not restate the plan.
+
+        CONTEXT FOLLOWS.
+
+        {context}
+        """
+
+        (SCRATCH / "plan-reviewer-prompt.txt").write_text(prompt)
+
+        print(f"Prompt built: {len(prompt)} chars")
