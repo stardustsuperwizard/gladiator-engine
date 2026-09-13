@@ -162,8 +162,12 @@ jobs:
               ".github/scripts/sync-human-credentials-label.py",
               ".github/scripts/test-issue-dependencies.sh",
               # The control plane's own test harness. Neither it nor this
-              # workflow loads the Godot project.
+              # workflow loads the Godot project. `.github/tests/**` is the
+              # harness's fixture tree -- captured Issue bodies read by
+              # `test-workflow-logic.sh` Part 10, and no more Godot-relevant
+              # than the harness that reads them.
               ".github/scripts/test-workflow-logic.sh",
+              ".github/tests/**",
               ".github/workflows/control-plane-tests.yml",
               # Label bootstrap. Creates the labels every trigger is keyed on;
               # it calls `gh` and never touches the Godot project. Listed
@@ -178,6 +182,7 @@ jobs:
               # engine gets installed for this very check, so a change to it
               # should still run validation.
               ".github/actions/build-review-request/**",
+              ".github/actions/build-plan-review-request/**",
               ".github/actions/build-fix-request/**",
               ".github/actions/run-agent-session/**",
               ".github/actions/extract-review-verdict/**",
@@ -185,6 +190,9 @@ jobs:
               # Task-scope helper for the planner. Control plane, like the
               # entries above.
               ".github/scripts/task_scope.py",
+              # Plan-review request assembler. Reads Issue bodies and the
+              # working tree's file *names*; it never loads the project.
+              ".github/scripts/build-plan-review-request.py",
               # Dependency preparation for Copilot agent sessions. It
               # provisions an agent's environment; it does not change the
               # project.
@@ -220,6 +228,11 @@ jobs:
               ".github/actions/**",
               ".github/scripts/**",
               ".github/agents/**",
+              # The harness's own fixtures. A fixture change is a change to
+              # what the harness asserts, so it has to run the harness --
+              # denied to Godot above and allowed here, which is the same
+              # split every other control-plane path gets.
+              ".github/tests/**",
               ".claude/agents/**",
               ".claude/commands/**",
               "project.godot",

@@ -43,6 +43,11 @@
 #           that had been renamed. Both are review findings a machine can
 #           assemble the evidence for, and both are now fixtures, so the
 #           assembler that gathers that evidence cannot quietly stop.
+#   Part 11 One gate now parses two verdict vocabularies. A `plan` mode that
+#           quietly accepted a pull request verdict -- or a `pr` mode that
+#           accepted a plan one -- would publish a label answering a
+#           question nobody asked, and a truncation gate relaxed for the
+#           newer mode would publish a verdict whose reasoning was cut off.
 #
 # Like `test-issue-dependencies.sh`, this needs nothing but python3: no
 # network, no credentials, no GitHub CLI, and it never touches a real
@@ -1760,6 +1765,223 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 11: extract-review-verdict's two modes (#230).
+#
+# `extract-review-verdict` is the one gate that decides whether a verdict is
+# published, and it now reads two vocabularies: the pull request review's
+# PASS/FIX/PLANNING FAILURE/DESIGN AMBIGUITY, and the plan review's PLAN
+# PASS/PLAN FIX/PLAN REJECT. Three things about that are worth pinning.
+#
+# The vocabularies must not leak into each other. `VERDICT: PLAN PASS` read
+# in `pr` mode would apply `review:pass` to a pull request nobody reviewed,
+# and `VERDICT: PASS` read in `plan` mode would publish a slug no caller has
+# a meaning for. Both are failures a regex written slightly differently
+# would let through -- `PASS` is a substring of `PLAN PASS`.
+#
+# The truncation gate must apply to both. It is the whole reason this action
+# exists: the verdict line comes first, so it survives exactly the truncation
+# that removes the reasoning behind it, and a plan verdict is no more
+# trustworthy in that state than a pull request one.
+#
+# And `pr` mode must not have moved. It has two live callers that pass no
+# `mode` at all, so the default is what they get.
+#
+# The step is run as its own program with a stubbed environment -- no
+# network, no credentials, no Actions runner -- so what is checked is the
+# code that actually ships, not a re-typed copy of it.
+# ---------------------------------------------------------------------------
+
+part11 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1])
+import wf
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part11.", dir=work_dir))
+
+ACTION = ".github/actions/extract-review-verdict/action.yml"
+
+step = part_dir / "extract_verdict.py"
+step.write_text(wf.step_source(ACTION, "Extract Verdict"), encoding="utf-8")
+
+PR_REPORT = "\n".join(
+    [
+        "## Acceptance Criteria",
+        "## Architecture Constraints",
+        "## Scope Adherence",
+        "## Findings",
+        "## Deferred Findings",
+        "## Required Before Merge",
+    ]
+)
+
+PLAN_REPORT = "\n".join(
+    ["## Checks", "## Findings", "## Required Before Dispatch"]
+)
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def run(name, text, outcome, mode=None):
+    """Run the step exactly as the action does, in its own scratch dir."""
+    case = part_dir / name
+    case.mkdir()
+
+    (case / "assistant.txt").write_text(text, encoding="utf-8")
+    (case / "outcome.json").write_text(json.dumps(outcome), encoding="utf-8")
+    (case / "github_output").write_text("", encoding="utf-8")
+
+    env = dict(os.environ)
+    env.update(
+        {
+            "RUNNER_TEMP": str(case),
+            "GITHUB_WORKSPACE": repo_root,
+            "GITHUB_OUTPUT": str(case / "github_output"),
+            "ASSISTANT_TEXT_FILE": str(case / "assistant.txt"),
+            "OUTCOME_FILE": str(case / "outcome.json"),
+        }
+    )
+
+    # Absent, not empty: an omitted `mode` reaches the step as the action's
+    # own default, and that default is what the two live callers get.
+    if mode is None:
+        env.pop("MODE", None)
+    else:
+        env["MODE"] = mode
+
+    result = subprocess.run(
+        [sys.executable, str(step)],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+        env=env,
+    )
+
+    outputs = dict(
+        line.split("=", 1)
+        for line in (case / "github_output").read_text().splitlines()
+        if "=" in line
+    )
+
+    return result, outputs, case
+
+
+FINISHED = {"reason": "completed", "assistant_text_chars": 4096}
+CUT_OFF = {
+    "reason": "completed",
+    "unfinished_turn": True,
+    "assistant_text_chars": 4096,
+    "credit_limit": 25,
+}
+
+# -- 1: a complete plan review publishes PLAN REJECT / plan-reject. ----------
+result, outputs, case = run(
+    "plan-reject",
+    f"VERDICT: PLAN REJECT\n\n{PLAN_REPORT}\n",
+    FINISHED,
+    mode="plan",
+)
+check(
+    result.returncode == 0
+    and outputs.get("verdict") == "PLAN REJECT"
+    and outputs.get("slug") == "plan-reject",
+    "plan mode: VERDICT: PLAN REJECT yields verdict=PLAN REJECT,"
+    " slug=plan-reject",
+    f"expected PLAN REJECT/plan-reject; exit {result.returncode},"
+    f" outputs={outputs}, stderr={result.stderr.strip()!r}",
+)
+check(
+    (case / "review.md").is_file()
+    and "## Required Before Dispatch"
+    in (case / "review.md").read_text(),
+    "plan mode: the full report is written to review.md",
+    "plan mode wrote no review.md, or wrote one missing the report",
+)
+
+# -- 2: the two vocabularies do not leak into each other. --------------------
+result, outputs, case = run(
+    "plan-mode-pr-verdict",
+    f"VERDICT: PASS\n\n{PLAN_REPORT}\n",
+    FINISHED,
+    mode="plan",
+)
+check(
+    result.returncode != 0 and not outputs,
+    "plan mode: VERDICT: PASS is refused and publishes nothing",
+    f"plan mode accepted a pull request verdict; exit {result.returncode},"
+    f" outputs={outputs}",
+)
+
+result, outputs, case = run(
+    "pr-mode-plan-verdict",
+    f"VERDICT: PLAN PASS\n\n{PR_REPORT}\n",
+    FINISHED,
+    mode="pr",
+)
+check(
+    result.returncode != 0 and not outputs,
+    "pr mode: VERDICT: PLAN PASS is refused and publishes nothing",
+    f"pr mode accepted a plan verdict; exit {result.returncode},"
+    f" outputs={outputs}",
+)
+
+# -- 3: the truncation gate is not relaxed for plan mode. --------------------
+result, outputs, case = run(
+    "plan-truncated",
+    f"VERDICT: PLAN PASS\n\n{PLAN_REPORT}\n",
+    CUT_OFF,
+    mode="plan",
+)
+failure_file = case / "review-verdict-failure.json"
+recorded = (
+    json.loads(failure_file.read_text()) if failure_file.is_file() else {}
+)
+check(
+    result.returncode != 0
+    and not outputs
+    and recorded.get("reason") == "truncated_review",
+    "plan mode: a cut-off session publishes no verdict, exits non-zero, and"
+    " records truncated_review",
+    f"expected a truncated_review refusal; exit {result.returncode},"
+    f" outputs={outputs}, failure={recorded or 'no file'}",
+)
+
+# -- 4: pr mode, with no `mode` passed at all, is where it was. --------------
+result, outputs, case = run(
+    "pr-default",
+    f"VERDICT: PASS\n\n{PR_REPORT}\n",
+    FINISHED,
+)
+check(
+    result.returncode == 0
+    and outputs.get("verdict") == "PASS"
+    and outputs.get("slug") == "pass",
+    "no mode passed: the pr vocabulary still parses, unchanged",
+    f"the default mode stopped parsing a pull request verdict; exit"
+    f" {result.returncode}, outputs={outputs},"
+    f" stderr={result.stderr.strip()!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -1773,6 +1995,7 @@ run_part "Part 7: Godot version pins agree" part7
 run_part "Part 8: human-credentials label derivation (#227)" part8
 run_part "Part 9: no float-valued dispatch inputs" part9
 run_part "Part 10: plan-review request assembly (#226/#227)" part10
+run_part "Part 11: verdict extraction in both modes (#230)" part11
 
 echo
 if [ "$failures" -eq 0 ]; then

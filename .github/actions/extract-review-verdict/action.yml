@@ -4,7 +4,9 @@ description: >-
   Markdown report, refusing to publish a verdict whose reasoning was cut
   short. Shared by agent-04-review.yml (reviewing an existing pull
   request) and agent-02-implement.yml (reviewing a diff before one is
-  opened) so both apply the exact same completeness rule.
+  opened) so both apply the exact same completeness rule -- and, in
+  `plan` mode, by a plan review of an epic's tasks, so that one too is
+  refused publication when its reasoning was cut short.
 
 inputs:
   assistant-text-file:
@@ -13,13 +15,29 @@ inputs:
   outcome-file:
     description: Path to the vendor classifier's verdict (run-agent-session's outcome-file output)
     required: true
+  mode:
+    description: >-
+      Which review vocabulary to parse. "pr" (the default) is the pull
+      request review: PASS / FIX / PLANNING FAILURE / DESIGN AMBIGUITY,
+      with the six sections 03-reviewer.agent.md asks for. "plan" is the
+      plan review of an epic's tasks: PLAN PASS / PLAN FIX / PLAN REJECT,
+      with the three sections 07-plan-reviewer.agent.md asks for. The
+      truncation and budget-exhaustion gates are identical in both, and
+      the two vocabularies do not overlap -- a plan verdict is not
+      accepted in "pr" mode and a pull request verdict is not accepted in
+      "plan" mode, so a session prompted for one and answering with the
+      other fails loudly rather than publishing the wrong label.
+    required: false
+    default: pr
 
 outputs:
   verdict:
-    description: One of PASS, FIX, PLANNING FAILURE, DESIGN AMBIGUITY
+    description: >-
+      In "pr" mode one of PASS, FIX, PLANNING FAILURE, DESIGN AMBIGUITY;
+      in "plan" mode one of PLAN PASS, PLAN FIX, PLAN REJECT
     value: ${{ steps.extract.outputs.verdict }}
   slug:
-    description: Lowercase, hyphenated verdict, e.g. "planning-failure" -- matches this repo's review:<slug> label names
+    description: Lowercase, hyphenated verdict, e.g. "planning-failure" or "plan-reject" -- matches this repo's review:<slug> label names
     value: ${{ steps.extract.outputs.slug }}
   review-file:
     description: Path to the verdict line plus full Markdown report, ready to embed in a comment or pull request body
@@ -46,6 +64,7 @@ runs:
       env:
         ASSISTANT_TEXT_FILE: ${{ inputs.assistant-text-file }}
         OUTCOME_FILE: ${{ inputs.outcome-file }}
+        MODE: ${{ inputs.mode }}
       run: |
         import json
         import os
@@ -72,31 +91,75 @@ runs:
 
         EVIDENCE_CHARS = 1500
 
-        REQUIRED_SECTIONS = [
-            "## Acceptance Criteria",
-            "## Architecture Constraints",
-            "## Scope Adherence",
-            "## Findings",
-            "## Deferred Findings",
-            "## Required Before Merge",
-        ]
-
-        # Which of those, if absent from a budget-capped session, is evidence
-        # the analysis itself was cut short rather than merely unwritten.
+        # One gate, two review vocabularies. The shapes differ -- a plan
+        # review reports on a plan, a pull request review on a diff -- but
+        # the rule that a verdict must not outlive the reasoning behind it
+        # does not, so the two are a table of differences read by identical
+        # code rather than two copies of the same gate that can drift.
         #
-        # "## Deferred Findings" is deliberately not one of them. The other
-        # five are the review's substance -- a verdict without them is a
-        # verdict without the reasoning that earned it, which is the case
-        # this gate exists to catch. Deferred Findings is an addendum for a
+        # "addenda" are the required sections whose absence from a
+        # budget-capped session is NOT evidence the analysis was cut short.
+        # In "pr" mode that is "## Deferred Findings" alone: the other five
+        # are the review's substance -- a verdict without them is a verdict
+        # without the reasoning that earned it, which is the case this gate
+        # exists to catch -- while Deferred Findings is an addendum for a
         # later triage pass (agent-06-triage.yml), and a session that wrote
         # every criterion, every constraint and a verdict, then stopped at
         # its credit ceiling without adding it, produced a complete review.
         # Rejecting that as "truncated" would discard a trustworthy verdict
-        # and buy a second full review to get the same answer.
+        # and buy a second full review to get the same answer. "plan" mode
+        # has no such addendum: all three of its sections are substance.
+        PROFILES = {
+            "pr": {
+                "verdicts": (
+                    "PASS",
+                    "FIX",
+                    "PLANNING FAILURE",
+                    "DESIGN AMBIGUITY",
+                ),
+                "required": (
+                    "## Acceptance Criteria",
+                    "## Architecture Constraints",
+                    "## Scope Adherence",
+                    "## Findings",
+                    "## Deferred Findings",
+                    "## Required Before Merge",
+                ),
+                "addenda": ("## Deferred Findings",),
+            },
+            "plan": {
+                "verdicts": ("PLAN PASS", "PLAN FIX", "PLAN REJECT"),
+                "required": (
+                    "## Checks",
+                    "## Findings",
+                    "## Required Before Dispatch",
+                ),
+                "addenda": (),
+            },
+        }
+
+        MODE = (os.environ.get("MODE") or "pr").strip() or "pr"
+
+        if MODE not in PROFILES:
+            # A caller's typo, not a session failure, so no
+            # review-verdict-failure.json is written: there is no session
+            # outcome to classify and nothing for a retry to read.
+            print(
+                f"::error::Unknown mode {MODE!r}. Expected one of: "
+                + ", ".join(sorted(PROFILES))
+            )
+            sys.exit(1)
+
+        PROFILE = PROFILES[MODE]
+
+        REQUIRED_SECTIONS = list(PROFILE["required"])
+
+        # Which of those, if absent from a budget-capped session, is evidence
+        # the analysis itself was cut short rather than merely unwritten.
         TRUNCATION_SECTIONS = [
             heading
             for heading in REQUIRED_SECTIONS
-            if heading != "## Deferred Findings"
+            if heading not in PROFILE["addenda"]
         ]
 
         outcome_path = pathlib.Path(os.environ["OUTCOME_FILE"])
@@ -161,9 +224,15 @@ runs:
             heading for heading in TRUNCATION_SECTIONS if heading not in text
         ]
 
+        # Anchored at both ends, so "VERDICT: PLAN PASS" does not read as
+        # this mode's "PASS" and vice versa: the alternation has to consume
+        # the whole line, and `\s*` after the colon matches whitespace only.
+        # A session prompted for one review and answering in the other's
+        # vocabulary is a prompt-following failure, not a verdict.
         match = re.search(
-            r"^\s*VERDICT:\s*"
-            r"(PASS|FIX|PLANNING FAILURE|DESIGN AMBIGUITY)\s*$",
+            r"^\s*VERDICT:\s*("
+            + "|".join(re.escape(name) for name in PROFILE["verdicts"])
+            + r")\s*$",
             text,
             re.MULTILINE,
         )
@@ -188,7 +257,10 @@ runs:
                 "The session ran to completion within budget and still did"
                 " not open with a VERDICT line, so this is a"
                 " prompt-following failure rather than a truncated or"
-                " budget-stopped one.",
+                f" budget-stopped one. In {MODE} mode the accepted verdicts"
+                " are: "
+                + ", ".join(PROFILE["verdicts"])
+                + ".",
                 text,
             )
 
