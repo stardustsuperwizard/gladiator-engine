@@ -41,7 +41,7 @@ on:
         description: Godot release tag to install.
         required: false
         type: string
-        default: 4.7.1-stable
+        default: 4.7.2-stable
 
       head-sha:
         description: >-

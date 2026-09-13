@@ -5,14 +5,14 @@ inputs:
   godot-version:
     description: Godot release tag to install
     required: false
-    default: 4.7.1-stable
+    default: 4.7.2-stable
 
 runs:
   using: composite
   steps:
     # The engine binary is immutable for a given version tag, so it's a
     # pure cache-hit-or-download case -- no dependency-file hash needed,
-    # just the version itself. Every call site pins 4.7.1-stable, so after
+    # just the version itself. Every call site pins 4.7.2-stable, so after
     # the first run across the whole repo this should hit every time.
     - name: Restore Cached Godot Binary
       id: cache
