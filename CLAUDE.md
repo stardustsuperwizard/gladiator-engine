@@ -22,6 +22,7 @@ pointer to it, not a copy.
 | Anything in `rules/` | `.github/instructions/rules.instructions.md` |
 | `.github/workflows/`, `.github/agents/`, `.github/actions/` | `docs/AGENT_WORKFLOW.md` |
 | Adding, splitting, or removing an agent role | `docs/AGENT_ROLE_DESIGN.md` |
+| Reviewing a plan against its epic before dispatch | `.claude/commands/plan-reviewer.md`, `.claude/agents/plan-reviewer.md` |
 | Opening a PR | `.github/pull_request_template.md`, `CONTRIBUTING.md` |
 
 ## Working without an Issue

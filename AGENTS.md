@@ -199,6 +199,12 @@ orchestrator-and-specialists shape does not fit this control plane, and the
 conditions that would make a fifth or sixth role worth adding. Read it before
 proposing one.
 
+A fifth role, plan review, checks a planner's sub-issues against their parent
+epic before any task is dispatched — read-only, local-only in v1, and its
+verdict is advice rather than a dispatch gate. See *Plan review* in
+`docs/AGENT_WORKFLOW.md` for the eight checks it works and the three
+verdicts, and `.claude/agents/plan-reviewer.md` for the agent contract.
+
 The control plane is label-driven. **Every trigger is keyed on a label name,
 and a fresh clone has none of them** — run `.github/scripts/bootstrap-labels.sh`
 once before expecting any workflow to fire.
