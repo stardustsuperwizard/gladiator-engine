@@ -146,12 +146,26 @@ against the working tree for anything the inventory's file names alone
 cannot settle).
 
 **Do not read the planner's session transcript, its plan comment, or any run
-log.** Take the plan from the sub-issue bodies only. The assembler already
-drops every comment whose body opens with an `<!-- agent-` marker — which is
-exactly what the planner's own plan comment (`<!-- claude-planner-complete
--->`) and the rollup's notices open with — before the request ever reaches
-you, so `# EPIC AMENDMENT COMMENTS` never carries the planner's account of
-its own reasoning. Do not go looking for it elsewhere (the epic's full
+log.** Take the plan from the sub-issue bodies only.
+
+The assembler drops every comment whose body opens with an `<!-- agent-`
+marker — a rollup notice, a triage summary — before the request reaches you.
+**It does not drop the planner's plan comment.** That comment opens
+`<!-- claude-planner-complete -->`, which does not start with `<!-- agent-`,
+so it survives into `# EPIC AMENDMENT COMMENTS` and you will find it sitting
+there among the human ones. Verified 2026-09-13 against all three fixtures
+under `.github/tests/plan-review/`: the rollup's `<!-- agent-rollup-complete
+-->` notice was dropped from `sound-plan.json` and the plan comment was not.
+
+So the last stretch of this wall is yours to hold rather than the
+assembler's. In `# EPIC AMENDMENT COMMENTS`, skip any comment whose body
+opens with an HTML marker of the shape `<!-- claude-` or `<!-- agent-`, and
+read the ones that do not — those are the owner's. A comment's presence in
+that section is not a certificate that a human wrote it. Record the skip in
+your check-3 evidence, naming the marker you skipped on, so that holding the
+wall is visible in the verdict rather than assumed.
+
+Do not go looking for what you skipped elsewhere either (the epic's full
 comment history, a linked pull request, a workflow run) to fill in what the
 request deliberately left out. This is the same principle #225 applies to
 the reviewer: no stage trusts the preceding stage's self-report. The review
