@@ -16,6 +16,7 @@
       "Bash(.github/scripts/validate-godot.sh:*)",
       "Bash(.github/scripts/test-workflow-logic.sh:*)",
       "Bash(.github/scripts/test-issue-dependencies.sh:*)",
+      "Bash(.github/scripts/build-plan-review-request.py:*)",
       "Bash(gdlint:*)"
     ],
     "deny": [
