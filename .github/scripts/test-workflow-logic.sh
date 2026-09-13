@@ -38,6 +38,11 @@
 #           single-Issue dispatch of issue-local-session.yml failed on it,
 #           and the acceptance criterion covering that path had been ticked
 #           from reading the YAML, where it looks right.
+#   Part 10 #226/#227 -- a plan invented a second label for a fact the tree
+#           already carried, and a retargeted task went on naming a script
+#           that had been renamed. Both are review findings a machine can
+#           assemble the evidence for, and both are now fixtures, so the
+#           assembler that gathers that evidence cannot quietly stop.
 #
 # Like `test-issue-dependencies.sh`, this needs nothing but python3: no
 # network, no credentials, no GitHub CLI, and it never touches a real
@@ -1459,6 +1464,296 @@ sys.exit(0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 10: the plan-review request assembler (#230).
+#
+# `build-plan-review-request.py` turns a captured epic-plus-plan bundle into
+# the one file a plan reviewer reads. Everything it decides is decided before
+# a model is loaded -- which sections exist and in what order, which comments
+# are the owner's and which are the control plane talking to itself, and which
+# artifact names the plan uses resolve nowhere -- so all of it is testable
+# here, and a regression in any of it is a silently worse review rather than a
+# failure anybody notices.
+#
+# Two of the three fixtures are historical defects rather than invented cases:
+# #226's plan, which invented a second label for a fact `human-credentials`
+# already carried, and #227 after its retarget, whose body still specified
+# `sync-local-session-label.py` after the file had been renamed. The third is
+# a plan that was implemented and merged without a planning failure, and is
+# the control: the checks must stay quiet on it.
+#
+# python3 only, no network, no credentials, and every byte written under the
+# harness's own work_dir -- Part 5's rule applies to a test as much as to a
+# workflow.
+# ---------------------------------------------------------------------------
+
+part10 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+root = pathlib.Path(repo_root)
+script = root / ".github" / "scripts" / "build-plan-review-request.py"
+fixtures = root / ".github" / "tests" / "plan-review"
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part10.", dir=work_dir))
+
+HEADINGS = [
+    "# EPIC (AUTHORITATIVE INTENT)",
+    "# EPIC AMENDMENT COMMENTS",
+    "# PLANNED IMPLEMENTATION TASKS",
+    "# DECLARED DEPENDENCY EDGES",
+    "# DECLARED EXPECTED FILES",
+    "# UNRESOLVED ARTIFACT NAMES",
+    "# REPOSITORY FILE INVENTORY",
+    "# DELIBERATELY EXCLUDED",
+]
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def run(bundle, out):
+    return subprocess.run(
+        [sys.executable, str(script), "--bundle", str(bundle), "--out", str(out)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def section(text, heading):
+    """The heading's own block, up to whichever section heading follows it."""
+    lines = text.splitlines()
+    if heading not in lines:
+        return ""
+    start = lines.index(heading)
+    end = len(lines)
+    for other in HEADINGS:
+        if other != heading and other in lines[start + 1:]:
+            end = min(end, lines.index(other, start + 1))
+    return "\n".join(lines[start:end])
+
+
+def write_bundle(name, payload):
+    path = part_dir / name
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
+# -- 1: the sound plan assembles, with all eight sections in order. ----------
+sound_out = part_dir / "sound-plan.md"
+result = run(fixtures / "sound-plan.json", sound_out)
+check(
+    result.returncode == 0 and sound_out.is_file(),
+    "sound-plan.json assembles and exits 0",
+    f"sound-plan.json failed (exit {result.returncode}): {result.stderr.strip()}",
+)
+
+sound = sound_out.read_text(encoding="utf-8") if sound_out.is_file() else ""
+lines = sound.splitlines()
+positions = [lines.index(h) if h in lines else -1 for h in HEADINGS]
+check(
+    all(position >= 0 for position in positions)
+    and positions == sorted(positions),
+    "all eight sections are present, in the specified order",
+    "sections missing or out of order: "
+    + ", ".join(
+        f"{heading}={position}"
+        for heading, position in zip(HEADINGS, positions)
+    ),
+)
+
+# -- 2: #226's plan, whole -- every task body, and a real file inventory. ----
+before = json.loads(
+    (fixtures / "226-before-correction.json").read_text(encoding="utf-8")
+)
+before_out = part_dir / "226-before-correction.md"
+result = run(fixtures / "226-before-correction.json", before_out)
+before_text = (
+    before_out.read_text(encoding="utf-8") if before_out.is_file() else ""
+)
+
+missing = [
+    task["number"]
+    for task in before["tasks"]
+    if task["body"].strip() not in before_text
+]
+check(
+    result.returncode == 0 and not missing,
+    "#227, #228 and #229 each appear in full, body and all",
+    f"task bodies truncated or absent for: {missing or 'n/a'}"
+    f" (exit {result.returncode})",
+)
+
+inventory = section(before_text, "# REPOSITORY FILE INVENTORY")
+for path in (
+    ".github/scripts/task_scope.py",
+    ".github/workflows/agent-01-planner.yml",
+):
+    check(
+        path in inventory,
+        f"the file inventory lists {path}",
+        f"the file inventory does not list {path}",
+    )
+
+# -- 3: check 8 reports the stale name and not the real one (#227/#232). ----
+retarget_out = part_dir / "227-after-retarget.md"
+result = run(fixtures / "227-after-retarget.json", retarget_out)
+unresolved = section(
+    retarget_out.read_text(encoding="utf-8") if retarget_out.is_file() else "",
+    "# UNRESOLVED ARTIFACT NAMES",
+)
+check(
+    result.returncode == 0 and "sync-local-session-label.py" in unresolved,
+    "the stale `sync-local-session-label.py` is reported unresolved",
+    "check 8 missed sync-local-session-label.py, the name this fixture exists"
+    " to pin",
+)
+check(
+    "sync-human-credentials-label.py" not in unresolved,
+    "the real `sync-human-credentials-label.py` is not reported",
+    "check 8 reported sync-human-credentials-label.py, which is in the tree."
+    " A noisy check 8 is worse than none.",
+)
+
+# -- 4: agent-authored comments are dropped; human ones are not. -------------
+AGENT_SENTINEL = "SENTINEL-AGENT-4f91c2"
+HUMAN_SENTINEL = "SENTINEL-HUMAN-7b30da"
+marker_bundle = write_bundle(
+    "agent-marker.json",
+    {
+        "epic": {
+            "number": 9001,
+            "title": "[epic] A bundle carrying one comment of each kind",
+            "body": "## Goal\n\nSomething the owner wants.\n",
+            "comments": [
+                {
+                    "author": "github-actions[bot]",
+                    "created_at": "2026-09-13T00:00:00Z",
+                    "body": (
+                        "<!-- agent-rollup-complete -->\n\n"
+                        f"{AGENT_SENTINEL}\n"
+                    ),
+                },
+                {
+                    "author": "stardustsuperwizard",
+                    "created_at": "2026-09-13T01:00:00Z",
+                    "body": f"## Correction\n\n{HUMAN_SENTINEL}\n",
+                },
+            ],
+        },
+        "tasks": [
+            {
+                "number": 9002,
+                "title": "[task] [9001] Do the one thing",
+                "url": "https://example.invalid/9002",
+                "body": (
+                    "## Scope\n\nDo it.\n\n"
+                    "## Files or Subsystems Expected to Change\n\n"
+                    "- `rules/actions/pass_action.gd`\n\n"
+                    "## Dependencies\n\n"
+                    "| Relationship | Issue | Why |\n"
+                    "| --- | --- | --- |\n"
+                    "| None | — | — |\n"
+                ),
+            }
+        ],
+    },
+)
+marker_out = part_dir / "agent-marker.md"
+result = run(marker_bundle, marker_out)
+marker_text = (
+    marker_out.read_text(encoding="utf-8") if marker_out.is_file() else ""
+)
+check(
+    result.returncode == 0 and AGENT_SENTINEL not in marker_text,
+    "a comment opening with an `<!-- agent-` marker is dropped entirely",
+    "an agent-authored comment reached the assembled request",
+)
+check(
+    HUMAN_SENTINEL in marker_text,
+    "a human-authored comment in the same bundle survives",
+    "the human-authored comment was dropped along with the agent one",
+)
+
+# -- 5: a plan with no tasks is refused, by epic number, writing nothing. ----
+empty_bundle = write_bundle(
+    "no-tasks.json",
+    {
+        "epic": {
+            "number": 9101,
+            "title": "[epic] An epic whose plan filed no tasks",
+            "body": "## Goal\n\nUnplanned.\n",
+            "comments": [],
+        },
+        "tasks": [],
+    },
+)
+empty_out = part_dir / "no-tasks.md"
+result = run(empty_bundle, empty_out)
+check(
+    result.returncode != 0
+    and "9101" in result.stderr
+    and not empty_out.exists(),
+    "a bundle with no tasks exits non-zero naming the epic, and writes nothing",
+    f"expected a refusal naming #9101 and no output file; exit"
+    f" {result.returncode}, file exists={empty_out.exists()},"
+    f" stderr={result.stderr.strip()!r}",
+)
+
+# -- 6: a task with a null body is refused, by task number, writing nothing. -
+null_bundle = write_bundle(
+    "null-body.json",
+    {
+        "epic": {
+            "number": 9201,
+            "title": "[epic] An epic whose capture lost a task body",
+            "body": "## Goal\n\nCaptured badly.\n",
+            "comments": [],
+        },
+        "tasks": [
+            {
+                "number": 9202,
+                "title": "[task] [9201] The one that captured",
+                "url": "https://example.invalid/9202",
+                "body": "## Scope\n\nFine.\n",
+            },
+            {
+                "number": 9203,
+                "title": "[task] [9201] The one that did not",
+                "url": "https://example.invalid/9203",
+                "body": None,
+            },
+        ],
+    },
+)
+null_out = part_dir / "null-body.md"
+result = run(null_bundle, null_out)
+check(
+    result.returncode != 0
+    and "9203" in result.stderr
+    and not null_out.exists(),
+    "a task with a null body exits non-zero naming that task, and writes"
+    " nothing",
+    f"expected a refusal naming #9203 and no output file; exit"
+    f" {result.returncode}, file exists={null_out.exists()},"
+    f" stderr={result.stderr.strip()!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -1471,6 +1766,7 @@ run_part "Part 6: agent roles stay in parity" part6
 run_part "Part 7: Godot version pins agree" part7
 run_part "Part 8: human-credentials label derivation (#227)" part8
 run_part "Part 9: no float-valued dispatch inputs" part9
+run_part "Part 10: plan-review request assembly (#226/#227)" part10
 
 echo
 if [ "$failures" -eq 0 ]; then
