@@ -76,7 +76,7 @@ else
 	echo ""
 	echo "Godot: NOT FOUND. .github/scripts/validate-godot.sh will exit 127."
 	echo "  That is 'could not validate', not 'validated'. Say so rather than"
-	echo "  reporting a clean run. CI pins 4.7.1-stable."
+	echo "  reporting a clean run. CI pins 4.7.2-stable."
 fi
 
 echo "======================="

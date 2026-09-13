@@ -100,7 +100,7 @@ runs:
         fi
 
         # Pinned to the 4.x line: gdtoolkit's parser targets Godot 4.x
-        # GDScript syntax, matching setup-godot's default (4.7.1-stable).
+        # GDScript syntax, matching setup-godot's default (4.7.2-stable).
         pip install --quiet "gdtoolkit==4.*"
 
         echo "Targeting ${#FILES[@]} file(s):"

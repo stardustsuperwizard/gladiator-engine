@@ -611,7 +611,7 @@ jobs:
         if: steps.context.outputs.ok == 'true'
         uses: ./.github/actions/setup-godot
         with:
-          godot-version: 4.7.1-stable
+          godot-version: 4.7.2-stable
 
       # The planner recommends a tier per task; this turns that into the
       # model preference list the session actually walks.

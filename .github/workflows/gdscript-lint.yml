@@ -152,7 +152,7 @@ jobs:
       - name: Setup Godot
         uses: ./.github/actions/setup-godot
         with:
-          godot-version: 4.7.1-stable
+          godot-version: 4.7.2-stable
 
       # A fork PR's branch cannot be pushed to with this token. Detected
       # up front so every later step can gate on it, rather than
