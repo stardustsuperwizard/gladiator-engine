@@ -2,6 +2,10 @@
 .godot/
 .nomedia
 
+# Export output. .github/scripts/export-godot.sh writes here by default;
+# never let a build land in a tracked path.
+build/
+
 # Godot-specific ignores
 .import/
 export.cfg
