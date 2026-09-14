@@ -12,6 +12,10 @@ Follow AGENTS.md and .github/copilot-instructions.md.
 
 Do not modify implementation code.
 
+Do not apply the `test-removal-approved` label. It is the human-only override
+for the test ratchet in `ci.yml`, and an agent that applies it is approving
+its own test deletion.
+
 When running from a GitHub Implementation Task Issue, treat that Issue's
 Scope, Architecture Constraints, Acceptance Criteria, and Out of Scope
 sections as the authoritative work contract.

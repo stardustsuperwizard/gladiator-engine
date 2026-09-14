@@ -146,7 +146,10 @@ Do not:
   call;
 - attempt a fix for a `DESIGN AMBIGUITY` or `PLANNING FAILURE` verdict;
 - re-request review yourself — that's a separate, human-triggered step;
-- report the fix complete if validation still fails.
+- report the fix complete if validation still fails;
+- apply the `test-removal-approved` label. It is the human-only override for
+  the test ratchet in `ci.yml`, and an agent that applies it is approving its
+  own test deletion.
 
 ## Completion Report
 

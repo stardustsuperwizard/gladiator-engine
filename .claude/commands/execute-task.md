@@ -17,6 +17,10 @@ the only one that escalates a model tier without asking.
 It still never merges and never approves the pull request. It takes the PR as
 far as a `PASS` on green CI; merging is yours.
 
+It also never applies the `test-removal-approved` label. That label is the
+human-only override for the test ratchet in `ci.yml`, and a run that could
+label its own pull request could clear its own ratchet.
+
 ## GitHub access
 
 `gh` exists in a desktop terminal and does **not** exist in a cloud session

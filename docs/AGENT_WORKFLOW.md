@@ -768,6 +768,7 @@ points, two different products* above.
 | `agent:fixer:copilot` label | You | `agent-05-fix.yml` | Apply the bounded correction the last `FIX` verdict asked for |
 | `planned` label | Planner | — | Intake Issue has been decomposed |
 | `review:*` label | Reviewer | — | Last verdict on a PR |
+| `test-removal-approved` label | You | — | A human has approved this pull request lowering the test suite or assertion count |
 | `blocker` label | Planner, any agent, you | `issue-dependencies.yml` | This Issue blocks at least one other; wire its `## Dependencies` table into GitHub dependencies |
 | `dashboard:update` label | You | `agent-00-dashboard.yml` | Re-render the control plane |
 | `dashboard` label | `agent-00` | `agent-00-dashboard.yml` | This Issue is the generated control plane |
@@ -789,6 +790,17 @@ it has actually been decomposed, and never afterwards. `plan` and `planned` are
 mutually exclusive by construction, which is what makes
 `is:issue is:open label:plan` an exact awaiting-planning queue rather than an
 approximate one. See *Issue views* below.
+
+`test-removal-approved` is a third label that is neither a trigger nor
+consumed. It is a state marker a human adds to a pull request, and `ci.yml`'s
+`test-ratchet` job reads it live — no workflow ever adds or removes it. It has
+one operational wrinkle worth writing down: `pull_request` does not fire on
+`labeled`, and re-running a workflow replays the original event payload
+rather than a fresh one, so a label added after a red ratchet would not
+appear if the job trusted that payload. That is why `test-ratchet` reads its
+labels live from the API instead, and why the documented procedure is *add
+the label, then re-run the job* — re-running is what makes the job look again,
+not the label add itself.
 
 Review is the one thing that fires without a tap, on `ready_for_review`. That
 is deliberate: it is a safety net on work you already chose to start, and
@@ -825,6 +837,7 @@ depends on the color. Checked live against the repository on 2026-08-22:
 | `review:fix` | `#D93F0B` | `agent-04-review.yml` and `agent-02-implement.yml` (duplicated, not shared) |
 | `review:planning-failure` | `#B60205` | `agent-04-review.yml` and `agent-02-implement.yml` (duplicated, not shared) |
 | `review:design-ambiguity` | `#FBCA04` | `agent-04-review.yml` and `agent-02-implement.yml` (duplicated, not shared) |
+| `test-removal-approved` | `#B60205` | `.github/scripts/bootstrap-labels.sh` only — no workflow's `ensure_label` guard recreates it |
 | `dashboard` | `#5319E7` | `agent-00-dashboard.yml` |
 | `dashboard:update` | `#5319E7` | `agent-00-dashboard.yml` |
 
