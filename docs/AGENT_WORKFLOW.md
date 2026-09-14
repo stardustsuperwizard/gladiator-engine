@@ -544,8 +544,11 @@ MAI-Code-1.1-Flash and GPT-5.6 Luna are 5× cheaper than Haiku 4.5 and are
 both cloud-agent selectable. Neither is validated against GDScript and Godot
 4 scene and resource serialization, which is unforgiving of small mistakes.
 Trial them on one or two mechanical tasks and compare how much rework each
-needs before switching. Nothing records that for you — read the pull requests
-and their review verdicts.
+needs before switching. `.metrics/runs.csv` records that for you: each merge
+row's `fix_round` is how many fix cycles that task took and its `verdict` is
+how the review ended, and the session rows beneath it name the model that did
+the work in `model_resolved`. Filter to the model, compare the `fix_round`
+column. See `docs/RUN_LEDGER.md`.
 
 ### Resolved: paying for Claude sessions with a subscription instead of API credits
 
@@ -1394,7 +1397,11 @@ independent check run an implementer push does — see *The independent
 validation gate*.
 
 If a task takes more than two `FIX` cycles, that is a planning problem, not an
-implementation problem. Record it.
+implementation problem. It is already recorded: the merge row that
+`run-ledger.yml` appends to `.metrics/runs.csv` carries that count in its
+`fix_round` column, derived from the `<!-- agent-fix-applied -->` comments on
+the pull request rather than from anything anyone remembered to write down.
+Sort by that column to find the tasks that were planned badly.
 
 ### Step 4 — Rollup
 
@@ -2412,6 +2419,7 @@ are custom agents and MCP servers.
 | File | Purpose |
 | --- | --- |
 | `docs/AGENT_ROLE_DESIGN.md` | Why these are the roles, and the test a proposed new one has to pass |
+| `docs/RUN_LEDGER.md` | The run ledger's column schema and its `event`, `verdict` and `outcome` vocabularies — what `.metrics/runs.csv` means, and what each column answers |
 | `.github/workflows/agent-00-dashboard.yml` | Rewrites the pinned control plane Issue from derived state, on `dashboard:update` or dispatch |
 | `.github/workflows/agent-01-planner.yml` | Decomposes an intake Issue of any type into `[task]` sub-issues |
 | `.github/workflows/agent-02-implement.yml` | Scripted implementer: implements, opens the PR, then validates, formats, self-reviews, and self-fixes against it, on `agent:implementer:copilot`; ends with an independent validation job on the pushed SHA |
@@ -2422,6 +2430,7 @@ are custom agents and MCP servers.
 | `.github/workflows/issue-local-session.yml` | Derives an Issue's `human-credentials` label from its `## Files or Subsystems Expected to Change` section by calling `sync-human-credentials-label.py`, on Issue open, on Issue edit, or on a dispatch; `sweep` re-derives the whole open backlog |
 | `.github/workflows/ci.yml` | The one `pull_request`-triggered workflow (also `push` to `main` and a manual dispatch); its `changes` job decides which gates apply, five verification jobs run behind that job's `if:` (`godot`, `workflow-logic`, `issue-deps`, `actionlint` in parallel, plus `export` sequenced behind `godot`), and the `ci` job aggregates all five into the single required status check |
 | `.github/workflows/godot-validation.yml` | The one reusable validation job (`workflow_call`); called by `ci.yml`'s `godot` job, `agent-02-implement.yml`, and `agent-05-fix.yml` |
+| `.github/workflows/run-ledger.yml` | The only writer of `.metrics/runs.csv`: on `push` to `main`, resolves the merged pull request for the pushed commit, appends its rows and commits them, serialised through one non-cancelling `ledger` concurrency group; every failure path warns and leaves the job green |
 | `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt |
 | `.github/actions/build-fix-request` | Shared by `agent-05-fix.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the fixer prompt |
 | `.github/actions/run-agent-session` | The one place a vendor difference lives. Runs one agent session -- Copilot CLI, or Claude Code on either credential, chosen by its `vendor` input -- walking a model preference list and classifying how the session ended into a shared outcome schema. Not yet shared by the planner, which still carries its own copy of the loop |
@@ -2433,6 +2442,7 @@ are custom agents and MCP servers.
 | `.github/scripts/sync-human-credentials-label.py` | Derives `human-credentials` from an Issue body's expected-files section via `task_scope.py` and adds or removes it to match; owns that one label and nothing else. Called by `issue-local-session.yml` on open, on edit, and on a sweep of the open backlog |
 | `.github/scripts/test-issue-dependencies.sh` | Pins the parser and the sync's `gh` calls against a stub CLI; no Godot, credentials or network |
 | `.github/scripts/task_scope.py` | The one path rule the pushing workflows share: the ⚠️ delicate-paths flag, implementer eligibility from an Issue's expected files (`agent-01-planner.yml`, `agent-02-implement.yml`, the control plane), and pushability from a pull request's changed files (`agent-05-fix.yml`) |
+| `.github/scripts/ledger_row.py` | The one derivation of a ledger row: turns a merged pull request's already-fetched GitHub JSON into the `merge` row and its `session` rows, with no network and no model. Called by `run-ledger.yml`, which appends what it prints and computes no field of its own |
 | `.github/scripts/build-plan-review-request.py` | Deterministic plan-review request assembler: no network, no `gh`, no model; resolves the greppable half of checks 5, 6 and 8 (dependency edges, expected files, unresolved artifact names) into one context file for `plan-reviewer` |
 | `.github/agents/01-planner.agent.md` | Planner role, Issue promotion criteria |
 | `.github/agents/02-implementer.agent.md` | Implementer role, scope boundaries |
