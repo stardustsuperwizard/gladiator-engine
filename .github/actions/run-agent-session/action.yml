@@ -193,6 +193,20 @@ outputs:
       The vendor that produced output. Echoed back so a caller rendering a
       report does not have to thread its own input through to the summary.
     value: ${{ steps.run.outputs.resolved_vendor }}
+  duration-seconds:
+    description: >-
+      Whole seconds spent on the model-preference walk: from immediately
+      before the first candidate is tried to immediately after the walk ends,
+      however it ended.
+      Always a non-negative integer, on every path -- the success path, the
+      path where no model produced output, and a run that failed inside the
+      walk. The step that measures it runs under `always()` precisely so
+      that the total-failure path still reports a number, because a caller
+      recording what a session cost needs that most on the runs that failed.
+      Excludes the CLI install and the model-list dump above it. Those are
+      runner overhead rather than session time, and a duration that moved
+      with npm's mood would not be comparable between runs.
+    value: ${{ steps.duration.outputs.duration_seconds }}
   assistant-text-file:
     description: >-
       Path to a file holding the joined text of the session's assistant
@@ -328,6 +342,18 @@ runs:
         set +e
         claude --version
         echo "Candidate models for this run: $MODELS"
+
+    # Read immediately before the walk and again immediately after it, rather
+    # than from the job's own start: what a caller's ledger row wants to know
+    # is what the session spent, and the npm install above varies by a minute
+    # for reasons that have nothing to do with the model.
+    - name: Mark Session Start
+      id: session-start
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
     - name: ${{ inputs.step-label }}
       id: run
@@ -645,6 +671,45 @@ runs:
 
         echo "resolved_model=$resolved" >> "$GITHUB_OUTPUT"
         echo "resolved_vendor=$VENDOR" >> "$GITHUB_OUTPUT"
+
+    # The other half of `duration-seconds`. Under `always()` for the same
+    # reason "Report Session Cost" below is: the walk exits non-zero on a real
+    # failure and on the path where no candidate was available, and those are
+    # exactly the runs whose duration a caller's ledger row wants.
+    #
+    # Purely additive. It reads two clocks and writes one output; no step
+    # above it changes, and a caller that ignores the output sees the same
+    # action it saw before.
+    - name: Measure Session Duration
+      id: duration
+      if: always()
+      shell: bash
+      env:
+        STARTED_AT: ${{ steps.session-start.outputs.epoch }}
+        STEP_LABEL: ${{ inputs.step-label }}
+      run: |
+        set -euo pipefail
+
+        # An empty or non-numeric start means "Mark Session Start" never ran
+        # -- an unknown vendor, a failed CLI install. Zero rather than blank,
+        # because this output is contracted to be a non-negative integer on
+        # every path, and a session that never started did take no measurable
+        # session time.
+        case "${STARTED_AT:-}" in
+          ''|*[!0-9]*)
+            SPENT=0
+            ;;
+          *)
+            SPENT=$(( $(date +%s) - STARTED_AT ))
+            # The runner's clock is not guaranteed monotonic across a step
+            # boundary, and a negative duration would be read as a corrupt
+            # ledger row rather than as a clock adjustment.
+            [ "$SPENT" -ge 0 ] || SPENT=0
+            ;;
+        esac
+
+        echo "duration_seconds=$SPENT" >> "$GITHUB_OUTPUT"
+        echo "$STEP_LABEL took ${SPENT}s across the model-preference walk."
 
     # What the session cost, on the run's own summary page.
     #

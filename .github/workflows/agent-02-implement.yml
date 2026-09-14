@@ -858,6 +858,54 @@ jobs:
           capability: write
           step-label: "Executing"
 
+      # `run-agent-session`'s `outcome-file` is a fixed path --
+      # `$RUNNER_TEMP/agent-outcome.json` -- and $RUNNER_TEMP is per-job, not
+      # per-step. This job runs three sessions, so all three write that one
+      # file and each write overwrites the last. A record step at the end of
+      # the job reading `steps.<session>.outputs.outcome-file` therefore reads
+      # whichever session ran *last*, whatever session it names.
+      #
+      # So each session's outcome is taken out of that single slot here, while
+      # it is still that session's, and the matching record step reads the
+      # snapshot instead. `mv` rather than `cp` on purpose: the slot is a
+      # one-message mailbox, and leaving the message in it is what lets a
+      # later session that failed before its classifier ran report this
+      # session's verdict as its own. The only other reader of the slot is
+      # "Extract Pre-PR Review Verdict", which is why the reviewer's snapshot
+      # sits just below that step rather than immediately under its session.
+      #
+      # `always()`, scoped to the session having run, so a session that failed
+      # or ran out of budget still has its verdict snapshotted -- that is
+      # exactly the record worth keeping. `continue-on-error` because this
+      # step exists only to observe: a snapshot that cannot be taken costs a
+      # ledger field, and must not cost the implementation.
+      - name: Snapshot Implementer Session Outcome
+        if: >-
+          always() &&
+          steps.exec-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC="$RUNNER_TEMP/agent-outcome.json"
+          DEST="$RUNNER_TEMP/session-outcome-implementer.json"
+
+          # Cleared first so that "no snapshot" is a state this step can
+          # actually reach: the record step below distinguishes an outcome it
+          # could not read from one it read, and it can only do that if a
+          # missing verdict leaves nothing at $DEST for it to find.
+          rm -f "$DEST"
+
+          if [ -f "$SRC" ]; then
+            mv "$SRC" "$DEST"
+            echo "Implementer session outcome snapshotted to $DEST."
+          else
+            echo "::warning::The implementer session left no classifier" \
+                 "outcome file, so its session record reports an empty" \
+                 "outcome rather than another session's."
+          fi
+
       # Safety net for a session that made real changes but stopped short
       # of running `git commit` itself (for example it ran out of budget,
       # or simply forgot the hard rule above). Without this, that work is
@@ -1344,6 +1392,35 @@ jobs:
           assistant-text-file: ${{ steps.review-session.outputs.assistant-text-file }}
           outcome-file: ${{ steps.review-session.outputs.outcome-file }}
 
+      # See "Snapshot Implementer Session Outcome" for why this exists. It
+      # sits *below* "Extract Pre-PR Review Verdict" rather than immediately
+      # under its own session because that step is the other reader of the
+      # shared outcome slot, and moving the file out from under it would cost
+      # this workflow its pre-PR verdict. Nothing between the two sessions
+      # reads the slot after this point.
+      - name: Snapshot Pre-PR Reviewer Session Outcome
+        if: >-
+          always() &&
+          steps.review-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC="$RUNNER_TEMP/agent-outcome.json"
+          DEST="$RUNNER_TEMP/session-outcome-reviewer.json"
+
+          rm -f "$DEST"
+
+          if [ -f "$SRC" ]; then
+            mv "$SRC" "$DEST"
+            echo "Pre-PR reviewer session outcome snapshotted to $DEST."
+          else
+            echo "::warning::The pre-PR review session left no classifier" \
+                 "outcome file, so its session record reports an empty" \
+                 "outcome rather than another session's."
+          fi
+
       - name: Evaluate Pre-PR Review
         if: steps.prep.outcome == 'success'
         id: review-eval
@@ -1406,6 +1483,34 @@ jobs:
           max-ai-credits: ${{ env.FIXER_MAX_AI_CREDITS }}
           capability: write
           step-label: "Fixing (pre-PR)"
+
+      # See "Snapshot Implementer Session Outcome" for why this exists. The
+      # last of the job's three sessions is the one a static outcome path
+      # happened to report correctly; it is snapshotted anyway, so that all
+      # three records read the same kind of path and adding a fourth session
+      # below cannot quietly break this one.
+      - name: Snapshot Pre-PR Fixer Session Outcome
+        if: >-
+          always() &&
+          steps.fix-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC="$RUNNER_TEMP/agent-outcome.json"
+          DEST="$RUNNER_TEMP/session-outcome-fixer.json"
+
+          rm -f "$DEST"
+
+          if [ -f "$SRC" ]; then
+            mv "$SRC" "$DEST"
+            echo "Pre-PR fixer session outcome snapshotted to $DEST."
+          else
+            echo "::warning::The pre-PR fix session left no classifier" \
+                 "outcome file, so its session record reports an empty" \
+                 "outcome rather than another session's."
+          fi
 
       # A single bounded pass, exactly like agent-05-fix.yml: this either
       # leaves a clean, validated fix commit on top of IMPL_SHA and pushes
@@ -2151,6 +2256,336 @@ jobs:
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
               summary.write("\n" + body + "\n")
+
+      # One machine-readable record per agent session, for the run ledger
+      # (#219). Three sessions run in this job -- the implementer, the pre-PR
+      # reviewer and the pre-PR fixer -- so this job posts up to three of
+      # these, one each, and none for a session that was skipped.
+      #
+      # Each comment's whole body is three lines: the
+      # `<!-- agent-session-record` marker, one line of JSON, and `-->`. That
+      # is the fixed contract `.github/scripts/ledger_row.py` parses, which is
+      # why there is no prose around it and no ninth key in it.
+      #
+      # Every value comes from a workflow expression, a `run-agent-session`
+      # output, or a value this job already computed. Nothing is read from
+      # `assistant-text-file`, `final-text-file` or any completion report: a
+      # ledger field a model could author is a ledger field a model can get
+      # wrong, and the point of these records is that they are observations of
+      # the workflow rather than of anybody's prose.
+      #
+      # `always()`, scoped to the session having actually run and to a pull
+      # request existing to post on: a session that ran out of budget is
+      # exactly the row worth having. `continue-on-error`, plus the guarded
+      # `gh` call in each step, so a failed post warns and changes nothing
+      # else -- observation must never be able to fail the thing it observes,
+      # least of all in the job that already has a working pull request open.
+      - name: Record Implementer Session
+        if: >-
+          always() &&
+          steps.pr.outcome == 'success' &&
+          steps.exec-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: python
+        env:
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+          VENDOR: ${{ steps.exec-session.outputs.resolved-vendor }}
+          MODELS: ${{ steps.tier.outputs.models }}
+          MODEL_RESOLVED: ${{ steps.exec-session.outputs.resolved-model }}
+          # The snapshot taken immediately after the session, NOT
+          # `steps.exec-session.outputs.outcome-file`: that output is a fixed
+          # per-job path this job's three sessions all write, so read from
+          # here -- at the end of the job -- it holds the last session's
+          # verdict under every session's name. See "Snapshot Implementer
+          # Session Outcome".
+          OUTCOME_FILE: ${{ runner.temp }}/session-outcome-implementer.json
+          DURATION_SECONDS: ${{ steps.exec-session.outputs.duration-seconds }}
+          RUN_URL: >-
+            ${{ github.server_url }}/${{ github.repository
+            }}/actions/runs/${{ github.run_id }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+
+          # This step's scratch lives in $RUNNER_TEMP, not the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          # The classifier verdict. The shared outcome schema spells this
+          # field `reason` (see classify-claude-outcome.py); `outcome` is the
+          # ledger's name for the same value.
+          outcome = ""
+          outcome_file = pathlib.Path(os.environ.get("OUTCOME_FILE") or ".")
+
+          if outcome_file.is_file():
+              try:
+                  loaded = json.loads(outcome_file.read_text(errors="replace"))
+              except ValueError:
+                  loaded = None
+
+              if isinstance(loaded, dict):
+                  outcome = loaded.get("reason") or ""
+
+          # Whole seconds or nothing: the action contracts a non-negative
+          # integer, and anything else means this step read an output that
+          # was never set.
+          duration = os.environ.get("DURATION_SECONDS") or ""
+
+          # Exactly these eight keys, in this order, all values strings or
+          # integers. json.dumps rather than string concatenation so a value
+          # carrying a quote, a comma or a backslash is escaped instead of
+          # breaking the one JSON line.
+          record = {
+              "role": "implementer",
+              "vendor": os.environ.get("VENDOR") or "",
+              "model_requested": (
+                  (os.environ.get("MODELS") or "").split(",")[0].strip()
+              ),
+              "model_resolved": os.environ.get("MODEL_RESOLVED") or "",
+              "outcome": outcome,
+              "duration_seconds": int(duration) if duration.isdigit() else "",
+              # A fix round is the fixer's count; this role has none.
+              "fix_round": "",
+              "run_url": os.environ["RUN_URL"],
+          }
+
+          record_file = SCRATCH / "session-record-implementer.md"
+          record_file.write_text(
+              "<!-- agent-session-record\n"
+              + json.dumps(record)
+              + "\n-->\n",
+              encoding="utf-8",
+          )
+
+          pr_match = re.search(r"(\d+)$", os.environ.get("PR_URL") or "")
+
+          if pr_match is None:
+              print(
+                  "::warning::No pull request URL is available, so the"
+                  " implementer session record was not posted."
+              )
+              raise SystemExit(0)
+
+          pr_number = pr_match.group(1)
+
+          posted = subprocess.run(
+              ["gh", "pr", "comment", pr_number,
+               "--repo", os.environ["GITHUB_REPOSITORY"],
+               "--body-file", str(record_file)],
+              capture_output=True, text=True,
+          )
+
+          if posted.returncode != 0:
+              print(posted.stdout)
+              print(posted.stderr)
+              print(
+                  "::warning::Could not post the implementer session record"
+                  f" comment to pull request #{pr_number}. The pull request"
+                  " is unaffected; the run ledger simply has no session row"
+                  " for it."
+              )
+
+      # The pre-PR review session's record. Same contract and same
+      # guardrails as "Record Implementer Session" above -- see the comment
+      # there.
+      - name: Record Pre-PR Reviewer Session
+        if: >-
+          always() &&
+          steps.pr.outcome == 'success' &&
+          steps.review-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: python
+        env:
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+          VENDOR: ${{ steps.review-session.outputs.resolved-vendor }}
+          MODELS: ${{ steps.route.outputs.reviewer_models }}
+          MODEL_RESOLVED: ${{ steps.review-session.outputs.resolved-model }}
+          # This session's own snapshot -- see "Record Implementer Session".
+          OUTCOME_FILE: ${{ runner.temp }}/session-outcome-reviewer.json
+          DURATION_SECONDS: ${{ steps.review-session.outputs.duration-seconds }}
+          RUN_URL: >-
+            ${{ github.server_url }}/${{ github.repository
+            }}/actions/runs/${{ github.run_id }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+
+          # This step's scratch lives in $RUNNER_TEMP, not the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          # The classifier verdict, under the ledger's name for it -- the
+          # shared outcome schema spells the field `reason`.
+          outcome = ""
+          outcome_file = pathlib.Path(os.environ.get("OUTCOME_FILE") or ".")
+
+          if outcome_file.is_file():
+              try:
+                  loaded = json.loads(outcome_file.read_text(errors="replace"))
+              except ValueError:
+                  loaded = None
+
+              if isinstance(loaded, dict):
+                  outcome = loaded.get("reason") or ""
+
+          duration = os.environ.get("DURATION_SECONDS") or ""
+
+          record = {
+              "role": "reviewer",
+              "vendor": os.environ.get("VENDOR") or "",
+              "model_requested": (
+                  (os.environ.get("MODELS") or "").split(",")[0].strip()
+              ),
+              "model_resolved": os.environ.get("MODEL_RESOLVED") or "",
+              "outcome": outcome,
+              "duration_seconds": int(duration) if duration.isdigit() else "",
+              # A fix round is the fixer's count; this role has none.
+              "fix_round": "",
+              "run_url": os.environ["RUN_URL"],
+          }
+
+          record_file = SCRATCH / "session-record-pre-pr-reviewer.md"
+          record_file.write_text(
+              "<!-- agent-session-record\n"
+              + json.dumps(record)
+              + "\n-->\n",
+              encoding="utf-8",
+          )
+
+          pr_match = re.search(r"(\d+)$", os.environ.get("PR_URL") or "")
+
+          if pr_match is None:
+              print(
+                  "::warning::No pull request URL is available, so the"
+                  " pre-PR reviewer session record was not posted."
+              )
+              raise SystemExit(0)
+
+          pr_number = pr_match.group(1)
+
+          posted = subprocess.run(
+              ["gh", "pr", "comment", pr_number,
+               "--repo", os.environ["GITHUB_REPOSITORY"],
+               "--body-file", str(record_file)],
+              capture_output=True, text=True,
+          )
+
+          if posted.returncode != 0:
+              print(posted.stdout)
+              print(posted.stderr)
+              print(
+                  "::warning::Could not post the pre-PR reviewer session"
+                  f" record comment to pull request #{pr_number}. The pull"
+                  " request is unaffected; the run ledger simply has no"
+                  " session row for it."
+              )
+
+      # The pre-PR fix session's record. Same contract and same guardrails as
+      # "Record Implementer Session" above -- see the comment there.
+      #
+      # `fix_round` is 0 rather than empty, and is not read from anywhere:
+      # this pull request was opened by this same run, minutes earlier, so no
+      # `<!-- agent-fix-applied -->` comment can precede this session. That is
+      # known from the shape of the job, not from anything a session said.
+      # agent-05-fix.yml, which fixes a pull request that already existed,
+      # reports the count it already computes instead.
+      - name: Record Pre-PR Fixer Session
+        if: >-
+          always() &&
+          steps.pr.outcome == 'success' &&
+          steps.fix-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: python
+        env:
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+          VENDOR: ${{ steps.fix-session.outputs.resolved-vendor }}
+          MODELS: ${{ steps.route.outputs.fixer_models }}
+          MODEL_RESOLVED: ${{ steps.fix-session.outputs.resolved-model }}
+          # This session's own snapshot -- see "Record Implementer Session".
+          OUTCOME_FILE: ${{ runner.temp }}/session-outcome-fixer.json
+          DURATION_SECONDS: ${{ steps.fix-session.outputs.duration-seconds }}
+          RUN_URL: >-
+            ${{ github.server_url }}/${{ github.repository
+            }}/actions/runs/${{ github.run_id }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+
+          # This step's scratch lives in $RUNNER_TEMP, not the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          # The classifier verdict, under the ledger's name for it -- the
+          # shared outcome schema spells the field `reason`.
+          outcome = ""
+          outcome_file = pathlib.Path(os.environ.get("OUTCOME_FILE") or ".")
+
+          if outcome_file.is_file():
+              try:
+                  loaded = json.loads(outcome_file.read_text(errors="replace"))
+              except ValueError:
+                  loaded = None
+
+              if isinstance(loaded, dict):
+                  outcome = loaded.get("reason") or ""
+
+          duration = os.environ.get("DURATION_SECONDS") or ""
+
+          record = {
+              "role": "fixer",
+              "vendor": os.environ.get("VENDOR") or "",
+              "model_requested": (
+                  (os.environ.get("MODELS") or "").split(",")[0].strip()
+              ),
+              "model_resolved": os.environ.get("MODEL_RESOLVED") or "",
+              "outcome": outcome,
+              "duration_seconds": int(duration) if duration.isdigit() else "",
+              # The first fix on a pull request this run opened itself.
+              "fix_round": 0,
+              "run_url": os.environ["RUN_URL"],
+          }
+
+          record_file = SCRATCH / "session-record-pre-pr-fixer.md"
+          record_file.write_text(
+              "<!-- agent-session-record\n"
+              + json.dumps(record)
+              + "\n-->\n",
+              encoding="utf-8",
+          )
+
+          pr_match = re.search(r"(\d+)$", os.environ.get("PR_URL") or "")
+
+          if pr_match is None:
+              print(
+                  "::warning::No pull request URL is available, so the"
+                  " pre-PR fixer session record was not posted."
+              )
+              raise SystemExit(0)
+
+          pr_number = pr_match.group(1)
+
+          posted = subprocess.run(
+              ["gh", "pr", "comment", pr_number,
+               "--repo", os.environ["GITHUB_REPOSITORY"],
+               "--body-file", str(record_file)],
+              capture_output=True, text=True,
+          )
+
+          if posted.returncode != 0:
+              print(posted.stdout)
+              print(posted.stderr)
+              print(
+                  "::warning::Could not post the pre-PR fixer session record"
+                  f" comment to pull request #{pr_number}. The pull request"
+                  " is unaffected; the run ledger simply has no session row"
+                  " for it."
+              )
 
   # The independent check. Everything the `execute` job says about
   # validation, it says about its own work: it runs `validate-godot.sh` in
