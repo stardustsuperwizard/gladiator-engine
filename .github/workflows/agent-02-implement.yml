@@ -891,8 +891,10 @@ jobs:
           SRC="$RUNNER_TEMP/agent-outcome.json"
           DEST="$RUNNER_TEMP/session-outcome-implementer.json"
 
-          # Never leave a previous run's snapshot behind to be read as this
-          # session's. A re-run reuses $RUNNER_TEMP within the same job.
+          # Cleared first so that "no snapshot" is a state this step can
+          # actually reach: the record step below distinguishes an outcome it
+          # could not read from one it read, and it can only do that if a
+          # missing verdict leaves nothing at $DEST for it to find.
           rm -f "$DEST"
 
           if [ -f "$SRC" ]; then
