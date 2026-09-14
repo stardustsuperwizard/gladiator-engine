@@ -3061,6 +3061,392 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 15: the session-record writers (#297).
+#
+# `ledger_row.py` (Part 14) reads a three-line `<!-- agent-session-record`
+# comment; the five steps checked here are what write one. Both halves of that
+# contract are now pinned, and by the same fixture: each step is extracted and
+# run against a stub `gh`, and the comment bodies it produces are fed straight
+# into `ledger_row.py`. A writer that grows a ninth key, pretty-prints its
+# JSON, or wraps the marker in prose fails here rather than silently producing
+# ledger rows nobody notices are missing.
+#
+# The inventory is pinned the way Part 4 pins marker reads: a record step whose
+# name is not in RECORDS fails until somebody states which role and which
+# fix_round it is supposed to report. A new agent workflow that starts emitting
+# records cannot do so unclassified.
+#
+# The other rule enforced here is the epic's central one: no record step may
+# read a session's text. Every ledger field must come from a workflow
+# expression or an action output, because a field a model could author is a
+# field a model can get wrong.
+#
+# python3 only, no network, no credentials, no real repository, and every byte
+# written under the harness's own work_dir.
+# ---------------------------------------------------------------------------
+
+part15 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import csv
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1])
+import wf
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part15.", dir=work_dir))
+
+MARKER = "<!-- agent-session-record"
+FOOTER = "-->"
+
+KEYS = [
+    "role", "vendor", "model_requested", "model_resolved",
+    "outcome", "duration_seconds", "fix_round", "run_url",
+]
+
+# (workflow, step name) -> (role, fix_round) the step is contracted to report.
+# `fix_round` is "" for a role that has no fix round, an int where the step
+# reports one.
+RECORDS = {
+    (".github/workflows/agent-02-implement.yml", "Record Implementer Session"):
+        ("implementer", ""),
+    (".github/workflows/agent-02-implement.yml", "Record Pre-PR Reviewer Session"):
+        ("reviewer", ""),
+    # 0, not the stubbed FIX_ROUND: this workflow opened the pull request in
+    # the same run, so no prior fix can exist and the step says so outright.
+    (".github/workflows/agent-02-implement.yml", "Record Pre-PR Fixer Session"):
+        ("fixer", 0),
+    (".github/workflows/agent-04-review.yml", "Record Reviewer Session"):
+        ("reviewer", ""),
+    # The prior-marker count "Resolve Fixer Model Tier" already computed,
+    # threaded through as FIX_ROUND.
+    (".github/workflows/agent-05-fix.yml", "Record Fixer Session"):
+        ("fixer", 3),
+}
+
+EXPECTED_PER_WORKFLOW = {
+    ".github/workflows/agent-02-implement.yml": 3,
+    ".github/workflows/agent-04-review.yml": 1,
+    ".github/workflows/agent-05-fix.yml": 1,
+}
+
+# A ledger field must not be read out of anything a model wrote.
+FORBIDDEN = (
+    "final-text-file", "assistant-text-file", "review-file", "report-file",
+    "FINAL_TEXT", "ASSISTANT_TEXT", "REVIEW_FILE",
+)
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def step_blocks(path):
+    """(name, code) for every `- name:` step block in a workflow.
+
+    Comment lines are dropped, YAML and embedded-program alike. A step whose
+    rationale *quotes* the marker does not emit it, and a step's own comment
+    naming `final-text-file` as the thing it deliberately does not read is the
+    opposite of a violation -- this is #69's lesson applied to the check
+    rather than to the workflow. It also keeps the block boundary honest: a
+    step's leading comment block sits above its `- name:` line, so it is read
+    as part of the previous step and would otherwise be attributed to it.
+    """
+
+    lines = pathlib.Path(path).read_text(encoding="utf-8").splitlines()
+    starts = [
+        (n, re.match(r"^(\s*)- name: (.*)$", line))
+        for n, line in enumerate(lines)
+    ]
+    starts = [(n, m) for n, m in starts if m]
+
+    for index, (n, m) in enumerate(starts):
+        end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
+        code = [
+            line for line in lines[n:end] if not line.strip().startswith("#")
+        ]
+        yield m.group(2).strip(), "\n".join(code)
+
+
+# -- 1: the marker is what ledger_row.py reads. ------------------------------
+spec = importlib.util.spec_from_file_location(
+    "ledger_row",
+    os.path.join(repo_root, ".github", "scripts", "ledger_row.py"),
+)
+ledger_row = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ledger_row)
+
+check(
+    ledger_row.SESSION_RECORD_HEADER == MARKER
+    and ledger_row.SESSION_RECORD_FOOTER == FOOTER,
+    f"the marker is exactly `{MARKER}`, matching ledger_row.py",
+    f"ledger_row.py reads {ledger_row.SESSION_RECORD_HEADER!r} /"
+    f" {ledger_row.SESSION_RECORD_FOOTER!r}, not {MARKER!r} / {FOOTER!r}",
+)
+
+# -- 2: every PR-scoped agent workflow emits the marker, and only from steps -
+#    this check knows the contract of.
+emitting = {}
+
+for path, expected_count in EXPECTED_PER_WORKFLOW.items():
+    found = [(name, block) for name, block in step_blocks(path) if MARKER in block]
+    emitting[path] = found
+
+    check(
+        len(found) == expected_count,
+        f"{path} has {expected_count} step(s) emitting the marker",
+        f"{path} has {len(found)} step(s) emitting the marker, expected"
+        f" {expected_count}: {[name for name, _ in found]}",
+    )
+
+    for name, block in found:
+        check(
+            (path, name) in RECORDS,
+            f"{path}: `{name}` is a classified record step",
+            f"{path} emits a session record from `{name}`, which this check"
+            f" does not know. Add it to RECORDS with the role and fix_round it"
+            f" reports.",
+        )
+
+        offenders = [needle for needle in FORBIDDEN if needle in block]
+        check(
+            not offenders,
+            f"{path}: `{name}` reads no session text file",
+            f"{path}: `{name}` references {offenders} -- a ledger field must"
+            f" come from a workflow expression or an action output, never from"
+            f" text a model wrote.",
+        )
+
+# -- 3: run each record step and read back what it posted. -------------------
+bin_dir = part_dir / "bin"
+bin_dir.mkdir()
+gh_stub = bin_dir / "gh"
+gh_stub.write_text(
+    "#!/usr/bin/env bash\n"
+    "set -uo pipefail\n"
+    "body=\"\"\n"
+    "while [ $# -gt 0 ]; do\n"
+    "  if [ \"$1\" = \"--body-file\" ]; then body=\"$2\"; fi\n"
+    "  shift\n"
+    "done\n"
+    "printf '%s' \"$body\" > \"$GH_STUB_CAPTURE_PATH\"\n"
+    "cat \"$body\" > \"$GH_STUB_CAPTURE\"\n"
+    "if [ \"${GH_STUB_EXIT:-0}\" != \"0\" ]; then\n"
+    "  echo 'gh: stubbed refusal' >&2\n"
+    "  exit \"$GH_STUB_EXIT\"\n"
+    "fi\n",
+    encoding="utf-8",
+)
+gh_stub.chmod(0o755)
+
+outcome_file = part_dir / "agent-outcome.json"
+outcome_file.write_text(
+    json.dumps({
+        "vendor": "anthropic",
+        "model": "claude-sonnet-5",
+        "reason": "budget_exhausted",
+        "headline": "hit a limit",
+        "assistant_text_chars": 1200,
+    }),
+    encoding="utf-8",
+)
+
+RUN_URL = "https://example.invalid/o/r/actions/runs/7"
+
+BASE_ENV = {
+    "PR_URL": "https://github.com/o/r/pull/300",
+    "PR_NUMBER": "300",
+    "VENDOR": "anthropic",
+    "MODELS": "claude-opus-5, claude-sonnet-5",
+    "MODEL_RESOLVED": "claude-sonnet-5",
+    "OUTCOME_FILE": str(outcome_file),
+    "DURATION_SECONDS": "42",
+    "FIX_ROUND": "3",
+    "RUN_URL": RUN_URL,
+    "GITHUB_REPOSITORY": "o/r",
+}
+
+
+def run_record_step(path, name, overrides=None, exit_code="0"):
+    """Run one record step as the workflow runs it, in its own scratch."""
+
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    source = case / "step.py"
+    source.write_text(
+        wf.step_source(path, name, shell="python"), encoding="utf-8"
+    )
+
+    capture = case / "posted-body.md"
+    capture_path = case / "posted-path.txt"
+
+    env = dict(os.environ)
+    env.update(BASE_ENV)
+    env.update(overrides or {})
+    env.update({
+        "RUNNER_TEMP": str(case),
+        "GH_STUB_CAPTURE": str(capture),
+        "GH_STUB_CAPTURE_PATH": str(capture_path),
+        "GH_STUB_EXIT": exit_code,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+    })
+
+    result = subprocess.run(
+        [sys.executable, str(source)],
+        capture_output=True, text=True, cwd=str(case), env=env,
+    )
+
+    body = capture.read_text(encoding="utf-8") if capture.is_file() else None
+    written_to = (
+        capture_path.read_text(encoding="utf-8") if capture_path.is_file() else ""
+    )
+    return result, body, written_to, case
+
+
+bodies = []
+
+for (path, name), (role, fix_round) in RECORDS.items():
+    result, body, written_to, case = run_record_step(path, name)
+
+    if result.returncode != 0 or body is None:
+        check(
+            False,
+            "",
+            f"{path}: `{name}` did not post a record (exit"
+            f" {result.returncode}): stdout={result.stdout!r},"
+            f" stderr={result.stderr!r}",
+        )
+        continue
+
+    lines = body.strip("\n").splitlines()
+    shape_ok = (
+        len(lines) == 3 and lines[0] == MARKER and lines[2] == FOOTER
+    )
+    check(
+        shape_ok,
+        f"{path}: `{name}` posts exactly three lines, marker and closer",
+        f"{path}: `{name}` posted {len(lines)} line(s): {body!r}",
+    )
+
+    if not shape_ok:
+        continue
+
+    check(
+        written_to.startswith(str(case)),
+        f"{path}: `{name}` builds its body under $RUNNER_TEMP",
+        f"{path}: `{name}` posted {written_to!r}, which is not under its"
+        f" RUNNER_TEMP ({case})",
+    )
+
+    try:
+        record = json.loads(lines[1])
+    except ValueError as exc:
+        check(False, "", f"{path}: `{name}` wrote unparseable JSON: {exc}")
+        continue
+
+    check(
+        list(record) == KEYS,
+        f"{path}: `{name}` writes exactly the eight contracted keys",
+        f"{path}: `{name}` wrote keys {list(record)}, expected {KEYS}",
+    )
+
+    check(
+        record.get("role") == role
+        and record.get("vendor") == "anthropic"
+        and record.get("model_requested") == "claude-opus-5"
+        and record.get("model_resolved") == "claude-sonnet-5"
+        and record.get("outcome") == "budget_exhausted"
+        and record.get("duration_seconds") == 42
+        and record.get("fix_round") == fix_round
+        and record.get("run_url") == RUN_URL,
+        f"{path}: `{name}` reports role={role!r}, the resolved vendor and"
+        f" model, the classifier outcome, 42s and fix_round={fix_round!r}",
+        f"{path}: `{name}` wrote {record!r}",
+    )
+
+    bodies.append(body)
+
+# -- 4: an unset duration output degrades to the empty string, not a crash. --
+path, name = ".github/workflows/agent-04-review.yml", "Record Reviewer Session"
+result, body, _, _ = run_record_step(
+    path, name, overrides={"DURATION_SECONDS": "", "VENDOR": ""}
+)
+record = json.loads(body.strip("\n").splitlines()[1]) if body else {}
+check(
+    result.returncode == 0
+    and record.get("duration_seconds") == ""
+    and record.get("vendor") == "",
+    "an unset duration or vendor output becomes the empty string",
+    f"exit {result.returncode}, record={record!r}, stderr={result.stderr!r}",
+)
+
+# -- 5: a refused `gh` warns and still exits 0. ------------------------------
+result, _, _, _ = run_record_step(
+    ".github/workflows/agent-05-fix.yml", "Record Fixer Session", exit_code="1"
+)
+check(
+    result.returncode == 0 and "::warning::" in result.stdout,
+    "a refused comment post prints a ::warning:: and exits 0",
+    f"exit {result.returncode}, stdout={result.stdout!r},"
+    f" stderr={result.stderr!r}",
+)
+
+# -- 6: ledger_row.py turns those exact bodies into one session row each. ----
+pr_json = part_dir / "pr.json"
+pr_json.write_text(
+    json.dumps({
+        "number": 300,
+        "mergedAt": "2026-09-14T19:15:37Z",
+        "body": "Closes #297",
+        "comments": [{"body": body} for body in bodies],
+    }),
+    encoding="utf-8",
+)
+
+result = subprocess.run(
+    [sys.executable,
+     os.path.join(repo_root, ".github", "scripts", "ledger_row.py"),
+     "--pr-json", str(pr_json), "--run-url", "https://example.invalid/ledger"],
+    capture_output=True, text=True,
+)
+rows = list(csv.reader(io.StringIO(result.stdout)))
+session_rows = [row for row in rows if row[1] == "session"]
+
+check(
+    result.returncode == 0
+    and len(bodies) == len(RECORDS)
+    and len(session_rows) == len(bodies)
+    and all(row[5] == "anthropic" for row in session_rows)
+    and all(row[6] == "claude-opus-5" for row in session_rows)
+    and all(row[7] == "claude-sonnet-5" for row in session_rows)
+    and all(row[11] == "budget_exhausted" for row in session_rows)
+    and all(row[12] == "42" for row in session_rows)
+    and all(row[13] == RUN_URL for row in session_rows)
+    and sorted(row[4] for row in session_rows)
+    == sorted(role for role, _ in RECORDS.values()),
+    f"ledger_row.py reads the posted bodies as {len(bodies)} session row(s),"
+    " one per comment, with matching field values",
+    f"exit {result.returncode}, rows={rows}, stderr={result.stderr!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -3078,6 +3464,7 @@ run_part "Part 11: verdict extraction in both modes (#230)" part11
 run_part "Part 12: count-tests.py suites, assertions and compare (#283)" part12
 run_part "Part 13: run ledger gate logic, pull_request and push (#295)" part13
 run_part "Part 14: ledger_row.py field derivation (#296)" part14
+run_part "Part 15: session-record writers (#297)" part15
 
 echo
 if [ "$failures" -eq 0 ]; then

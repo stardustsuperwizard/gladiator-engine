@@ -523,3 +523,108 @@ jobs:
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
               summary.write("\n" + body + "\n")
+
+      # One machine-readable record of this review session, for the run
+      # ledger (#219). The whole comment body is three lines -- the
+      # `<!-- agent-session-record` marker, one line of JSON, and `-->` --
+      # which is the fixed contract `.github/scripts/ledger_row.py` parses.
+      #
+      # Every value comes from a workflow expression or a `run-agent-session`
+      # output. Nothing is read from `assistant-text-file`,
+      # `final-text-file`, or the verdict the reviewer wrote: a ledger field a
+      # model could author is a ledger field a model can get wrong, and the
+      # point of recording these is that they are observations of the
+      # workflow, not of anybody's prose.
+      #
+      # `always()`, scoped to the session having actually run: a review that
+      # failed on budget or availability is exactly the row worth having, and
+      # a skipped session leaves no record at all. `continue-on-error`, plus
+      # the guarded `gh` call below, so a failed post warns and changes
+      # nothing else -- observation must never be able to fail the thing it
+      # observes.
+      - name: Record Reviewer Session
+        if: always() && steps.session.outcome != 'skipped'
+        continue-on-error: true
+        shell: python
+        env:
+          VENDOR: ${{ steps.session.outputs.resolved-vendor }}
+          MODELS: ${{ steps.route.outputs.models }}
+          MODEL_RESOLVED: ${{ steps.session.outputs.resolved-model }}
+          OUTCOME_FILE: ${{ steps.session.outputs.outcome-file }}
+          DURATION_SECONDS: ${{ steps.session.outputs.duration-seconds }}
+          RUN_URL: >-
+            ${{ github.server_url }}/${{ github.repository
+            }}/actions/runs/${{ github.run_id }}
+        run: |
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          # This step's scratch lives in $RUNNER_TEMP, not the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+
+          # The classifier verdict. The shared outcome schema spells this
+          # field `reason` (see classify-claude-outcome.py); `outcome` is the
+          # ledger's name for the same value.
+          outcome = ""
+          outcome_file = pathlib.Path(os.environ.get("OUTCOME_FILE") or ".")
+
+          if outcome_file.is_file():
+              try:
+                  loaded = json.loads(outcome_file.read_text(errors="replace"))
+              except ValueError:
+                  loaded = None
+
+              if isinstance(loaded, dict):
+                  outcome = loaded.get("reason") or ""
+
+          # Whole seconds or nothing: the action contracts a non-negative
+          # integer, and anything else means this step read an output that
+          # was never set.
+          duration = os.environ.get("DURATION_SECONDS") or ""
+
+          # Exactly these eight keys, in this order, all values strings or
+          # integers. json.dumps rather than string concatenation so a value
+          # carrying a quote, a comma or a backslash is escaped instead of
+          # breaking the one JSON line.
+          record = {
+              "role": "reviewer",
+              "vendor": os.environ.get("VENDOR") or "",
+              "model_requested": (
+                  (os.environ.get("MODELS") or "").split(",")[0].strip()
+              ),
+              "model_resolved": os.environ.get("MODEL_RESOLVED") or "",
+              "outcome": outcome,
+              "duration_seconds": int(duration) if duration.isdigit() else "",
+              # A fix round is the fixer's count; this role has none.
+              "fix_round": "",
+              "run_url": os.environ["RUN_URL"],
+          }
+
+          record_file = SCRATCH / "session-record-reviewer.md"
+          record_file.write_text(
+              "<!-- agent-session-record\n"
+              + json.dumps(record)
+              + "\n-->\n",
+              encoding="utf-8",
+          )
+
+          pr_number = os.environ["PR_NUMBER"]
+
+          posted = subprocess.run(
+              ["gh", "pr", "comment", pr_number,
+               "--repo", os.environ["GITHUB_REPOSITORY"],
+               "--body-file", str(record_file)],
+              capture_output=True, text=True,
+          )
+
+          if posted.returncode != 0:
+              print(posted.stdout)
+              print(posted.stderr)
+              print(
+                  "::warning::Could not post the reviewer session record"
+                  f" comment to pull request #{pr_number}. The review itself"
+                  " is unaffected; the run ledger simply has no session row"
+                  " for it."
+              )
