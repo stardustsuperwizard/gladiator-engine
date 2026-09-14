@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="Fighter" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://rules/fighters/does_not_exist.gd" id="1_missing"]
+
+[resource]
+script = ExtResource("1_missing")
