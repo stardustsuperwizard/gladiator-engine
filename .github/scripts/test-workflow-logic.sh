@@ -3282,8 +3282,15 @@ BASE_ENV = {
 }
 
 
-def run_record_step(path, name, overrides=None, exit_code="0"):
-    """Run one record step as the workflow runs it, in its own scratch."""
+def run_record_step(
+    path, name, overrides=None, exit_code="0", runner_temp=None
+):
+    """Run one record step as the workflow runs it, in its own scratch.
+
+    `runner_temp` overrides the scratch the step sees, for the multi-session
+    simulation in check 7: three steps of one job share one $RUNNER_TEMP, and
+    that sharing is the whole thing being tested.
+    """
 
     case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
     source = case / "step.py"
@@ -3298,7 +3305,7 @@ def run_record_step(path, name, overrides=None, exit_code="0"):
     env.update(BASE_ENV)
     env.update(overrides or {})
     env.update({
-        "RUNNER_TEMP": str(case),
+        "RUNNER_TEMP": str(runner_temp or case),
         "GH_STUB_CAPTURE": str(capture),
         "GH_STUB_CAPTURE_PATH": str(capture_path),
         "GH_STUB_EXIT": exit_code,
@@ -3441,6 +3448,170 @@ check(
     f"ledger_row.py reads the posted bodies as {len(bodies)} session row(s),"
     " one per comment, with matching field values",
     f"exit {result.returncode}, rows={rows}, stderr={result.stderr!r}",
+)
+
+# -- 7: three sessions in one job, each record reading its own outcome. ------
+#
+# The check above injects OUTCOME_FILE per case, so it cannot see the thing
+# that actually went wrong in #307's first cycle: `run-agent-session`'s
+# `outcome-file` output is a fixed per-job path, all three of
+# agent-02-implement.yml's sessions write it, and all three record steps run at
+# the *end* of the job -- so each of them read whichever session happened to
+# run last, under its own session's name.
+#
+# So this runs the job's shape rather than a step's: the shared outcome slot is
+# rewritten before each session's snapshot step, exactly as the classifier
+# rewrites it, and only then are the three record steps run. Each must still
+# report its own session's verdict. `reason` values are from the vocabulary
+# docs/RUN_LEDGER.md pins for the `outcome` column, and all three differ, so a
+# record reading the wrong file cannot accidentally pass.
+JOB = ".github/workflows/agent-02-implement.yml"
+
+SESSIONS = [
+    ("Snapshot Implementer Session Outcome",
+     "Record Implementer Session", "completed"),
+    ("Snapshot Pre-PR Reviewer Session Outcome",
+     "Record Pre-PR Reviewer Session", "budget_exhausted"),
+    ("Snapshot Pre-PR Fixer Session Outcome",
+     "Record Pre-PR Fixer Session", "session_error"),
+]
+
+
+def outcome_file_expr(path, name):
+    """The OUTCOME_FILE expression one record step is wired to read."""
+
+    for step_name, block in step_blocks(path):
+        if step_name == name:
+            # `.+?` rather than `\S+`: the value is a `${{ runner.temp }}`
+            # expression, and those carry spaces inside the braces.
+            m = re.search(r"^\s*OUTCOME_FILE:\s*(.+?)\s*$", block, re.M)
+            return m.group(1) if m else None
+
+    return None
+
+
+def run_bash_step(path, name, runner_temp):
+    """Run one `shell: bash` step against a given $RUNNER_TEMP."""
+
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    source = case / "step.sh"
+    source.write_text(
+        wf.step_source(path, name, shell="bash"), encoding="utf-8"
+    )
+
+    env = dict(os.environ)
+    env["RUNNER_TEMP"] = str(runner_temp)
+
+    return subprocess.run(
+        ["bash", str(source)],
+        capture_output=True, text=True, cwd=str(case), env=env,
+    )
+
+
+exprs = {name: outcome_file_expr(JOB, name) for _, name, _ in SESSIONS}
+
+check(
+    all(exprs.values()) and len(set(exprs.values())) == len(exprs),
+    f"{JOB}: its three record steps read three distinct outcome paths",
+    f"{JOB}: record steps read {exprs!r} -- two record steps resolving to one"
+    f" path at the end of the job means one of them reports the other"
+    f" session's verdict.",
+)
+
+
+def simulate_job(sessions):
+    """Run the job's sessions in order, then all of its record steps.
+
+    `sessions` is (snapshot step, record step, reason or None); None means that
+    session failed before its classifier wrote anything, which is the path
+    where a stale slot would be read as this session's own verdict. Returns
+    {record step: outcome it reported}.
+    """
+
+    sim = pathlib.Path(tempfile.mkdtemp(dir=part_dir, prefix="job."))
+    slot = sim / "agent-outcome.json"
+
+    for snapshot_name, _, reason in sessions:
+        if reason is not None:
+            # What the session's classifier does: overwrite the one slot.
+            slot.write_text(
+                json.dumps({
+                    "vendor": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "reason": reason,
+                    "headline": reason,
+                    "assistant_text_chars": 10,
+                }),
+                encoding="utf-8",
+            )
+
+        snapped = run_bash_step(JOB, snapshot_name, sim)
+        check(
+            snapped.returncode == 0,
+            f"{JOB}: `{snapshot_name}` runs clean",
+            f"{JOB}: `{snapshot_name}` exited {snapped.returncode}:"
+            f" stdout={snapped.stdout!r}, stderr={snapped.stderr!r}",
+        )
+
+    reported = {}
+
+    for _, record_name, _ in sessions:
+        resolved = (exprs[record_name] or "").replace(
+            "${{ runner.temp }}", str(sim)
+        )
+        result, body, _, _ = run_record_step(
+            JOB, record_name,
+            overrides={"OUTCOME_FILE": resolved}, runner_temp=sim,
+        )
+
+        if result.returncode != 0 or body is None:
+            check(
+                False,
+                "",
+                f"{JOB}: `{record_name}` posted nothing in the multi-session"
+                f" simulation (exit {result.returncode}):"
+                f" stderr={result.stderr!r}",
+            )
+            continue
+
+        reported[record_name] = json.loads(
+            body.strip("\n").splitlines()[1]
+        ).get("outcome")
+
+    return reported
+
+
+reported = simulate_job(SESSIONS)
+expected = {name: reason for _, name, reason in SESSIONS}
+
+check(
+    reported == expected,
+    f"{JOB}: after three sessions share one outcome slot, each record still"
+    f" reports its own session's verdict",
+    f"{JOB}: records reported {reported!r}, expected {expected!r} -- a record"
+    f" carrying another session's outcome is the epic's central field silently"
+    f" wrong, and nothing downstream of .metrics/runs.csv can detect it.",
+)
+
+# -- 8: a session that never classified reports nothing, not its predecessor's.
+#
+# The corollary of check 7, and why the snapshot moves the file out of the
+# shared slot instead of copying it: a session that died before its classifier
+# ran leaves the previous session's verdict sitting in the slot, and "" is the
+# contracted value for an outcome this job does not know.
+stalled = [
+    (SESSIONS[0][0], SESSIONS[0][1], "completed"),
+    (SESSIONS[1][0], SESSIONS[1][1], None),
+]
+reported = simulate_job(stalled)
+
+check(
+    reported.get(SESSIONS[0][1]) == "completed"
+    and reported.get(SESSIONS[1][1]) == "",
+    f"{JOB}: a session that left no outcome file records an empty outcome"
+    f" rather than the previous session's",
+    f"{JOB}: records reported {reported!r}, expected the implementer's"
+    f" `completed` and an empty reviewer outcome.",
 )
 
 sys.exit(1 if failures else 0)

@@ -858,6 +858,52 @@ jobs:
           capability: write
           step-label: "Executing"
 
+      # `run-agent-session`'s `outcome-file` is a fixed path --
+      # `$RUNNER_TEMP/agent-outcome.json` -- and $RUNNER_TEMP is per-job, not
+      # per-step. This job runs three sessions, so all three write that one
+      # file and each write overwrites the last. A record step at the end of
+      # the job reading `steps.<session>.outputs.outcome-file` therefore reads
+      # whichever session ran *last*, whatever session it names.
+      #
+      # So each session's outcome is taken out of that single slot here, while
+      # it is still that session's, and the matching record step reads the
+      # snapshot instead. `mv` rather than `cp` on purpose: the slot is a
+      # one-message mailbox, and leaving the message in it is what lets a
+      # later session that failed before its classifier ran report this
+      # session's verdict as its own. The only other reader of the slot is
+      # "Extract Pre-PR Review Verdict", which is why the reviewer's snapshot
+      # sits just below that step rather than immediately under its session.
+      #
+      # `always()`, scoped to the session having run, so a session that failed
+      # or ran out of budget still has its verdict snapshotted -- that is
+      # exactly the record worth keeping. `continue-on-error` because this
+      # step exists only to observe: a snapshot that cannot be taken costs a
+      # ledger field, and must not cost the implementation.
+      - name: Snapshot Implementer Session Outcome
+        if: >-
+          always() &&
+          steps.exec-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC="$RUNNER_TEMP/agent-outcome.json"
+          DEST="$RUNNER_TEMP/session-outcome-implementer.json"
+
+          # Never leave a previous run's snapshot behind to be read as this
+          # session's. A re-run reuses $RUNNER_TEMP within the same job.
+          rm -f "$DEST"
+
+          if [ -f "$SRC" ]; then
+            mv "$SRC" "$DEST"
+            echo "Implementer session outcome snapshotted to $DEST."
+          else
+            echo "::warning::The implementer session left no classifier" \
+                 "outcome file, so its session record reports an empty" \
+                 "outcome rather than another session's."
+          fi
+
       # Safety net for a session that made real changes but stopped short
       # of running `git commit` itself (for example it ran out of budget,
       # or simply forgot the hard rule above). Without this, that work is
@@ -1344,6 +1390,35 @@ jobs:
           assistant-text-file: ${{ steps.review-session.outputs.assistant-text-file }}
           outcome-file: ${{ steps.review-session.outputs.outcome-file }}
 
+      # See "Snapshot Implementer Session Outcome" for why this exists. It
+      # sits *below* "Extract Pre-PR Review Verdict" rather than immediately
+      # under its own session because that step is the other reader of the
+      # shared outcome slot, and moving the file out from under it would cost
+      # this workflow its pre-PR verdict. Nothing between the two sessions
+      # reads the slot after this point.
+      - name: Snapshot Pre-PR Reviewer Session Outcome
+        if: >-
+          always() &&
+          steps.review-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC="$RUNNER_TEMP/agent-outcome.json"
+          DEST="$RUNNER_TEMP/session-outcome-reviewer.json"
+
+          rm -f "$DEST"
+
+          if [ -f "$SRC" ]; then
+            mv "$SRC" "$DEST"
+            echo "Pre-PR reviewer session outcome snapshotted to $DEST."
+          else
+            echo "::warning::The pre-PR review session left no classifier" \
+                 "outcome file, so its session record reports an empty" \
+                 "outcome rather than another session's."
+          fi
+
       - name: Evaluate Pre-PR Review
         if: steps.prep.outcome == 'success'
         id: review-eval
@@ -1406,6 +1481,34 @@ jobs:
           max-ai-credits: ${{ env.FIXER_MAX_AI_CREDITS }}
           capability: write
           step-label: "Fixing (pre-PR)"
+
+      # See "Snapshot Implementer Session Outcome" for why this exists. The
+      # last of the job's three sessions is the one a static outcome path
+      # happened to report correctly; it is snapshotted anyway, so that all
+      # three records read the same kind of path and adding a fourth session
+      # below cannot quietly break this one.
+      - name: Snapshot Pre-PR Fixer Session Outcome
+        if: >-
+          always() &&
+          steps.fix-session.outcome != 'skipped'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SRC="$RUNNER_TEMP/agent-outcome.json"
+          DEST="$RUNNER_TEMP/session-outcome-fixer.json"
+
+          rm -f "$DEST"
+
+          if [ -f "$SRC" ]; then
+            mv "$SRC" "$DEST"
+            echo "Pre-PR fixer session outcome snapshotted to $DEST."
+          else
+            echo "::warning::The pre-PR fix session left no classifier" \
+                 "outcome file, so its session record reports an empty" \
+                 "outcome rather than another session's."
+          fi
 
       # A single bounded pass, exactly like agent-05-fix.yml: this either
       # leaves a clean, validated fix commit on top of IMPL_SHA and pushes
@@ -2187,7 +2290,13 @@ jobs:
           VENDOR: ${{ steps.exec-session.outputs.resolved-vendor }}
           MODELS: ${{ steps.tier.outputs.models }}
           MODEL_RESOLVED: ${{ steps.exec-session.outputs.resolved-model }}
-          OUTCOME_FILE: ${{ steps.exec-session.outputs.outcome-file }}
+          # The snapshot taken immediately after the session, NOT
+          # `steps.exec-session.outputs.outcome-file`: that output is a fixed
+          # per-job path this job's three sessions all write, so read from
+          # here -- at the end of the job -- it holds the last session's
+          # verdict under every session's name. See "Snapshot Implementer
+          # Session Outcome".
+          OUTCOME_FILE: ${{ runner.temp }}/session-outcome-implementer.json
           DURATION_SECONDS: ${{ steps.exec-session.outputs.duration-seconds }}
           RUN_URL: >-
             ${{ github.server_url }}/${{ github.repository
@@ -2291,7 +2400,8 @@ jobs:
           VENDOR: ${{ steps.review-session.outputs.resolved-vendor }}
           MODELS: ${{ steps.route.outputs.reviewer_models }}
           MODEL_RESOLVED: ${{ steps.review-session.outputs.resolved-model }}
-          OUTCOME_FILE: ${{ steps.review-session.outputs.outcome-file }}
+          # This session's own snapshot -- see "Record Implementer Session".
+          OUTCOME_FILE: ${{ runner.temp }}/session-outcome-reviewer.json
           DURATION_SECONDS: ${{ steps.review-session.outputs.duration-seconds }}
           RUN_URL: >-
             ${{ github.server_url }}/${{ github.repository
@@ -2393,7 +2503,8 @@ jobs:
           VENDOR: ${{ steps.fix-session.outputs.resolved-vendor }}
           MODELS: ${{ steps.route.outputs.fixer_models }}
           MODEL_RESOLVED: ${{ steps.fix-session.outputs.resolved-model }}
-          OUTCOME_FILE: ${{ steps.fix-session.outputs.outcome-file }}
+          # This session's own snapshot -- see "Record Implementer Session".
+          OUTCOME_FILE: ${{ runner.temp }}/session-outcome-fixer.json
           DURATION_SECONDS: ${{ steps.fix-session.outputs.duration-seconds }}
           RUN_URL: >-
             ${{ github.server_url }}/${{ github.repository
