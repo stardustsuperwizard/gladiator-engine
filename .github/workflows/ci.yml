@@ -415,6 +415,84 @@ jobs:
           # exists to remove.
           if-no-files-found: error
 
+  # Runs the artifact the job above published, headless, and requires it to
+  # reach a known end state (#220). An export that produces a file proves the
+  # file exists; only running it proves the game still plays.
+  #
+  # Sequenced behind `export` for the obvious reason -- there is nothing to
+  # download until it has run -- and gated exactly as `export` and `godot` are,
+  # so a docs-only pull request skips it and `ci` counts that as passing.
+  #
+  # Deliberately NOT a second build. There is no `setup-godot` step here, no
+  # export step, and no engine on this runner at all: the point of the stage is
+  # that the bytes somebody could download are the bytes that were run.
+  smoke:
+    name: Godot Smoke Run
+    needs: [changes, godot, export]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.godot == 'true' }}
+    runs-on: ubuntu-latest
+    # Backstop only. The script's own SMOKE_TIMEOUT_SECONDS cap is what
+    # actually bounds the run and reports a timeout as a diagnosed failure;
+    # this catches a runner wedged somewhere outside it.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # For the script, and nothing else. No engine, no project import.
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Character-for-character the name the `export` job uploads under,
+      # including the same head-SHA fallback -- a download naming anything
+      # else finds no artifact and fails the stage for a reason that has
+      # nothing to do with the build.
+      - name: Download Linux Build
+        uses: actions/download-artifact@v4
+        with:
+          name: godot-linux-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/smoke/build
+
+      # The executable bit does not survive the artifact round trip, so the
+      # downloaded binary is not runnable until this step. Nothing about the
+      # file's contents changes.
+      - name: Make The Build Executable
+        shell: bash
+        env:
+          SMOKE_EXECUTABLE: ${{ runner.temp }}/smoke/build/gladiator-engine.x86_64
+        run: |
+          set -euo pipefail
+
+          chmod +x "$SMOKE_EXECUTABLE"
+
+      # Every scrap of smoke logic lives in the script -- the marker check and
+      # the hard timeout both -- so a local run and this job mean the same
+      # thing. In particular the script already prints the captured output and
+      # the paths of the files it wrote on each of its failure paths, so this
+      # step deliberately carries no second copy of that reporting.
+      - name: Run The Smoke Match
+        shell: bash
+        env:
+          SMOKE_EXECUTABLE: ${{ runner.temp }}/smoke/build/gladiator-engine.x86_64
+          SMOKE_LOG_DIR: ${{ runner.temp }}/smoke/logs
+        run: |
+          set -euo pipefail
+
+          .github/scripts/smoke-godot.sh "$SMOKE_EXECUTABLE"
+
+      # Only on failure: a green run's logs say nothing that the step log does
+      # not already carry, and a red one is exactly when somebody needs the
+      # engine's own log rather than the tail of a killed pipe.
+      - name: Upload Smoke Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/smoke/logs
+          # `warn`, not `error`: this step runs because something already
+          # failed, and turning a missing log directory into a second failure
+          # would only bury the first one.
+          if-no-files-found: warn
+
   # The three control-plane jobs below (`workflow-logic`, `issue-deps`,
   # `actionlint`) run the checks control-plane-tests.yml added because,
   # before it existed, nothing did. `.github/scripts/test-issue-dependencies.sh`
@@ -712,7 +790,8 @@ jobs:
   ci:
     name: ci
     needs:
-      [changes, godot, export, workflow-logic, issue-deps, actionlint, test-ratchet]
+      [changes, godot, export, smoke, workflow-logic, issue-deps, actionlint,
+       test-ratchet]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
