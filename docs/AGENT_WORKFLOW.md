@@ -1303,8 +1303,11 @@ verification job that has to be kept in sync by hand every time a job is
 added or removed.
 
 It reports on *every* pull request, always, including a docs-only one that
-skips all four of `ci.yml`'s parallel jobs (`godot`, `workflow-logic`,
-`issue-deps`, `actionlint`). That is deliberate: those jobs are gated by each
+skips all five of `ci.yml`'s verification jobs (`godot`, `export`,
+`workflow-logic`, `issue-deps`, `actionlint`). Four of those five run in
+parallel; `export` is the one exception, sequenced behind `godot` so that a
+project whose suites are red never spends a runner producing a build nobody
+should download. That is deliberate: those jobs are gated by each
 job's own `if:`, decided once by the `changes` job, rather than by the
 workflow's trigger. A job skipped by `if:` still reports — as `skipped`,
 which the `ci` job counts as passing — where a workflow skipped by a
@@ -2101,9 +2104,10 @@ Six things about that loop are decisions rather than obvious consequences:
   `gdscript-lint.yml` by `paths` at its own trigger, unchanged — so there is
   a `ci` check to read whatever the PR touched, and what varies is how many
   of its jobs ran rather than whether anything reports. A prose-only PR
-  skips all four: nothing it changed falls outside the `changes` job's Godot
+  skips all five: nothing it changed falls outside the `changes` job's Godot
   deny-list, and nothing falls inside its control-plane allow-list. A
-  control-plane PR skips only `godot`; `workflow-logic`, `issue-deps` and
+  control-plane PR skips `godot` and `export`, which read the same gate;
+  `workflow-logic`, `issue-deps` and
   `actionlint` all run, because `.github/workflows/**`, `.github/actions/**`,
   `.github/scripts/**`, `.github/agents/**`, `.claude/agents/**` and
   `.claude/commands/**` are precisely what that allow-list covers. Either
@@ -2403,7 +2407,7 @@ are custom agents and MCP servers.
 | `.github/workflows/agent-05-fix.yml` | Applies a bounded correction against the latest `FIX` verdict, on `agent:fixer:copilot`; refuses fork PRs and diffs it cannot push before spending a session; ends with an independent validation job on the pushed SHA |
 | `.github/workflows/issue-dependencies.yml` | Turns an Issue's `## Dependencies` table into GitHub dependencies, on the `blocker` label or a dispatch; `sweep` rebuilds the whole chain |
 | `.github/workflows/issue-local-session.yml` | Derives an Issue's `human-credentials` label from its `## Files or Subsystems Expected to Change` section by calling `sync-human-credentials-label.py`, on Issue open, on Issue edit, or on a dispatch; `sweep` re-derives the whole open backlog |
-| `.github/workflows/ci.yml` | The one `pull_request`-triggered workflow (also `push` to `main` and a manual dispatch); its `changes` job decides which gates apply, four jobs run in parallel behind that job's `if:` (`godot`, `workflow-logic`, `issue-deps`, `actionlint`), and the `ci` job aggregates all four into the single required status check |
+| `.github/workflows/ci.yml` | The one `pull_request`-triggered workflow (also `push` to `main` and a manual dispatch); its `changes` job decides which gates apply, five verification jobs run behind that job's `if:` (`godot`, `workflow-logic`, `issue-deps`, `actionlint` in parallel, plus `export` sequenced behind `godot`), and the `ci` job aggregates all five into the single required status check |
 | `.github/workflows/godot-validation.yml` | The one reusable validation job (`workflow_call`); called by `ci.yml`'s `godot` job, `agent-02-implement.yml`, and `agent-05-fix.yml` |
 | `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt |
 | `.github/actions/build-fix-request` | Shared by `agent-05-fix.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the fixer prompt |

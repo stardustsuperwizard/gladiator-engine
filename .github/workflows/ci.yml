@@ -273,6 +273,95 @@ jobs:
     permissions:
       contents: read
 
+  # Builds the game once on the pinned engine and publishes it as a
+  # downloadable artifact (#217).
+  #
+  # Sequenced behind `godot` rather than run beside it, which is the one
+  # place this workflow deliberately stops fanning out: exporting a project
+  # whose suites are red burns a runner to produce a build nobody should
+  # download. The `!cancelled() && !failure()` idiom the other four use
+  # already means "skip me if an upstream need failed", so the extra `needs:`
+  # entry is all the sequencing this takes.
+  #
+  # Same `changes.outputs.godot` gate as the `godot` job, for the same
+  # reason: a docs-only pull request skips it, reports `skipped`, and `ci`
+  # counts that as passing.
+  export:
+    name: Godot Export
+    needs: [changes, godot]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.godot == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # No `godot-version:` here, deliberately. The pin lives in exactly one
+      # place -- `setup-godot`'s input default -- and Part 7 of
+      # test-workflow-logic.sh counts a new literal as a new pin site even
+      # when it happens to match today's value.
+      - name: Setup Godot
+        uses: ./.github/actions/setup-godot
+        with:
+          export-templates: 'true'
+
+      # Every scrap of export logic lives in the script, so a local run and
+      # this job mean the same thing (#269). In particular the script already
+      # prints the full export log on each of its failure paths -- non-zero
+      # exit, an error marker logged on an exit-0 run, a missing or empty
+      # output file -- so this step deliberately carries no second copy of
+      # that reporting.
+      #
+      # Output goes under $RUNNER_TEMP, never into the checkout: a build
+      # swept into a commit by some future "Commit Leftover Changes" step is
+      # #84 repeating.
+      - name: Export Linux Build
+        shell: bash
+        env:
+          BUILD_DIR: ${{ runner.temp }}/build/linux
+        run: |
+          set -euo pipefail
+
+          .github/scripts/export-godot.sh \
+            "$GITHUB_WORKSPACE" \
+            "$BUILD_DIR/gladiator-engine.x86_64"
+
+      # The rule above, asserted rather than trusted. Godot's import pass
+      # writes `.godot/`, which is ignored, but a preset or script change
+      # that starts writing a tracked path should fail here and not six
+      # months later inside somebody's pull request.
+      - name: Confirm The Checkout Is Clean
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dirty="$(git status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo "::error::the export wrote into the checkout"
+            echo "$dirty"
+            exit 1
+          fi
+
+          echo "Checkout clean after export."
+
+      - name: Upload Linux Build
+        uses: actions/upload-artifact@v4
+        with:
+          # The HEAD SHA, not `github.sha`. On a `pull_request` run
+          # `github.sha` is the ephemeral merge commit, which nobody can
+          # check out, so an artifact named after it cannot be correlated
+          # with any commit that exists. `github.event.pull_request.head.sha`
+          # is empty on the `push` and `workflow_dispatch` triggers, where
+          # `github.sha` is already the real commit.
+          name: godot-linux-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/build/linux/gladiator-engine.x86_64
+            ${{ runner.temp }}/build/linux/gladiator-engine.pck
+          # A silently empty artifact is the failure mode this whole gate
+          # exists to remove.
+          if-no-files-found: error
+
   # The three control-plane jobs below (`workflow-logic`, `issue-deps`,
   # `actionlint`) run the checks control-plane-tests.yml added because,
   # before it existed, nothing did. `.github/scripts/test-issue-dependencies.sh`
@@ -393,13 +482,13 @@ jobs:
   # -- one required check, however many jobs run behind it.
   #
   # `if: always()` is what makes this run whatever happened upstream,
-  # including when `godot` or one of the other three was skipped by its own
+  # including when `godot` or one of the other four was skipped by its own
   # `if:`. `success` and `skipped` both count as passing; anything else is
   # named by job id in the log, so a failure here says which job failed
   # rather than only that something did.
   ci:
     name: ci
-    needs: [changes, godot, workflow-logic, issue-deps, actionlint]
+    needs: [changes, godot, export, workflow-logic, issue-deps, actionlint]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
