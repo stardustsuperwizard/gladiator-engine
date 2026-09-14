@@ -1697,6 +1697,55 @@ check(
     "the human-authored comment was dropped along with the agent one",
 )
 
+# -- 4b: claude-planner comments are dropped too (widened filter). -----------
+CLAUDE_SENTINEL = "SENTINEL-CLAUDE-9f2e1a"
+claude_bundle = write_bundle(
+    "claude-marker.json",
+    {
+        "epic": {
+            "number": 9003,
+            "title": "[epic] A bundle carrying a claude-planner marker",
+            "body": "## Goal\n\nSomething the owner wants.\n",
+            "comments": [
+                {
+                    "author": "Claude",
+                    "created_at": "2026-09-13T00:00:00Z",
+                    "body": (
+                        "<!-- claude-planner-complete -->\n\n"
+                        f"{CLAUDE_SENTINEL}\n"
+                    ),
+                },
+            ],
+        },
+        "tasks": [
+            {
+                "number": 9004,
+                "title": "[task] [9003] Do the one thing",
+                "url": "https://example.invalid/9004",
+                "body": (
+                    "## Scope\n\nDo it.\n\n"
+                    "## Files or Subsystems Expected to Change\n\n"
+                    "- `rules/actions/pass_action.gd`\n\n"
+                    "## Dependencies\n\n"
+                    "| Relationship | Issue | Why |\n"
+                    "| --- | --- | --- |\n"
+                    "| None | — | — |\n"
+                ),
+            }
+        ],
+    },
+)
+claude_out = part_dir / "claude-marker.md"
+result = run(claude_bundle, claude_out)
+claude_text = (
+    claude_out.read_text(encoding="utf-8") if claude_out.is_file() else ""
+)
+check(
+    result.returncode == 0 and CLAUDE_SENTINEL not in claude_text,
+    "a comment opening with `<!-- claude-` marker is dropped entirely",
+    "a claude-planner comment reached the assembled request",
+)
+
 # -- 5: a plan with no tasks is refused, by epic number, writing nothing. ----
 empty_bundle = write_bundle(
     "no-tasks.json",
@@ -1759,6 +1808,128 @@ check(
     f"expected a refusal naming #9203 and no output file; exit"
     f" {result.returncode}, file exists={null_out.exists()},"
     f" stderr={result.stderr.strip()!r}",
+)
+
+# -- 7: optional inventory key in bundle produces matching inventory. --------
+pinned_inventory = [
+    "rules/actions/attack_action.gd",
+    "rules/actions/charge_action.gd",
+    "rules/actions/move_action.gd",
+    "tests/round_driver_test.gd",
+]
+pinned_bundle = write_bundle(
+    "pinned-inventory.json",
+    {
+        "epic": {
+            "number": 9301,
+            "title": "[epic] A bundle with a pinned inventory",
+            "body": "## Goal\n\nTest pinned inventory.\n",
+            "comments": [],
+        },
+        "tasks": [
+            {
+                "number": 9302,
+                "title": "[task] [9301] Do the one thing",
+                "url": "https://example.invalid/9302",
+                "body": (
+                    "## Scope\n\nDo it.\n\n"
+                    "## Files or Subsystems Expected to Change\n\n"
+                    "- `rules/actions/pass_action.gd`\n\n"
+                    "## Dependencies\n\n"
+                    "| Relationship | Issue | Why |\n"
+                    "| --- | --- | --- |\n"
+                    "| None | — | — |\n"
+                ),
+            }
+        ],
+        "inventory": pinned_inventory,
+    },
+)
+pinned_out = part_dir / "pinned-inventory.md"
+result = run(pinned_bundle, pinned_out)
+pinned_text = (
+    pinned_out.read_text(encoding="utf-8") if pinned_out.is_file() else ""
+)
+
+# Check that the inventory section contains exactly the pinned files
+inventory_section = section(pinned_text, "# REPOSITORY FILE INVENTORY")
+pinned_present = all(
+    path in inventory_section for path in pinned_inventory
+)
+pinned_complete = inventory_section.count("- ") == len(pinned_inventory)
+
+check(
+    result.returncode == 0 and pinned_present and pinned_complete,
+    "a bundle with inventory key produces a request whose inventory matches"
+    " it exactly",
+    f"inventory section mismatch: present={pinned_present},"
+    f" complete={pinned_complete}",
+)
+
+# Verify a bundle with no `inventory` key behaves exactly as today: its
+# inventory equals what a live walk of REPO_ROOT gives, not merely "more
+# entries than a four-item pinned list". Import the script itself rather
+# than re-deriving SKIP_DIRS or the walk order by hand -- the same rule
+# check 8 states for a reviewer applies here to the test.
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "build_plan_review_request", script
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+expected_live_files = module.Tree(module.REPO_ROOT).files
+
+live_walk_bundle = write_bundle(
+    "live-walk.json",
+    {
+        "epic": {
+            "number": 9301,
+            "title": "[epic] A bundle without inventory (walks live tree)",
+            "body": "## Goal\n\nTest live tree walk.\n",
+            "comments": [],
+        },
+        "tasks": [
+            {
+                "number": 9302,
+                "title": "[task] [9301] Do the one thing",
+                "url": "https://example.invalid/9302",
+                "body": (
+                    "## Scope\n\nDo it.\n\n"
+                    "## Files or Subsystems Expected to Change\n\n"
+                    "- `rules/actions/pass_action.gd`\n\n"
+                    "## Dependencies\n\n"
+                    "| Relationship | Issue | Why |\n"
+                    "| --- | --- | --- |\n"
+                    "| None | — | — |\n"
+                ),
+            }
+        ],
+    },
+)
+live_out = part_dir / "live-walk.md"
+result = run(live_walk_bundle, live_out)
+live_text = (
+    live_out.read_text(encoding="utf-8") if live_out.is_file() else ""
+)
+
+# A bundle without `inventory` must produce the same inventory a live walk
+# of REPO_ROOT gives -- exact equality, not a cardinality check that would
+# pass on almost any regression in the walk path.
+live_inventory_section = section(live_text, "# REPOSITORY FILE INVENTORY")
+rendered_live_files = {
+    line[len("- "):]
+    for line in live_inventory_section.splitlines()
+    if line.startswith("- ")
+}
+
+check(
+    result.returncode == 0 and rendered_live_files == expected_live_files,
+    "a bundle without inventory walks the live tree and matches"
+    " Tree(REPO_ROOT) exactly",
+    "live tree walk did not match Tree(REPO_ROOT): "
+    f"missing={sorted(expected_live_files - rendered_live_files)[:5]},"
+    f" extra={sorted(rendered_live_files - expected_live_files)[:5]}",
 )
 
 sys.exit(1 if failures else 0)

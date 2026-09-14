@@ -1901,20 +1901,33 @@ not enough to gate on); until a dispatch path actually reads it, treat a
 plan-review comment as no more binding than any other human-readable comment
 on an epic.
 
-#### Validation record — 2026-09-13
+#### Validation record — 2026-09-14
 
-The role was run against the three fixtures under `.github/tests/plan-review/`
-and against a failure bundle, on `claude-opus-5[1m]`. Recorded here because a
-described run is a self-report, and this repository's rule is that no stage
-trusts the preceding stage's account of itself. **No verdict comment was
-posted on any real epic during this validation**, no label was applied, and no
-Issue was created: the fixtures were the input and this record is the output.
+The role was run against the three fixtures under `.github/tests/plan-review/`,
+each pinned to the tree at the commit its own plan actually saw:
+`719d949^` (2026-09-11) for `sound-plan.json` — the commit immediately
+before #206's PR merged, and before any of #204–#208 landed — and `819a6e4`
+(2026-09-13) for `226-before-correction.json` and `227-after-retarget.json`.
+Each inventory was captured with `git ls-tree -r --name-only` at that commit,
+which already omits `.git` and never carries anything else `SKIP_DIRS`
+excludes (`.godot`, `__pycache__`, `.import`, `node_modules`, `.venv` are
+never committed), so no separate filtering pass was needed. Recorded here
+because a described run is a self-report, and this repository's rule is that
+no stage trusts the preceding stage's account of itself. **No verdict comment
+was posted on any real epic during this validation**, no label was applied,
+and no Issue was created: the fixtures were the input and this record is the
+output.
+
+The assembler now drops machine-authored comments opening with both
+`<!-- agent-` and `<!-- claude-` markers, making the planner's comment
+filtering deterministic in the assembler rather than resting on reviewer
+discipline.
 
 | Case | Fixture | Verdict line | The finding the case exists to prove |
 | --- | --- | --- | --- |
-| 1 | `226-before-correction.json` | `VERDICT: PLAN REJECT` | Check 1. `human-credentials` already is the label the epic asks for, declared at `bootstrap-labels.sh:62` and derived — not judged — at `agent-01-planner.yml:1558`, so the plan builds what exists. |
+| 1 | `226-before-correction.json` | `VERDICT: PLAN REJECT` | Check 1. `human-credentials` already is the label the epic asks for, declared at `bootstrap-labels.sh:62` and derived — not judged — at `agent-01-planner.yml:1558`, so the plan builds what exists. Pinned inventory ensures the verdict is independent of what the working tree contains today. |
 | 2 | `227-after-retarget.json` | `VERDICT: PLAN FIX` | Check 8. `sync-local-session-label.py` is named after `needs-local-session`, a label the repository does not have; the registry declares `human-credentials` and no such label anywhere. A stale name that survived the retarget. |
-| 3 | `sound-plan.json` | `VERDICT: PLAN PASS` | The negative control. `## Findings` read `None` and `## Required Before Dispatch` read `Nothing` — a reviewer that manufactures a finding to look useful fails here. |
+| 3 | `sound-plan.json` | `VERDICT: PLAN PASS` | The negative control, now pinned to `719d949^` so none of #204–#208's files are in the inventory. Check 1 finds nothing already built. `# UNRESOLVED ARTIFACT NAMES` surfaces six of the plan's own new test/script files that no sibling task happens to repeat by name (`scripts/hotseat_match.gd`, `tests/action_options_test.gd`, `tests/hex_layout_test.gd`, `tests/hotseat_match_test.gd`, `tests/hotseat_session_test.gd`, `tests/match_setup_test.gd`); every one of them cross-references to a `# DECLARED EXPECTED FILES` entry for that same task marked `FLAG: new`, so each is a file its own task creates, not one nobody's task creates or a stale name — check 8's own instruction to judge what it surfaces rather than re-derive it. `## Findings` read `None` and `## Required Before Dispatch` read `Nothing` — reached from the pinned inventory alone, without requiring `git log --diff-filter=A` reasoning. A reviewer that manufactures a finding to look useful fails here. |
 | 4 | two scratch bundles | *no verdict line; none produced* | The failure path. The assembler refused both, named the reason, and wrote no output file; nothing was posted, labelled or filed. |
 
 Case 4 was run twice, from `sound-plan.json` edited in a scratch directory —
@@ -1925,26 +1938,21 @@ body is null or absent. A task cannot be reviewed from its title alone.` Both
 exited 1 and left no file at `--out`, so there was no request to review and no
 verdict to post.
 
-**The captured request.** From the case 3 run, 1300 lines: it carries the epic
-body, all five sub-issue bodies in full, the dependency edges for each task,
-and a 290-file inventory across 36 directories. It carries no planner session
-transcript and no run log.
-
-It does carry the planner's plan comment, and that is a defect. The assembler
-drops a comment whose body opens with `<!-- agent-`, which caught the rollup's
-`<!-- agent-rollup-complete -->` notice; the planner's comment opens
-`<!-- claude-planner-complete -->` and does not match, so it survived into
-`# EPIC AMENDMENT COMMENTS` in all three runs. Widening the assembler's marker
-test is the real fix and is not this validation's to make. What was fixed is
-the contract prose, in both `.github/agents/07-plan-reviewer.agent.md` and
-`.claude/agents/plan-reviewer.md`, which claimed the assembler already dropped
-that comment: the reviewer is now told it does not, and told to skip a comment
-opening `<!-- claude-` or `<!-- agent-` itself and to record the skip in its
-check-3 evidence. All four verdicts above hold that wall by hand.
+**The captured requests.** Each of the three fixtures now carries an `inventory`
+key — a sorted list of repository-relative paths pinned to the commit each
+fixture's `_provenance` names, not to whatever the working tree holds today.
+The case 3 run produces 1235 lines: it carries the epic body, all five
+sub-issue bodies in full, the dependency edges for each task, and the
+257-file inventory pinned in the fixture (the tree at `719d949^`) across 34
+directories — 33 fewer files than the working tree, exactly #204–#208's own
+artifacts plus the plan-review subsystem and its fixtures, none of which
+existed yet at that commit. It carries no planner session transcript, no run
+log, and no machine-authored comments opening with either `<!-- agent-` or
+`<!-- claude-` — the assembler now filters both.
 
 **Re-run this record** after any change to the eight checks, the verdict
-vocabulary, or the assembler's comment filtering. A validation record that
-outlives the contract it validated is worse than none.
+vocabulary, the assembler's comment filtering, or the fixture inventories. A
+validation record that outlives the contract it validated is worse than none.
 
 ### Verifying the local planner's label transition by hand
 
