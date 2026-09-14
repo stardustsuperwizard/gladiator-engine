@@ -117,6 +117,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Hex Layout Test", "run": HexLayoutTest.run},
 	{"name": "Match Setup Test", "run": MatchSetupTest.run},
 	{"name": "Hotseat Match Test", "run": HotseatMatchTest.run},
+	{"name": "Smoke Match Driver Test", "run": SmokeMatchDriverTest.run},
 ]
 
 var _passes: Array[String] = []
@@ -127,6 +128,15 @@ func _ready() -> void:
 	# Only hijack the process when running headless validation. In the editor
 	# or a normal run this autoload does nothing.
 	if DisplayServer.get_name() != "headless":
+		return
+
+	# Yield the process to the scripted smoke run when it was asked for. With
+	# `--smoke` present, scripts/smoke_bootstrap.gd plays the main scene and
+	# sets the exit code, so this autoload must not run the guards, the suites
+	# or the quit(): its output would drown the one completion marker and its
+	# quit() would end the run before the match started. Every other path
+	# through this file is unchanged.
+	if SmokeMatchDriver.requested():
 		return
 
 	# Guard 1: Engine version floor

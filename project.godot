@@ -18,6 +18,7 @@ config/features=PackedStringArray("4.7")
 [autoload]
 
 TestBootstrap="*res://tests/test_bootstrap.gd"
+SmokeBootstrap="*res://scripts/smoke_bootstrap.gd"
 
 [editor_plugins]
 
