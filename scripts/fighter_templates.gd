@@ -106,11 +106,18 @@ func templates_by_fighter(state: GameState) -> Dictionary:
 	return result
 
 
-## Builds a `FighterTemplates` populated from every `.tres` file directly under
-## `directory_path` (default `DEFAULT_TEMPLATES_DIR`) that `load()`s as a
+## Builds a `FighterTemplates` populated from every resource file directly
+## under `directory_path` (default `DEFAULT_TEMPLATES_DIR`) that `load()`s as a
 ## `FighterTemplate` -- `construction_budget.tres`, which loads as a
 ## `ConstructionBudget`, is skipped. Not recursive: the authored directory is
 ## flat.
+##
+## Both the authored text form (`.tres`) and the binary form the export
+## pipeline converts it to (`.res`, per the `editor/export/
+## convert_text_resources_to_binary` project setting) are candidate resource
+## files. A `.tres.remap` sidecar the export writes alongside a converted
+## `.res` is metadata, not a resource -- it ends in neither `.tres` nor `.res`
+## and is never `load()`ed.
 ##
 ## An unreadable `directory_path` yields an empty, still-usable instance rather
 ## than `null` -- the same "nothing is repaired, nothing crashes" direction
@@ -125,7 +132,8 @@ static func from_directory(directory_path: String = DEFAULT_TEMPLATES_DIR) -> Fi
 	dir.list_dir_begin()
 	var file_name := dir.get_next()
 	while file_name != "":
-		if not dir.current_is_dir() and file_name.ends_with(".tres"):
+		var is_resource_file := file_name.ends_with(".tres") or file_name.ends_with(".res")
+		if not dir.current_is_dir() and is_resource_file:
 			var resource: Variant = load(directory_path.path_join(file_name))
 			if resource is FighterTemplate:
 				instance.register(resource)
