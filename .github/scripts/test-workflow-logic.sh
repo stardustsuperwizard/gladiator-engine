@@ -2746,6 +2746,321 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 14: ledger_row.py's field derivation (#296).
+#
+# The reader side of the run-ledger schema (docs/RUN_LEDGER.md), covered
+# end-to-end with fixture GitHub JSON and no network, no `gh`, and no merge.
+# ---------------------------------------------------------------------------
+
+part14 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import csv
+import io
+import json
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+script = pathlib.Path(repo_root) / ".github" / "scripts" / "ledger_row.py"
+case_dir = pathlib.Path(tempfile.mkdtemp(prefix="lr-case.", dir=work_dir))
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def session_record_body(**fields):
+    return "<!-- agent-session-record\n" + json.dumps(fields) + "\n-->"
+
+
+def run(pr, issue=None, run_url="https://example.invalid/ledger-run", n=[0]):
+    n[0] += 1
+    pr_path = case_dir / f"pr-{n[0]}.json"
+    pr_path.write_text(json.dumps(pr), encoding="utf-8")
+    args = [
+        sys.executable, str(script),
+        "--pr-json", str(pr_path),
+        "--run-url", run_url,
+    ]
+    if issue is not None:
+        issue_path = case_dir / f"issue-{n[0]}.json"
+        issue_path.write_text(json.dumps(issue), encoding="utf-8")
+        args += ["--issue-json", str(issue_path)]
+    return subprocess.run(args, capture_output=True, text=True)
+
+
+def rows_of(result):
+    return list(csv.reader(io.StringIO(result.stdout)))
+
+
+SESSION_A = dict(
+    role="implementer", vendor="anthropic",
+    model_requested="claude-sonnet-5", model_resolved="claude-sonnet-5",
+    outcome="completed", duration_seconds=120.5, fix_round=0,
+    run_url="https://example.invalid/run/1",
+)
+SESSION_B = dict(
+    role="reviewer", vendor="claude",
+    model_requested="claude-opus-5", model_resolved="claude-opus-5",
+    outcome="completed", duration_seconds=30, fix_round=0,
+    run_url="https://example.invalid/run/2",
+)
+
+# -- criterion 1: --help exits 0; the source has no third-party import and --
+#    no subprocess/urllib/requests/gh call site. Matches on imports and call
+#    sites, not on the bare word "gh" -- which appears legitimately inside
+#    two `help=` strings.
+help_result = subprocess.run(
+    [sys.executable, str(script), "--help"], capture_output=True, text=True,
+)
+source = script.read_text(encoding="utf-8")
+forbidden_import = re.search(
+    r"^\s*(?:import|from)\s+(subprocess|urllib|requests)\b", source, re.MULTILINE,
+)
+forbidden_call = re.search(r"\b(?:subprocess|urllib|requests)\.\w+\(", source)
+check(
+    help_result.returncode == 0
+    and forbidden_import is None
+    and forbidden_call is None,
+    "--help exits 0 and the source has no subprocess/urllib/requests import"
+    " or call site (a gh invocation can only happen through one of those)",
+    f"exit {help_result.returncode}, forbidden_import={forbidden_import},"
+    f" forbidden_call={forbidden_call}, stderr={help_result.stderr!r}",
+)
+
+# -- criterion 2: the full fixture -- merge row plus two ordered session ----
+#    rows.
+full_pr = {
+    "number": 300,
+    "mergedAt": "2026-09-14T19:15:37Z",
+    "body": "",
+    "closingIssuesReferences": [{"number": 123}],
+    "labels": [{"name": "review:pass"}],
+    "comments": [
+        {"body": "<!-- agent-fix-applied -->\nfirst fix"},
+        {"body": "<!-- agent-fix-applied -->\nsecond fix"},
+        {"body": session_record_body(**SESSION_A)},
+        {"body": session_record_body(**SESSION_B)},
+    ],
+}
+result = run(full_pr)
+rows = rows_of(result)
+check(
+    result.returncode == 0
+    and len(rows) == 3
+    and rows[0][1:4] == ["merge", "123", "300"]
+    and rows[0][9] == "2"
+    and rows[0][10] == "pass"
+    and rows[1][1] == "session"
+    and rows[1][4:8] == ["implementer", "anthropic", "claude-sonnet-5", "claude-sonnet-5"]
+    and rows[1][11] == "completed"
+    and rows[1][12] == "120.5"
+    and rows[2][1] == "session"
+    and rows[2][4:8] == ["reviewer", "claude", "claude-opus-5", "claude-opus-5"]
+    and rows[2][11] == "completed"
+    and rows[2][12] == "30",
+    "merge row plus two ordered session rows, fix_round=2, verdict=pass",
+    f"exit {result.returncode}, rows={rows}, stderr={result.stderr!r}",
+)
+
+# -- criteria 3/4: every row round-trips through csv.reader into exactly ----
+#    14 fields, a newline in a source value is stripped, and a comma+quote
+#    value survives intact.
+tricky_pr = {
+    "number": 301,
+    "mergedAt": "2026-09-14T19:15:37Z",
+    "body": "",
+    "comments": [{"body": session_record_body(
+        role="a,b\"c\r\nsecond line", vendor="v", model_requested="m",
+        model_resolved="m", outcome="completed", duration_seconds=1,
+        fix_round=0, run_url="u",
+    )}],
+}
+result = run(tricky_pr)
+rows = rows_of(result)
+check(
+    result.returncode == 0
+    and all(len(row) == 14 for row in rows)
+    and all("\n" not in field and "\r" not in field for row in rows for field in row)
+    and len(rows) == 2
+    and rows[1][4] == 'a,b"c second line',
+    "every row has 14 fields, no row break survives, comma+quote round-trips",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+# -- criterion 5: no session-record comments yields exactly one merge row. --
+result = run({
+    "number": 302, "mergedAt": "2026-09-14T19:15:37Z", "body": "", "comments": [],
+})
+rows = rows_of(result)
+check(
+    result.returncode == 0 and len(rows) == 1 and rows[0][1] == "merge",
+    "a pull request with no session-record comments yields exactly one merge row",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+# -- criterion 6: verdict falls back to the last review-verdict comment, ----
+#    then to empty.
+result = run({
+    "number": 303, "mergedAt": "2026-09-14T19:15:37Z", "body": "",
+    "comments": [
+        {"body": "<!-- agent-review-verdict -->\nVERDICT: FIX\nstale"},
+        {"body": "<!-- agent-review-verdict -->\nVERDICT: DESIGN AMBIGUITY\nlatest"},
+    ],
+})
+rows = rows_of(result)
+check(
+    result.returncode == 0 and rows[0][10] == "design-ambiguity",
+    "no review:* label falls back to the LAST agent-review-verdict comment",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+result = run({
+    "number": 304, "mergedAt": "2026-09-14T19:15:37Z", "body": "", "comments": [],
+})
+rows = rows_of(result)
+check(
+    result.returncode == 0 and rows[0][10] == "",
+    "neither a review:* label nor a verdict comment leaves verdict empty",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+# -- criterion 7: tier_label is the closed issue's model:* label suffix, ----
+#    empty without one or without --issue-json.
+result = run(
+    {"number": 305, "mergedAt": "2026-09-14T19:15:37Z", "body": "", "comments": []},
+    issue={"labels": [{"name": "model:sonnet"}]},
+)
+rows = rows_of(result)
+check(
+    result.returncode == 0 and rows[0][8] == "sonnet",
+    "tier_label is the model:* label's suffix",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+result = run(
+    {"number": 306, "mergedAt": "2026-09-14T19:15:37Z", "body": "", "comments": []},
+    issue={"labels": []},
+)
+rows = rows_of(result)
+check(
+    result.returncode == 0 and rows[0][8] == "",
+    "tier_label is empty when the issue carries no model:* label",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+result = run({
+    "number": 307, "mergedAt": "2026-09-14T19:15:37Z", "body": "", "comments": [],
+})
+rows = rows_of(result)
+check(
+    result.returncode == 0 and rows[0][8] == "",
+    "tier_label is empty when --issue-json was not supplied",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+# -- criterion 8: issue from closingIssuesReferences, then from a Closes #n -
+#    match in the body.
+result = run({
+    "number": 308, "mergedAt": "2026-09-14T19:15:37Z", "body": "Closes #999",
+    "closingIssuesReferences": [{"number": 123}], "comments": [],
+})
+rows = rows_of(result)
+check(
+    result.returncode == 0 and rows[0][2] == "123",
+    "issue prefers closingIssuesReferences[0].number over a Closes #n body match",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+result = run({
+    "number": 309, "mergedAt": "2026-09-14T19:15:37Z",
+    "body": "Fixes the bug.\nCloses #42\n", "comments": [],
+})
+rows = rows_of(result)
+check(
+    result.returncode == 0 and rows[0][2] == "42",
+    "issue falls back to a Closes #n match in the pull request body",
+    f"rows={rows}, stderr={result.stderr!r}",
+)
+
+# -- criterion 9: timestamp normalisation and determinism. ------------------
+result = run({
+    "number": 310, "mergedAt": "2026-09-14T19:15:37.482Z", "body": "",
+    "comments": [],
+})
+rows = rows_of(result)
+result_again = run({
+    "number": 310, "mergedAt": "2026-09-14T19:15:37.482Z", "body": "",
+    "comments": [],
+})
+check(
+    result.returncode == 0
+    and rows[0][0] == "2026-09-14T19:15:37Z"
+    and result.stdout == result_again.stdout,
+    "mergedAt normalises to YYYY-MM-DDTHH:MM:SSZ and repeats byte-identically",
+    f"rows={rows}, again={result_again.stdout!r}, stderr={result.stderr!r}",
+)
+
+# -- criterion 10: a session record whose JSON does not parse is skipped, ---
+#    named on stderr, and the rest of the rows still print with exit 0.
+result = run({
+    "number": 311, "mergedAt": "2026-09-14T19:15:37Z", "body": "",
+    "comments": [
+        {"body": "<!-- agent-session-record\nnot valid json\n-->"},
+        {"body": session_record_body(**SESSION_A)},
+    ],
+})
+rows = rows_of(result)
+check(
+    result.returncode == 0
+    and len(rows) == 2
+    and rows[1][4] == "implementer"
+    and result.stderr.strip() != "",
+    "a session-record comment with unparseable JSON is skipped with a"
+    " diagnostic, exit 0, and every other row still prints",
+    f"exit {result.returncode}, rows={rows}, stderr={result.stderr!r}",
+)
+
+# -- criterion 11: an unreadable or non-JSON --pr-json is fatal. ------------
+missing = case_dir / "does-not-exist.json"
+result = subprocess.run(
+    [sys.executable, str(script), "--pr-json", str(missing), "--run-url", "u"],
+    capture_output=True, text=True,
+)
+check(
+    result.returncode != 0 and result.stdout == "" and result.stderr.strip() != "",
+    "a missing --pr-json prints nothing to stdout, a diagnostic to stderr,"
+    " and exits non-zero",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+not_json = case_dir / "not-json.json"
+not_json.write_text("not actually json {{{", encoding="utf-8")
+result = subprocess.run(
+    [sys.executable, str(script), "--pr-json", str(not_json), "--run-url", "u"],
+    capture_output=True, text=True,
+)
+check(
+    result.returncode != 0 and result.stdout == "" and result.stderr.strip() != "",
+    "a non-JSON --pr-json prints nothing to stdout, a diagnostic to stderr,"
+    " and exits non-zero",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -2762,6 +3077,7 @@ run_part "Part 10: plan-review request assembly (#226/#227)" part10
 run_part "Part 11: verdict extraction in both modes (#230)" part11
 run_part "Part 12: count-tests.py suites, assertions and compare (#283)" part12
 run_part "Part 13: run ledger gate logic, pull_request and push (#295)" part13
+run_part "Part 14: ledger_row.py field derivation (#296)" part14
 
 echo
 if [ "$failures" -eq 0 ]; then
