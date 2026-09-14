@@ -412,10 +412,13 @@ static func _test_from_directory_registers_binary_res_and_ignores_remap() -> Arr
 		)
 	)
 	if found != null:
-		violations.append_array(
-			_expect(
-				found.display_name == RES_FIXTURE_TEMPLATE_ID,
-				"the registered .res template must be the one this test wrote to the fixture directory"
+		(
+			violations
+			. append_array(
+				_expect(
+					found.display_name == RES_FIXTURE_TEMPLATE_ID,
+					"the registered .res template must be the one this test wrote to the fixture directory"
+				)
 			)
 		)
 
@@ -461,7 +464,7 @@ static func _write_res_fixture() -> bool:
 	var remap_file := FileAccess.open(RES_FIXTURE_REMAP_PATH, FileAccess.WRITE)
 	if remap_file == null:
 		return false
-	remap_file.store_string("[remap]\npath=\"res://resources/fighters/does_not_exist.tres\"\n")
+	remap_file.store_string('[remap]\npath="res://resources/fighters/does_not_exist.tres"\n')
 	remap_file.close()
 
 	return true
@@ -475,7 +478,9 @@ static func _cleanup_res_fixture() -> void:
 	if dir == null:
 		return
 
-	for fixture_path in [RES_FIXTURE_TEMPLATE_PATH, RES_FIXTURE_BUDGET_PATH, RES_FIXTURE_REMAP_PATH]:
+	for fixture_path in [
+		RES_FIXTURE_TEMPLATE_PATH, RES_FIXTURE_BUDGET_PATH, RES_FIXTURE_REMAP_PATH
+	]:
 		var relative: String = fixture_path.trim_prefix(RES_FIXTURE_DIR)
 		if dir.file_exists(relative):
 			dir.remove(relative)
