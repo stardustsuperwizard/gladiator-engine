@@ -2759,6 +2759,7 @@ import csv
 import io
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -2813,6 +2814,28 @@ SESSION_B = dict(
     model_requested="claude-opus-5", model_resolved="claude-opus-5",
     outcome="completed", duration_seconds=30, fix_round=0,
     run_url="https://example.invalid/run/2",
+)
+
+# -- criterion 1: --help exits 0; the source has no third-party import and --
+#    no subprocess/urllib/requests/gh call site. Matches on imports and call
+#    sites, not on the bare word "gh" -- which appears legitimately inside
+#    two `help=` strings.
+help_result = subprocess.run(
+    [sys.executable, str(script), "--help"], capture_output=True, text=True,
+)
+source = script.read_text(encoding="utf-8")
+forbidden_import = re.search(
+    r"^\s*(?:import|from)\s+(subprocess|urllib|requests)\b", source, re.MULTILINE,
+)
+forbidden_call = re.search(r"\b(?:subprocess|urllib|requests)\.\w+\(", source)
+check(
+    help_result.returncode == 0
+    and forbidden_import is None
+    and forbidden_call is None,
+    "--help exits 0 and the source has no subprocess/urllib/requests import"
+    " or call site (a gh invocation can only happen through one of those)",
+    f"exit {help_result.returncode}, forbidden_import={forbidden_import},"
+    f" forbidden_call={forbidden_call}, stderr={help_result.stderr!r}",
 )
 
 # -- criterion 2: the full fixture -- merge row plus two ordered session ----
