@@ -2522,10 +2522,30 @@ PY
 
 part13 () {
   python3 - "$work_dir" "$repo_root" <<'PY'
-import re
+import os
+import pathlib
+import subprocess
 import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1])
+import wf
 
 work_dir, repo_root = sys.argv[1], sys.argv[2]
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part13.", dir=work_dir))
+
+CI = ".github/workflows/ci.yml"
+
+# The whole "Determine Gates" step, exactly as it ships -- both the push
+# path's shell logic and the pull_request path's embedded python program are
+# one `shell: bash` block, so one extraction covers both. Extracted through
+# wf.step_source the way Part 2 and Part 11 pull their steps, not
+# hand-copied: a private copy of GODOT_DENY/glob_to_regex passes whatever it
+# says, even after the real list drifts out from under it, which is exactly
+# what happened to the version this part replaces (#299 review finding 2).
+determine_gates = wf.step_source(CI, "Determine Gates", shell="bash")
+step = part_dir / "determine-gates.sh"
+step.write_text(determine_gates, encoding="utf-8")
 
 failures = []
 
@@ -2538,96 +2558,188 @@ def check(condition, ok, why):
         print(f"  FAIL — {why}", file=sys.stderr)
 
 
-def glob_to_regex(pattern):
-    # GitHub's own path-filter semantics
-    out = []
-    i = 0
-    while i < len(pattern):
-        if pattern[i:i + 2] == "**":
-            out.append(".*")
-            i += 2
-        elif pattern[i] == "*":
-            out.append("[^/]*")
-            i += 1
-        elif pattern[i] == "?":
-            out.append("[^/]")
-            i += 1
-        else:
-            out.append(re.escape(pattern[i]))
-            i += 1
-    return "^" + "".join(out) + "$"
+def run_step(env_overrides, cwd):
+    """Run the extracted step exactly as the workflow does, in its own
+    scratch RUNNER_TEMP and GITHUB_OUTPUT."""
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    output_file = case / "github_output"
+    output_file.write_text("", encoding="utf-8")
+
+    env = dict(os.environ)
+    env.update({"RUNNER_TEMP": str(case), "GITHUB_OUTPUT": str(output_file)})
+    env.update(env_overrides)
+
+    result = subprocess.run(
+        ["bash", str(step)],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=env,
+    )
+    outputs = dict(
+        line.split("=", 1)
+        for line in output_file.read_text().splitlines()
+        if "=" in line
+    )
+    return result, outputs
 
 
-def matches_any(patterns, path):
-    return any(re.match(glob_to_regex(p), path) for p in patterns)
+def git(*args, cwd):
+    subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    )
 
 
-# Test the GODOT_DENY list parsing logic against synthetic file lists
-GODOT_DENY = [
-    "**.md",
-    "LICENSE",
-    "docs/**",
-    ".github/ISSUE_TEMPLATE/**",
-    ".github/agents/**",
-    ".github/instructions/**",
-    ".github/workflows/agent-*.yml",
-    ".github/workflows/gdscript-lint.yml",
-    ".github/workflows/issue-linking.yml",
-    ".github/workflows/issue-dependencies.yml",
-    ".github/workflows/issue-local-session.yml",
-    ".github/scripts/render-dashboard.py",
-    ".github/scripts/classify-copilot-outcome.py",
-    ".github/scripts/classify-claude-outcome.py",
-    ".github/scripts/issue_dependencies.py",
-    ".github/scripts/sync-issue-dependencies.py",
-    ".github/scripts/sync-human-credentials-label.py",
-    ".github/scripts/test-issue-dependencies.sh",
-    ".github/scripts/test-workflow-logic.sh",
-    ".github/tests/**",
-    ".github/workflows/control-plane-tests.yml",
-    ".github/scripts/bootstrap-labels.sh",
-    ".github/actions/build-review-request/**",
-    ".github/actions/build-plan-review-request/**",
-    ".github/actions/build-fix-request/**",
-    ".github/actions/run-agent-session/**",
-    ".github/actions/extract-review-verdict/**",
-    ".github/actions/lint-gdscript/**",
-    ".github/scripts/task_scope.py",
-    ".github/scripts/build-plan-review-request.py",
-    ".github/workflows/copilot-setup-steps.yml",
-    ".claude/**",
-    ".gitignore",
-    ".gdlintrc",
-    ".metrics/**",
-    ".github/workflows/run-ledger.yml",
-    ".github/scripts/ledger_row.py",
-]
+def make_repo():
+    repo_dir = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    git("init", "-q", cwd=repo_dir)
+    git("config", "user.email", "test@example.invalid", cwd=repo_dir)
+    git("config", "user.name", "Test", cwd=repo_dir)
+    return repo_dir
 
-# Test 1: .metrics/runs.csv alone should skip godot gate
-paths = [".metrics/runs.csv"]
-godot = any(not matches_any(GODOT_DENY, p) for p in paths)
+
+def commit(repo_dir, files, message):
+    for name, content in files.items():
+        path = repo_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    git("add", "-A", cwd=repo_dir)
+    git("commit", "-q", "-m", message, cwd=repo_dir)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+# -- criteria 5/6: the pull_request path's embedded python program. ---------
+# A stub `gh` that ignores its arguments and prints a fixed file list to
+# stdout -- the same posture Part 8's stub `gh` uses for
+# sync-human-credentials-label.py.
+bin_dir = part_dir / "bin"
+bin_dir.mkdir()
+gh_stub = bin_dir / "gh"
+gh_stub.write_text(
+    "#!/usr/bin/env bash\nset -euo pipefail\ncat \"$GH_STUB_FILES\"\n",
+    encoding="utf-8",
+)
+gh_stub.chmod(0o755)
+
+
+def run_pull_request(files):
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    files_path = case / "files.txt"
+    files_path.write_text("\n".join(files) + "\n", encoding="utf-8")
+    return run_step(
+        {
+            "EVENT_NAME": "pull_request",
+            "PR_NUMBER": "1",
+            "REPOSITORY": "o/r",
+            "GH_TOKEN": "stub-token",
+            "GH_STUB_FILES": str(files_path),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        },
+        cwd=part_dir,
+    )
+
+
+result, outputs = run_pull_request([".metrics/runs.csv"])
 check(
-    godot is False,
-    ".metrics/runs.csv prints godot=false",
-    f"got godot={godot}, expected False",
+    result.returncode == 0 and outputs.get("godot") == "false",
+    "pull_request: [.metrics/runs.csv] alone prints godot=false (c5)",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
 )
 
-# Test 2: .metrics/runs.csv plus a GDScript file should run godot gate
-paths = [".metrics/runs.csv", "rules/board/board.gd"]
-godot = any(not matches_any(GODOT_DENY, p) for p in paths)
+result, outputs = run_pull_request([".metrics/runs.csv", "rules/board/board.gd"])
 check(
-    godot is True,
-    ".metrics/runs.csv plus rules/board/board.gd prints godot=true",
-    f"got godot={godot}, expected True",
+    result.returncode == 0 and outputs.get("godot") == "true",
+    "pull_request: .metrics/runs.csv plus a .gd file prints godot=true (c6)",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
 )
 
-# Test 3: Only metrics files should skip gate
-paths = [".metrics/runs.csv", ".metrics/runs/abc123.json"]
-godot = any(not matches_any(GODOT_DENY, p) for p in paths)
+result, outputs = run_pull_request(
+    [".metrics/runs.csv", ".metrics/runs/abc123.json"]
+)
 check(
-    godot is False,
-    "multiple .metrics/* files prints godot=false",
-    f"got godot={godot}, expected False",
+    result.returncode == 0 and outputs.get("godot") == "false",
+    "pull_request: multiple .metrics/* files print godot=false",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
+)
+
+# -- criterion 7: the push path's shell logic, all three outcomes. ----------
+repo = make_repo()
+before = commit(repo, {"README.md": "hello\n"}, "init")
+after = commit(repo, {".metrics/runs.csv": "header\n"}, "add a ledger row")
+result, outputs = run_step(
+    {"EVENT_NAME": "push", "EVENT_BEFORE": before, "EVENT_AFTER": after},
+    cwd=repo,
+)
+check(
+    result.returncode == 0
+    and outputs.get("godot") == "false"
+    and outputs.get("control_plane") == "false",
+    "push: every changed file under .metrics/ closes both gates (c7)",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
+)
+
+repo = make_repo()
+before = commit(repo, {"README.md": "hello\n"}, "init")
+after = commit(
+    repo,
+    {".metrics/runs.csv": "header\n", "rules/board/board.gd": "extends Node\n"},
+    "add a ledger row and a gd file",
+)
+result, outputs = run_step(
+    {"EVENT_NAME": "push", "EVENT_BEFORE": before, "EVENT_AFTER": after},
+    cwd=repo,
+)
+check(
+    result.returncode == 0
+    and outputs.get("godot") == "true"
+    and outputs.get("control_plane") == "true",
+    "push: a changed file outside .metrics/ opens both gates (c7)",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
+)
+
+repo = make_repo()
+after = commit(repo, {".metrics/runs.csv": "header\n"}, "init")
+result, outputs = run_step(
+    {"EVENT_NAME": "push", "EVENT_BEFORE": "0" * 40, "EVENT_AFTER": after},
+    cwd=repo,
+)
+check(
+    result.returncode == 0
+    and outputs.get("godot") == "true"
+    and outputs.get("control_plane") == "true",
+    "push: an unreadable changed-file list fails safe, opening both gates (c7)",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
+)
+
+repo = make_repo()
+same = commit(repo, {"README.md": "hello\n"}, "init")
+result, outputs = run_step(
+    {"EVENT_NAME": "push", "EVENT_BEFORE": same, "EVENT_AFTER": same},
+    cwd=repo,
+)
+check(
+    result.returncode == 0
+    and outputs.get("godot") == "true"
+    and outputs.get("control_plane") == "true",
+    "push: a successfully read but empty diff also fails safe"
+    " (#299 review finding 5)",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
+)
+
+# -- criterion 8: workflow_dispatch opens both gates unconditionally. -------
+result, outputs = run_step({"EVENT_NAME": "workflow_dispatch"}, cwd=part_dir)
+check(
+    result.returncode == 0
+    and outputs.get("godot") == "true"
+    and outputs.get("control_plane") == "true",
+    "workflow_dispatch opens both gates unconditionally (c8)",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
 )
 
 sys.exit(1 if failures else 0)
@@ -2649,7 +2761,7 @@ run_part "Part 9: no float-valued dispatch inputs" part9
 run_part "Part 10: plan-review request assembly (#226/#227)" part10
 run_part "Part 11: verdict extraction in both modes (#230)" part11
 run_part "Part 12: count-tests.py suites, assertions and compare (#283)" part12
-run_part "Part 13: run ledger gate logic (#295)" part13
+run_part "Part 13: run ledger gate logic, pull_request and push (#295)" part13
 
 echo
 if [ "$failures" -eq 0 ]; then
