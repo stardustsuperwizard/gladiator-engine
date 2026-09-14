@@ -2520,6 +2520,120 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+part13 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import re
+import sys
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def glob_to_regex(pattern):
+    # GitHub's own path-filter semantics
+    out = []
+    i = 0
+    while i < len(pattern):
+        if pattern[i:i + 2] == "**":
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return "^" + "".join(out) + "$"
+
+
+def matches_any(patterns, path):
+    return any(re.match(glob_to_regex(p), path) for p in patterns)
+
+
+# Test the GODOT_DENY list parsing logic against synthetic file lists
+GODOT_DENY = [
+    "**.md",
+    "LICENSE",
+    "docs/**",
+    ".github/ISSUE_TEMPLATE/**",
+    ".github/agents/**",
+    ".github/instructions/**",
+    ".github/workflows/agent-*.yml",
+    ".github/workflows/gdscript-lint.yml",
+    ".github/workflows/issue-linking.yml",
+    ".github/workflows/issue-dependencies.yml",
+    ".github/workflows/issue-local-session.yml",
+    ".github/scripts/render-dashboard.py",
+    ".github/scripts/classify-copilot-outcome.py",
+    ".github/scripts/classify-claude-outcome.py",
+    ".github/scripts/issue_dependencies.py",
+    ".github/scripts/sync-issue-dependencies.py",
+    ".github/scripts/sync-human-credentials-label.py",
+    ".github/scripts/test-issue-dependencies.sh",
+    ".github/scripts/test-workflow-logic.sh",
+    ".github/tests/**",
+    ".github/workflows/control-plane-tests.yml",
+    ".github/scripts/bootstrap-labels.sh",
+    ".github/actions/build-review-request/**",
+    ".github/actions/build-plan-review-request/**",
+    ".github/actions/build-fix-request/**",
+    ".github/actions/run-agent-session/**",
+    ".github/actions/extract-review-verdict/**",
+    ".github/actions/lint-gdscript/**",
+    ".github/scripts/task_scope.py",
+    ".github/scripts/build-plan-review-request.py",
+    ".github/workflows/copilot-setup-steps.yml",
+    ".claude/**",
+    ".gitignore",
+    ".gdlintrc",
+    ".metrics/**",
+    ".github/workflows/run-ledger.yml",
+    ".github/scripts/ledger_row.py",
+]
+
+# Test 1: .metrics/runs.csv alone should skip godot gate
+paths = [".metrics/runs.csv"]
+godot = any(not matches_any(GODOT_DENY, p) for p in paths)
+check(
+    godot is False,
+    ".metrics/runs.csv prints godot=false",
+    f"got godot={godot}, expected False",
+)
+
+# Test 2: .metrics/runs.csv plus a GDScript file should run godot gate
+paths = [".metrics/runs.csv", "rules/board/board.gd"]
+godot = any(not matches_any(GODOT_DENY, p) for p in paths)
+check(
+    godot is True,
+    ".metrics/runs.csv plus rules/board/board.gd prints godot=true",
+    f"got godot={godot}, expected True",
+)
+
+# Test 3: Only metrics files should skip gate
+paths = [".metrics/runs.csv", ".metrics/runs/abc123.json"]
+godot = any(not matches_any(GODOT_DENY, p) for p in paths)
+check(
+    godot is False,
+    "multiple .metrics/* files prints godot=false",
+    f"got godot={godot}, expected False",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -2535,6 +2649,7 @@ run_part "Part 9: no float-valued dispatch inputs" part9
 run_part "Part 10: plan-review request assembly (#226/#227)" part10
 run_part "Part 11: verdict extraction in both modes (#230)" part11
 run_part "Part 12: count-tests.py suites, assertions and compare (#283)" part12
+run_part "Part 13: run ledger gate logic (#295)" part13
 
 echo
 if [ "$failures" -eq 0 ]; then
