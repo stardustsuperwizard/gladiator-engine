@@ -84,7 +84,10 @@ Do not:
 - touch files the review and the Issue's expected files don't implicate;
 - attempt a fix when the supplied verdict is not `FIX`;
 - add or remove `review:*` labels — re-review decides the next one;
-- report the fix complete if validation still fails.
+- report the fix complete if validation still fails;
+- apply the `test-removal-approved` label. It is the human-only override for
+  the test ratchet in `ci.yml`, and an agent that applies it is approving its
+  own test deletion.
 
 ## Completion Report
 

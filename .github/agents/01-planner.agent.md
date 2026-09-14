@@ -436,4 +436,7 @@ Do not:
   workflow step that creates each Issue and re-derived afterwards by
   `.github/scripts/sync-human-credentials-label.py`, and a session
   reasoning its way to the label is a session disagreeing with the guard
-  that will refuse the task anyway.
+  that will refuse the task anyway;
+- apply the `test-removal-approved` label. It is the human-only override for
+  the test ratchet in `ci.yml`, and an agent that applies it is approving its
+  own test deletion.

@@ -146,7 +146,10 @@ Do not:
 - modify unrelated systems because you spotted an opportunity;
 - silently resolve architectural or product ambiguity;
 - inherit additional work from the parent epic;
-- close the parent epic.
+- close the parent epic;
+- apply the `test-removal-approved` label. It is the human-only override for
+  the test ratchet in `ci.yml`, and an agent that applies it is approving its
+  own test deletion.
 
 If you find work outside the contract, do not implement it and do not file an
 Issue for it. Report it under **Discovered out-of-scope work** and let the

@@ -169,6 +169,9 @@ ambient RNG from inside `rules/`.
   *are* the specification. Write them alongside the resolver, not after.
 - Existing tests represent established behavior.
 - Do not weaken, remove, or skip tests merely to make an implementation pass.
+  This is enforced: `ci.yml`'s `test-ratchet` job fails a pull request whose
+  suite count or `_expect(` assertion count is lower than its merge base's,
+  and `test-removal-approved` is the human-only override.
 - Add tests for new behavior when practical.
 - Tests run headless (`godot --headless`).
 - Report validation that could not be performed.

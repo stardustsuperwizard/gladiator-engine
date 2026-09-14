@@ -260,5 +260,9 @@ REPLACES the entire set, so sending only the review label would silently
 strip `implementation`, `machine`, and everything else on the PR.
 ```
 
+Do not apply the `test-removal-approved` label. It is the human-only override
+for the test ratchet in `ci.yml`, and an agent that applies it is approving
+its own test deletion.
+
 Never merge the PR, delete its branch, or edit code — those remain human
 decisions.
