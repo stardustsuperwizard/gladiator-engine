@@ -58,6 +58,18 @@ jobs:
       godot: ${{ steps.gate.outputs.godot }}
       control_plane: ${{ steps.gate.outputs.control_plane }}
     steps:
+      # Only needed on `push`: the `git diff-tree` read below needs a working
+      # tree with enough history to contain `github.event.before`, which a
+      # `pull_request` run gets from `gh api` instead and a
+      # `workflow_dispatch` run never reads at all. `fetch-depth: 0` rather
+      # than the default shallow fetch -- `before` is the commit prior to
+      # this push, which a depth-1 clone would not contain.
+      - name: Checkout Repository
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Determine Gates
         id: gate
         shell: bash
@@ -66,6 +78,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_AFTER: ${{ github.event.after }}
         run: |
           set -euo pipefail
 
@@ -77,10 +91,15 @@ jobs:
 
           if [ "$EVENT_NAME" = "push" ]; then
             # For push events, attempt to read changed files from git. If the
-            # read fails, fail safe by opening both gates. If all changed files
-            # are under .metrics/, close both gates; otherwise open both.
-            if git diff-tree --no-commit-id --name-only -r "${{ github.event.before }}" "${{ github.event.after }}" > "$RUNNER_TEMP/pr-files.txt" 2>/dev/null; then
-              # Successfully read changed files; check if all are under .metrics/
+            # read fails, or succeeds but reports no changed files at all,
+            # fail safe by opening both gates -- an empty read is closer to
+            # "unreadable" than to "nothing changed". If every changed file
+            # is under .metrics/, close both gates; otherwise open both.
+            if git diff-tree --no-commit-id --name-only -r "$EVENT_BEFORE" "$EVENT_AFTER" \
+                 > "$RUNNER_TEMP/pr-files.txt" 2>/dev/null \
+               && [ -s "$RUNNER_TEMP/pr-files.txt" ]; then
+              # Successfully read a non-empty changed-file list; check if all
+              # are under .metrics/
               if grep -v "^\.metrics/" "$RUNNER_TEMP/pr-files.txt" | grep -q . 2>/dev/null; then
                 # At least one file is not under .metrics/, so open both gates
                 echo "godot=true" >> "$GITHUB_OUTPUT"
@@ -91,7 +110,8 @@ jobs:
                 echo "control_plane=false" >> "$GITHUB_OUTPUT"
               fi
             else
-              # Could not read changed files; fail safe by opening both gates
+              # Could not read changed files, or the read was empty; fail
+              # safe by opening both gates.
               echo "godot=true" >> "$GITHUB_OUTPUT"
               echo "control_plane=true" >> "$GITHUB_OUTPUT"
             fi
@@ -238,12 +258,14 @@ jobs:
               # `validate-godot.sh`. Style is a separate gate from whether
               # the project imports and boots.
               ".gdlintrc",
-              # Run ledger. Append-only version-controlled data never loaded
-              # by Godot. The ledger workflow and row builder are control
-              # plane, covered by CONTROL_PLANE_ALLOW, and do not load the
-              # project.
+              # The run ledger itself. Append-only version-controlled data,
+              # never loaded by Godot.
               ".metrics/**",
+              # The ledger workflow. Control plane, covered by
+              # CONTROL_PLANE_ALLOW below, and does not load the project.
               ".github/workflows/run-ledger.yml",
+              # The ledger row builder the workflow above calls. Same
+              # reasoning as the workflow itself.
               ".github/scripts/ledger_row.py",
           ]
 

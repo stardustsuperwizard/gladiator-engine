@@ -16,10 +16,10 @@ The ledger is stored at `.metrics/runs.csv`, tracked by git like all version-con
 | --- | --- | --- | --- |
 | `timestamp` | Session start or verdict post time | RFC3339 (e.g., `2026-09-14T19:15:37Z`) | Not allowed |
 | `event` | Type of event recorded | `merge` (session completes and merges to main), `session` (agent session completes, may or may not merge) | Not allowed |
-| `issue` | GitHub issue number | Decimal integer; 0 if no Issue (e.g., exploratory session) | Zero for sessions with no Issue |
+| `issue` | GitHub issue number | Decimal integer; `0` if no Issue (e.g., exploratory session) | The field itself is never empty — a session with no Issue writes the `0` sentinel, not a blank value |
 | `pr` | GitHub pull request number | Decimal integer | Not allowed |
 | `role` | Agent role or session type | One of: `planner`, `implementer`, `reviewer`, `fixer`, `plan-reviewer`, `exploratory`, `other` | Session type unknown |
-| `vendor` | AI vendor | One of: `anthropic`, `openai`, `other` | Not specified |
+| `vendor` | AI vendor | One of: `copilot`, `anthropic`, `claude` — the same vocabulary as the third segment of an `agent:{role}:{vendor}` label (`bootstrap-labels.sh`) | Not specified |
 | `model_requested` | Model requested by Issue label or config | Model ID string (e.g., `claude-sonnet-5`) | Default applied |
 | `model_resolved` | Model actually used by the session | Model ID string | Same as requested |
 | `tier_label` | Issue model tier label at run time | One of: `model:haiku`, `model:sonnet`, `model:opus` or empty | No tier label |
