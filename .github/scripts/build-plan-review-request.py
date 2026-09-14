@@ -17,12 +17,15 @@ outside the standard library and its two sibling modules:
       "epic":  {"number": 226, "title": "...", "body": "...",
                 "comments": [{"author": "...", "body": "...",
                               "created_at": "..."}]},
-      "tasks": [{"number": 227, "title": "...", "body": "...", "url": "..."}]
+      "tasks": [{"number": 227, "title": "...", "body": "...", "url": "..."}],
+      "inventory": ["path/to/file.py", ...],  # optional
+      "_provenance": "..."  # optional
     }
 
-Any other top-level key is ignored, which is how the checked-in fixtures under
-`.github/tests/plan-review/` carry a `_provenance` note saying where their
-contents came from without that note reaching a reviewer's context.
+Any top-level key other than `epic` and `tasks` is ignored, which is how the
+checked-in fixtures under `.github/tests/plan-review/` carry an optional
+`inventory` key (for fixtures) and a `_provenance` note saying where their
+contents came from without those reaching a reviewer's context.
 
 Eight sections come out, in this order:
 
@@ -47,11 +50,11 @@ Two modules do the parsing, and neither is re-typed:
 `task_scope.expected_paths()` reads the *Files or Subsystems Expected to
 Change* section. `task_scope.py` is imported, never modified.
 
-**Agent-authored comments are dropped.** A comment whose body opens with an
-`<!-- agent-` marker is machine output -- a rollup notice, a triage summary --
-and never a statement of the owner's intent. Feeding a plan reviewer the
-control plane's own announcements invites it to review the machine instead of
-the plan.
+**Machine-authored comments are dropped.** A comment whose body opens with an
+`<!-- agent-` or `<!-- claude-` marker is machine output -- a rollup notice,
+a triage summary -- and never a statement of the owner's intent. Feeding a
+plan reviewer the control plane's own announcements invites it to review the
+machine instead of the plan.
 
 **Check 8 is deliberately conservative.** A token is reported unresolved only
 when it looks like a repository artifact -- a path, a known file extension, or
@@ -85,10 +88,10 @@ import task_scope  # noqa: E402
 
 REPO_ROOT = SCRIPTS_DIR.parents[1]
 
-# A comment body opening with this is machine output. Matched at the start,
-# not searched for, for the same reason #69's marker read is: a comment that
-# merely quotes the marker is not an agent comment.
-AGENT_COMMENT_MARKER = "<!-- agent-"
+# Machine-comment prefixes — both control-plane surfaces' vocabularies.
+# Matched at the start, not searched for, for the same reason #69's marker
+# read is: a comment that merely quotes the marker is not a machine comment.
+MACHINE_COMMENT_MARKERS = ("<!-- agent-", "<!-- claude-")
 
 SECTION_HEADINGS = (
     "# EPIC (AUTHORITATIVE INTENT)",
@@ -196,11 +199,11 @@ def validate(bundle: dict) -> list[str]:
 
 
 def human_comments(epic: dict) -> list[dict]:
-    """The epic's comments with agent output removed, in the order written."""
+    """The epic's comments with machine output removed, in the order written."""
     kept = []
     for comment in epic.get("comments") or []:
         body = comment.get("body") or ""
-        if body.lstrip().startswith(AGENT_COMMENT_MARKER):
+        if any(body.lstrip().startswith(marker) for marker in MACHINE_COMMENT_MARKERS):
             continue
         kept.append(comment)
     return kept
@@ -217,14 +220,23 @@ class Tree:
     No `git ls-files`: this script shells out to nothing, so "tracked" is
     approximated by "present, outside SKIP_DIRS". The difference only ever
     makes check 8 quieter, which is the direction it is supposed to fail in.
+
+    When `inventory` is provided (a list of repository-relative paths), the
+    Tree is built from that list instead of walking the filesystem. When
+    absent, the behavior is as today: walk `root`.
     """
 
-    def __init__(self, root: pathlib.Path):
+    def __init__(self, root: pathlib.Path, inventory: list[str] | None = None):
         self.root = root
         self.files: set[str] = set()
         self.dirs: set[str] = set()
         self.basenames: set[str] = set()
-        self._walk(root)
+
+        if inventory is not None:
+            self._from_inventory(inventory)
+        else:
+            self._walk(root)
+
         self.top_level = {name for name in self.dirs if "/" not in name}
         self.labels = self._labels()
 
@@ -235,6 +247,29 @@ class Tree:
         return set(
             LABEL_REGISTRY_ROW.findall(registry.read_text(errors="replace"))
         )
+
+    def _from_inventory(self, inventory: list[str]) -> None:
+        """Build the tree from a provided list of repository-relative paths.
+
+        Each path is taken as given; no filtering by SKIP_DIRS is applied.
+        The caller is responsible for excluding what should be excluded.
+        """
+        for path in inventory:
+            if "/" in path:
+                # It's a file: add it and its parent directories
+                self.files.add(path)
+                self.basenames.add(path.rsplit("/", 1)[-1])
+                # Add all parent directories
+                parts = path.split("/")
+                for i in range(1, len(parts)):
+                    dir_path = "/".join(parts[:i])
+                    self.dirs.add(dir_path)
+            else:
+                # It's a top-level file or directory name
+                # Assume it's a file if we don't know; the tree lookup is
+                # permissive (it checks both files and dirs)
+                self.basenames.add(path)
+                self.files.add(path)
 
     def _walk(self, directory: pathlib.Path) -> None:
         for entry in sorted(directory.iterdir()):
@@ -664,11 +699,11 @@ def render_exclusions() -> str:
         "What is not in this file, and why — so an absence is not read as a"
         " finding:",
         "",
-        "- **Agent-authored comments.** Any comment whose body opens with an"
-        " `<!-- agent-` marker: rollup notices, triage summaries, planner"
-        " bookkeeping. They are the control plane talking to itself, never a"
-        " statement of intent, and reviewing them is reviewing the machine"
-        " instead of the plan.",
+        "- **Machine-authored comments.** Any comment whose body opens with an"
+        " `<!-- agent-` or `<!-- claude-` marker: rollup notices, triage"
+        " summaries, planner bookkeeping. They are the control plane talking"
+        " to itself, never a statement of intent, and reviewing them is"
+        " reviewing the machine instead of the plan.",
         "- **File contents.** The inventory carries names only, and a plan is"
         " judged against what exists rather than against how it is"
         f" implemented. The one exception is `{LABEL_REGISTRY}`, read for the"
@@ -747,7 +782,10 @@ def main() -> int:
             print(f"  - {problem}", file=sys.stderr)
         return 1
 
-    text = build(bundle, Tree(REPO_ROOT))
+    # Build the tree from an optional inventory in the bundle, or walk REPO_ROOT
+    inventory = bundle.get("inventory")
+    tree = Tree(REPO_ROOT, inventory)
+    text = build(bundle, tree)
 
     out = pathlib.Path(args.out)
     if out.parent and not out.parent.exists():
