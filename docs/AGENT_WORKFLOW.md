@@ -1901,6 +1901,51 @@ not enough to gate on); until a dispatch path actually reads it, treat a
 plan-review comment as no more binding than any other human-readable comment
 on an epic.
 
+#### Validation record — 2026-09-13
+
+The role was run against the three fixtures under `.github/tests/plan-review/`
+and against a failure bundle, on `claude-opus-5[1m]`. Recorded here because a
+described run is a self-report, and this repository's rule is that no stage
+trusts the preceding stage's account of itself. **No verdict comment was
+posted on any real epic during this validation**, no label was applied, and no
+Issue was created: the fixtures were the input and this record is the output.
+
+| Case | Fixture | Verdict line | The finding the case exists to prove |
+| --- | --- | --- | --- |
+| 1 | `226-before-correction.json` | `VERDICT: PLAN REJECT` | Check 1. `human-credentials` already is the label the epic asks for, declared at `bootstrap-labels.sh:62` and derived — not judged — at `agent-01-planner.yml:1558`, so the plan builds what exists. |
+| 2 | `227-after-retarget.json` | `VERDICT: PLAN FIX` | Check 8. `sync-local-session-label.py` is named after `needs-local-session`, a label the repository does not have; the registry declares `human-credentials` and no such label anywhere. A stale name that survived the retarget. |
+| 3 | `sound-plan.json` | `VERDICT: PLAN PASS` | The negative control. `## Findings` read `None` and `## Required Before Dispatch` read `Nothing` — a reviewer that manufactures a finding to look useful fails here. |
+| 4 | two scratch bundles | *no verdict line; none produced* | The failure path. The assembler refused both, named the reason, and wrote no output file; nothing was posted, labelled or filed. |
+
+Case 4 was run twice, from `sound-plan.json` edited in a scratch directory —
+never in the working tree, and no fixture was added. An epic with its `tasks`
+list emptied: `epic #203: the bundle declares no Implementation Tasks. There is
+no plan to review.` An epic with one sub-issue body set to null: `task #206:
+body is null or absent. A task cannot be reviewed from its title alone.` Both
+exited 1 and left no file at `--out`, so there was no request to review and no
+verdict to post.
+
+**The captured request.** From the case 3 run, 1300 lines: it carries the epic
+body, all five sub-issue bodies in full, the dependency edges for each task,
+and a 290-file inventory across 36 directories. It carries no planner session
+transcript and no run log.
+
+It does carry the planner's plan comment, and that is a defect. The assembler
+drops a comment whose body opens with `<!-- agent-`, which caught the rollup's
+`<!-- agent-rollup-complete -->` notice; the planner's comment opens
+`<!-- claude-planner-complete -->` and does not match, so it survived into
+`# EPIC AMENDMENT COMMENTS` in all three runs. Widening the assembler's marker
+test is the real fix and is not this validation's to make. What was fixed is
+the contract prose, in both `.github/agents/07-plan-reviewer.agent.md` and
+`.claude/agents/plan-reviewer.md`, which claimed the assembler already dropped
+that comment: the reviewer is now told it does not, and told to skip a comment
+opening `<!-- claude-` or `<!-- agent-` itself and to record the skip in its
+check-3 evidence. All four verdicts above hold that wall by hand.
+
+**Re-run this record** after any change to the eight checks, the verdict
+vocabulary, or the assembler's comment filtering. A validation record that
+outlives the contract it validated is worse than none.
+
 ### Verifying the local planner's label transition by hand
 
 Step 12 of `.claude/agents/planner.md` — add `planned`, remove `plan`, consume
