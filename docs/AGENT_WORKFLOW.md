@@ -2461,3 +2461,4 @@ Re-check these with the commands rather than trusting this table.
 | The dependency endpoint answers | `gh api repos/stardustsuperwizard/gladiator-engine/issues/1/dependencies/blocked_by` |
 | The chain matches the tables | `.github/scripts/sync-issue-dependencies.py --sweep --dry-run` |
 | Derived state matches reality | `.github/scripts/render-dashboard.py --json` |
+<!-- Docs-only CI probe for #270. Delete with this branch. -->
