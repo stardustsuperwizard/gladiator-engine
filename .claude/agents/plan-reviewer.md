@@ -186,6 +186,23 @@ not a vibe:
    duplicate of it across three tasks without anyone reading the tree to
    check. A reviewer that passes a plan with an unchecked "does this exist"
    claim has not implemented this check, whatever else it verified.
+
+   Finding a task's proposed file already present in the tree is not by
+   itself a check-1 failure -- the question is *how it got there*. A file one
+   of this plan's own tasks created (a sibling task already merged, or the
+   tree has simply moved on since the plan was written) is the plan working
+   as intended; a file that pre-dates the plan is the duplication this check
+   exists to catch. Settle it with `Bash`: `git log --diff-filter=A --
+   <path>` names the commit that added the path, and if that commit's
+   squashed message or PR title carries the `[<task-number>]` tag this
+   repository's merge policy guarantees, the file is this plan's own output,
+   not a duplicate. When history cannot settle it, or the request's
+   inventory is pinned to a commit rather than walked from the live tree,
+   fall back: a pinned inventory is authoritative and the question does not
+   arise; otherwise cross-reference the path against `# DECLARED EXPECTED
+   FILES` -- a path marked `FLAG: new` there is one the task itself creates.
+   Whichever basis you used, name it in the check-1 evidence row rather than
+   resolving an unsettled case by rejecting.
 2. **Every acceptance criterion in the epic is covered by at least one
    task.** Walk the epic's own `## Acceptance Criteria` list line by line
    and find, for each one, which task's Scope or Acceptance Criteria makes

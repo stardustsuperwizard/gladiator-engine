@@ -1954,6 +1954,15 @@ log, and no machine-authored comments opening with either `<!-- agent-` or
 vocabulary, the assembler's comment filtering, or the fixture inventories. A
 validation record that outlives the contract it validated is worse than none.
 
+> **Revised 2026-09-14, later the same day.** Check 1 gained a clarification
+> distinguishing a file one of a plan's own tasks created from one that
+> pre-dates the plan, and naming `git log --diff-filter=A` plus the
+> `[<task-number>]` tag on the commit or pull request as how to tell them
+> apart, with a fallback to the pinned inventory or `# DECLARED EXPECTED
+> FILES`. This changes no fixture verdict: case 3 already reached
+> `PLAN PASS` from the pinned inventory alone, as the table above already
+> states. No fixture, inventory, or assembler behaviour changed.
+
 ### Verifying the local planner's label transition by hand
 
 Step 12 of `.claude/agents/planner.md` — add `planned`, remove `plan`, consume
