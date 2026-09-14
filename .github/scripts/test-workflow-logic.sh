@@ -2181,6 +2181,345 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 12: count-tests.py's suite reachability, assertion counting, and
+# compare modes (#283).
+#
+# count-tests.py is a port of tests/orphan_test_contract_test.gd's
+# reachability algorithm and ExtractionContractTest.strip_comment(), and this
+# part is what pins the port against synthetic fixture trees rather than the
+# repository's own tree, whose suite count and assertion total change over
+# time. Every fixture is written under this harness's own work_dir via
+# tempfile.mkdtemp(), never into the checkout -- Part 5's rule applies to a
+# test as much as to a workflow.
+#
+# python3 only, no network, no credentials: count-tests.py is invoked as a
+# subprocess exactly as CI would run it, so what is checked is the script
+# that actually ships.
+# ---------------------------------------------------------------------------
+
+part12 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+script = pathlib.Path(repo_root) / ".github" / "scripts" / "count-tests.py"
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def write_tree(base, files):
+    for rel, content in files.items():
+        path = base / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def count(root):
+    return subprocess.run(
+        [sys.executable, str(script), "count", "--root", str(root)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def compare(base_json, head_json):
+    return subprocess.run(
+        [
+            sys.executable, str(script), "compare",
+            "--base", str(base_json), "--head", str(head_json),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+def bootstrap(entries):
+    body = "".join(
+        f'\t{{"name": "{name}", "run": {name}.run}},\n' for name in entries
+    )
+    return f"extends Node\n\nvar _suites: Array[Dictionary] = [\n{body}]\n"
+
+
+def fixture_dir(prefix):
+    return pathlib.Path(tempfile.mkdtemp(prefix=prefix, dir=work_dir))
+
+
+def report_of(result):
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+
+# -- 1: a registered suite plus one reached only transitively is counted. ---
+case1 = fixture_dir("ct-case1.")
+write_tree(case1, {
+    "tests/test_bootstrap.gd": bootstrap(["RegisteredTest"]),
+    "tests/registered_test.gd": (
+        "class_name RegisteredTest\n\n"
+        "static func run() -> bool:\n"
+        "\treturn TransitiveTest.run()\n"
+    ),
+    "tests/transitive_test.gd": (
+        "class_name TransitiveTest\n\n"
+        "static func run() -> bool:\n"
+        "\treturn true\n"
+    ),
+})
+result = count(case1)
+report = report_of(result)
+check(
+    result.returncode == 0
+    and report.get("suites", {}).get("count") == 2
+    and sorted(report.get("suites", {}).get("names", [])) == ["RegisteredTest", "TransitiveTest"]
+    and report.get("suites", {}).get("unreachable") == [],
+    "a suite reached only transitively through a registered one is counted",
+    f"expected both suites counted; exit {result.returncode}, report={report or result.stdout}",
+)
+
+# -- 2: two unregistered suites naming each other are both unreachable. -----
+case2 = fixture_dir("ct-case2.")
+write_tree(case2, {
+    "tests/test_bootstrap.gd": bootstrap(["RegisteredTest"]),
+    "tests/registered_test.gd": (
+        "class_name RegisteredTest\n\n"
+        "static func run() -> bool:\n"
+        "\treturn true\n"
+    ),
+    "tests/orphan_a_test.gd": (
+        "class_name OrphanATest\n\n"
+        "static func run() -> bool:\n"
+        "\treturn OrphanBTest.run()\n"
+    ),
+    "tests/orphan_b_test.gd": (
+        "class_name OrphanBTest\n\n"
+        "static func run() -> bool:\n"
+        "\treturn OrphanATest.run()\n"
+    ),
+})
+result = count(case2)
+report = report_of(result)
+check(
+    result.returncode == 0
+    and report.get("suites", {}).get("count") == 1
+    and report.get("suites", {}).get("names") == ["RegisteredTest"]
+    and report.get("suites", {}).get("unreachable")
+    == sorted(["tests/orphan_a_test.gd", "tests/orphan_b_test.gd"]),
+    "two suites naming only each other count neither, list both unreachable, exit 0",
+    f"expected only RegisteredTest counted, both orphans unreachable;"
+    f" exit {result.returncode}, report={report or result.stdout}",
+)
+
+# -- 3: deleting a fixture with its _suites entry drops the count by one. ---
+full = fixture_dir("ct-case3-full.")
+write_tree(full, {
+    "tests/test_bootstrap.gd": bootstrap(["ATest", "BTest"]),
+    "tests/a_test.gd": "class_name ATest\n\nstatic func run() -> bool:\n\treturn true\n",
+    "tests/b_test.gd": "class_name BTest\n\nstatic func run() -> bool:\n\treturn true\n",
+})
+full_report = report_of(count(full))
+
+reduced = fixture_dir("ct-case3-reduced.")
+write_tree(reduced, {
+    "tests/test_bootstrap.gd": bootstrap(["ATest"]),
+    "tests/a_test.gd": "class_name ATest\n\nstatic func run() -> bool:\n\treturn true\n",
+})
+reduced_report = report_of(count(reduced))
+
+check(
+    full_report.get("suites", {}).get("count") == 2
+    and reduced_report.get("suites", {}).get("count") == 1,
+    "deleting a fixture file with its _suites entry lowers the suite count by exactly one",
+    f"expected 2 then 1; full={full_report}, reduced={reduced_report}",
+)
+
+# -- 4: renaming a file, class_name and _suites entry untouched, changes ----
+#      neither count.
+before_dir = fixture_dir("ct-case4-before.")
+write_tree(before_dir, {
+    "tests/test_bootstrap.gd": bootstrap(["ATest"]),
+    "tests/a_test.gd": (
+        "class_name ATest\n\n"
+        'static func run() -> bool:\n\treturn _expect(true, "x").is_empty()\n'
+    ),
+})
+before_report = report_of(count(before_dir))
+
+after_dir = fixture_dir("ct-case4-after.")
+write_tree(after_dir, {
+    "tests/test_bootstrap.gd": bootstrap(["ATest"]),
+    "tests/renamed_a_test.gd": (
+        "class_name ATest\n\n"
+        'static func run() -> bool:\n\treturn _expect(true, "x").is_empty()\n'
+    ),
+})
+after_report = report_of(count(after_dir))
+
+check(
+    before_report
+    and after_report
+    and before_report["suites"]["count"] == after_report["suites"]["count"]
+    and before_report["assertions"]["total"] == after_report["assertions"]["total"],
+    "renaming a fixture file with class_name and _suites entry intact changes neither count",
+    f"expected identical counts; before={before_report}, after={after_report}",
+)
+
+# -- 5: comment-stripped _expect( counting. ----------------------------------
+case5 = fixture_dir("ct-case5.")
+write_tree(case5, {
+    "tests/test_bootstrap.gd": bootstrap(["CommentTest"]),
+    "tests/comment_test.gd": (
+        "class_name CommentTest\n\n"
+        '# _expect(false, "in a comment") # not counted\n'
+        'var s = "_expect(counted, inside a string)"\n'
+        'var t = "# _expect(after a hash inside a string)"\n\n'
+        "static func run() -> bool:\n\treturn true\n"
+    ),
+})
+report = report_of(count(case5))
+check(
+    report.get("assertions", {}).get("by_file", {}).get("tests/comment_test.gd") == 2
+    and report.get("assertions", {}).get("total") == 2,
+    "_expect( in a comment is not counted; inside a string, and after a #"
+    " inside a string, both are",
+    f"expected 2 assertions from comment_test.gd; report={report}",
+)
+
+# -- 6: an empty or unparseable _suites literal exits 2. ---------------------
+case6 = fixture_dir("ct-case6.")
+write_tree(case6, {
+    "tests/test_bootstrap.gd": "extends Node\n\nvar _suites: Array[Dictionary] = []\n",
+    "tests/a_test.gd": "class_name ATest\n\nstatic func run() -> bool:\n\treturn true\n",
+})
+result = count(case6)
+check(
+    result.returncode == 2 and "tests/test_bootstrap.gd" in result.stderr,
+    "an empty _suites literal exits 2 and names tests/test_bootstrap.gd",
+    f"expected exit 2 naming the bootstrap; exit {result.returncode}, stderr={result.stderr!r}",
+)
+
+case6b = fixture_dir("ct-case6b.")
+write_tree(case6b, {
+    "tests/test_bootstrap.gd": (
+        "extends Node\n\nvar _renamed_suites: Array[Dictionary] = [\n"
+        '\t{"name": "ATest", "run": ATest.run},\n]\n'
+    ),
+    "tests/a_test.gd": "class_name ATest\n\nstatic func run() -> bool:\n\treturn true\n",
+})
+result = count(case6b)
+check(
+    result.returncode == 2 and "tests/test_bootstrap.gd" in result.stderr,
+    "a renamed _suites array, unparseable by this reader, also exits 2",
+    f"expected exit 2 naming the bootstrap; exit {result.returncode}, stderr={result.stderr!r}",
+)
+
+# -- 7: compare's exit codes and its decrease section. -----------------------
+case7 = fixture_dir("ct-case7.")
+
+
+def write_report(name, suites_count, names, by_file, total):
+    path = case7 / name
+    data = {
+        "assertions": {"by_file": by_file, "total": total},
+        "suites": {"count": suites_count, "names": names, "unreachable": []},
+    }
+    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+base_json = write_report(
+    "base.json", 10, ["ATest", "BTest"],
+    {"tests/a_test.gd": 5, "tests/b_test.gd": 3}, 8,
+)
+
+result = compare(base_json, write_report(
+    "head-equal.json", 10, ["ATest", "BTest"],
+    {"tests/a_test.gd": 5, "tests/b_test.gd": 3}, 8,
+))
+check(
+    result.returncode == 0 and "| Suites | 10 | 10 | 0 |" in result.stdout,
+    "compare exits 0 on equal counts, printing the both-counts table",
+    f"exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+result = compare(base_json, write_report(
+    "head-increase.json", 11, ["ATest", "BTest", "CTest"],
+    {"tests/a_test.gd": 5, "tests/b_test.gd": 3, "tests/c_test.gd": 4}, 12,
+))
+check(
+    result.returncode == 0 and "Decrease detected" not in result.stdout,
+    "compare exits 0 on an increase, with no decrease section",
+    f"exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+result = compare(base_json, write_report(
+    "head-suite-drop.json", 9, ["ATest"], {"tests/a_test.gd": 5}, 5,
+))
+check(
+    result.returncode == 1
+    and "Decrease detected" in result.stdout
+    and "BTest" in result.stdout,
+    "compare exits 1 when suites fall, and names the lost suite",
+    f"exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+result = compare(base_json, write_report(
+    "head-assertion-drop.json", 10, ["ATest", "BTest"],
+    {"tests/a_test.gd": 2, "tests/b_test.gd": 3}, 5,
+))
+check(
+    result.returncode == 1
+    and "Decrease detected" in result.stdout
+    and "tests/a_test.gd" in result.stdout
+    and "| 5 | 2 |" in result.stdout,
+    "compare exits 1 when assertions fall, naming the file with before/after",
+    f"exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+result = compare(base_json, write_report(
+    "head-rename.json", 10, ["ATest", "BTest"],
+    {"tests/renamed_a_test.gd": 5, "tests/b_test.gd": 3}, 8,
+))
+check(
+    result.returncode == 0 and "Decrease detected" not in result.stdout,
+    "a rename that preserves both totals produces no decrease and exits 0",
+    f"exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+missing = case7 / "does-not-exist.json"
+result = compare(base_json, missing)
+check(
+    result.returncode == 2,
+    "compare exits 2 on a missing report file",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+not_a_report = case7 / "not-a-report.json"
+not_a_report.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
+result = compare(base_json, not_a_report)
+check(
+    result.returncode == 2,
+    "compare exits 2 on a file that is not a report this script produced",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -2195,6 +2534,7 @@ run_part "Part 8: human-credentials label derivation (#227)" part8
 run_part "Part 9: no float-valued dispatch inputs" part9
 run_part "Part 10: plan-review request assembly (#226/#227)" part10
 run_part "Part 11: verdict extraction in both modes (#230)" part11
+run_part "Part 12: count-tests.py suites, assertions and compare (#283)" part12
 
 echo
 if [ "$failures" -eq 0 ]; then
