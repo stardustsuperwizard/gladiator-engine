@@ -1,0 +1,424 @@
+name: Run Ledger
+
+# The only writer of `.metrics/runs.csv`.
+#
+# One merge to `main` becomes one commit appending one `event=merge` row for
+# the merged pull request plus one `event=session` row per session-record
+# comment on it. Nothing else in the control plane appends to that file, and
+# nothing here reads a model's prose: every field is derived by
+# `.github/scripts/ledger_row.py` from GitHub's own JSON. See
+# `docs/RUN_LEDGER.md` for the schema and the vocabularies.
+#
+# Three properties this workflow is built around, in the order they matter:
+#
+#   1. It never fails anything else. A merge has already happened by the time
+#      this runs; a lost row is a gap in a ledger, a red run is a signal that
+#      something is wrong with the merge. So every step that can fail is
+#      guarded, says what failed with `::warning::`, and leaves the job green.
+#      `continue-on-error` is deliberately not used: it would hide the reason
+#      as well as the failure.
+#   2. It never cancels. `cancel-in-progress: false` on a single `ledger`
+#      group serialises every run, because a cancelled write is a lost row and
+#      two concurrent writes race on the same file.
+#   3. It appends only. Existing lines are never rewritten, sorted, reordered
+#      or deleted, and the header is never touched. Re-running against a SHA
+#      whose rows are already present is a no-op, byte for byte.
+#
+# Spends no AI credits. `GITHUB_TOKEN` only -- no PAT, no deploy key, no app
+# credential. That is both what the epic requires and what keeps the ledger
+# commit from triggering another run: a `GITHUB_TOKEN` push raises no workflow
+# events, and `paths-ignore` below closes the same loop a second time.
+
+on:
+  # `push` on `main`, not `pull_request`: a pull request event can run from a
+  # feature branch's own context, and this workflow writes to `main`.
+  #
+  # `paths-ignore` keeps the ledger's own commit from being a merge worth
+  # recording. It is belt and braces -- a `GITHUB_TOKEN` push does not trigger
+  # workflows at all -- but the day someone changes the credential, this is
+  # what stops the loop.
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.metrics/**'
+
+  # Manual replay for a merge whose ledger run failed or was never triggered.
+  # `type: string`, never `type: number` -- a number input reaches the shell
+  # as a float (see test-workflow-logic.sh Part 9).
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: >-
+          Commit SHA on main to replay. Defaults to the current head of main.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: read
+  issues: read
+
+concurrency:
+  # Never cancel an in-flight ledger write: a cancelled write is a lost row,
+  # and the next run has no way to know a row went missing. Runs queue.
+  group: ledger
+  cancel-in-progress: false
+
+jobs:
+  ledger:
+    name: Run Ledger
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+      # The one path in the checkout this workflow may write. Everything else
+      # it produces -- fetched JSON, computed rows, diagnostics -- goes under
+      # $RUNNER_TEMP (test-workflow-logic.sh Part 5).
+      LEDGER: .metrics/runs.csv
+
+      # The merge row's `run_url`. A session row carries its own, out of the
+      # session record; this is the run that appended it.
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    steps:
+      # Full history: the rejected-push path below rebases, and `git pull
+      # --rebase` on a depth-1 clone has nothing to rebase onto.
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # Which pull request did this commit arrive by? Answered by GitHub's
+      # associated-pull-requests endpoint rather than by reading the commit
+      # message, so a hand-written or reworded merge commit is still resolved.
+      #
+      # A direct push to `main` has no associated merged pull request. That is
+      # a normal thing to happen, not a failure: it is logged and the ledger
+      # is left alone.
+      #
+      # The endpoint can name more than one pull request for a commit -- a
+      # branch merged into another branch that was then merged here. Only
+      # merged ones count, and the first of those is the one this commit
+      # arrived by; a replay is how a second one would be recorded.
+      - name: Resolve the Merged Pull Request
+        id: pr
+        shell: bash
+        env:
+          SHA: ${{ inputs.sha || github.sha }}
+        run: |
+          set -uo pipefail
+
+          if ! gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" \
+              --jq 'map(select(.merged_at != null)) | .[0].number // empty' \
+              > "$RUNNER_TEMP"/pr-number.txt 2> "$RUNNER_TEMP"/pr-lookup.err; then
+            echo "::warning::Could not look up the pull request for $SHA:" \
+                 "$(tr '\n' ' ' < "$RUNNER_TEMP"/pr-lookup.err)." \
+                 "The ledger is unchanged."
+            echo "number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          NUMBER="$(tr -d '[:space:]' < "$RUNNER_TEMP"/pr-number.txt)"
+
+          if [ -z "$NUMBER" ]; then
+            echo "No merged pull request is associated with $SHA." \
+                 "Nothing to record; the ledger is unchanged."
+            echo "number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Commit $SHA arrived by pull request #$NUMBER."
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the Pull Request JSON
+        id: fetch
+        if: steps.pr.outputs.number != ''
+        shell: bash
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          set -uo pipefail
+
+          if ! gh pr view "$PR" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json number,mergedAt,body,labels,comments,closingIssuesReferences \
+              > "$RUNNER_TEMP"/pr.json 2> "$RUNNER_TEMP"/pr-fetch.err; then
+            echo "::warning::Could not fetch pull request #$PR:" \
+                 "$(tr '\n' ' ' < "$RUNNER_TEMP"/pr-fetch.err)." \
+                 "The ledger is unchanged."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          wc -c "$RUNNER_TEMP"/pr.json
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      # The closed Issue supplies exactly one column, `tier_label`, and only
+      # the builder knows which Issue that is: it prefers the pull request's
+      # `closingIssuesReferences` and falls back to the `Closes #N` line.
+      # Rather than re-derive that rule here -- a second copy is one that
+      # stops matching the first -- the builder is run once without an Issue
+      # to *ask* it which Issue the rows belong to, and its answer is what
+      # gets fetched. Field 3 of the first row is `issue`; the two fields
+      # before it are a timestamp and the literal `merge`, neither of which
+      # can contain a comma or a quote.
+      #
+      # Every failure here costs one column and nothing else, so each one
+      # warns and carries on with no Issue JSON at all.
+      - name: Fetch the Closed Issue JSON
+        id: issue
+        if: steps.fetch.outputs.ok == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          if ! .github/scripts/ledger_row.py \
+              --pr-json "$RUNNER_TEMP"/pr.json \
+              --run-url "$RUN_URL" \
+              > "$RUNNER_TEMP"/probe.csv 2> "$RUNNER_TEMP"/probe.err; then
+            echo "::warning::Could not read the Issue number off the rows" \
+                 "for the merged pull request:" \
+                 "$(tr '\n' ' ' < "$RUNNER_TEMP"/probe.err)." \
+                 "tier_label will be empty."
+            exit 0
+          fi
+
+          NUMBER="$(head -n 1 "$RUNNER_TEMP"/probe.csv | cut -d, -f3)"
+
+          if [ -z "$NUMBER" ]; then
+            echo "This pull request closes no Issue; tier_label will be empty."
+            exit 0
+          fi
+
+          if ! gh issue view "$NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json number,labels \
+              > "$RUNNER_TEMP"/issue.json 2> "$RUNNER_TEMP"/issue-fetch.err; then
+            echo "::warning::Could not fetch Issue #$NUMBER:" \
+                 "$(tr '\n' ' ' < "$RUNNER_TEMP"/issue-fetch.err)." \
+                 "tier_label will be empty."
+            rm -f "$RUNNER_TEMP"/issue.json
+            exit 0
+          fi
+
+          echo "Read the model tier from Issue #$NUMBER."
+
+      # Every field in every row is decided here, by the builder, from the
+      # JSON fetched above. This workflow computes no field of its own.
+      - name: Build the Rows
+        id: build
+        if: steps.fetch.outputs.ok == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          ARGS=(--pr-json "$RUNNER_TEMP"/pr.json --run-url "$RUN_URL")
+
+          if [ -f "$RUNNER_TEMP"/issue.json ]; then
+            ARGS+=(--issue-json "$RUNNER_TEMP"/issue.json)
+          fi
+
+          if ! .github/scripts/ledger_row.py "${ARGS[@]}" \
+              > "$RUNNER_TEMP"/rows.csv 2> "$RUNNER_TEMP"/build.err; then
+            echo "::warning::ledger_row.py failed to build the rows for this" \
+                 "merge: $(tr '\n' ' ' < "$RUNNER_TEMP"/build.err)." \
+                 "The ledger is unchanged."
+            rm -f "$RUNNER_TEMP"/rows.csv
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          cat "$RUNNER_TEMP"/build.err
+          cat "$RUNNER_TEMP"/rows.csv
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      # Deduplicate, then append verbatim.
+      #
+      # A row is already recorded when its (`event`, `pr`) pair appears in the
+      # file *as it stood before this run*. That makes a replay of an
+      # already-recorded merge a no-op while still letting one merge append
+      # several `event=session` rows for the same pull request in one go --
+      # which a pair-wise check against the batch itself would collapse to
+      # one.
+      #
+      # The surviving lines are appended byte for byte as the builder printed
+      # them. Re-encoding them through a writer here would be a second
+      # opinion on quoting, and the file would disagree with itself.
+      - name: Append to the Ledger
+        id: append
+        if: steps.build.outputs.ok == 'true'
+        shell: python
+        run: |
+          import csv
+          import os
+          import pathlib
+
+          # Scratch lives in $RUNNER_TEMP, never the working tree.
+          SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
+          LEDGER = pathlib.Path(os.environ["LEDGER"])
+
+          EVENT = 1
+          PR = 3
+
+
+          def output(key, value):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                  fh.write(f"{key}={value}\n")
+
+
+          def give_up(message):
+              print(f"::warning::{message} The ledger is unchanged.")
+              output("appended", "0")
+              raise SystemExit(0)
+
+
+          try:
+              lines = (SCRATCH / "rows.csv").read_text(
+                  encoding="utf-8"
+              ).splitlines()
+              fresh_rows = list(csv.reader(lines))
+          except (OSError, ValueError, csv.Error) as exc:
+              give_up(f"Cannot read the computed rows: {exc}.")
+
+          try:
+              before = LEDGER.read_text(encoding="utf-8")
+              recorded = list(csv.reader(before.splitlines()))
+          except (OSError, ValueError, csv.Error) as exc:
+              give_up(f"Cannot read {LEDGER}: {exc}.")
+
+          # The header is skipped by position, not by matching its text: a
+          # header that has gained a column is still the header, and reading
+          # it as a row would put `event` and `pr` in the seen set.
+          seen = {
+              (row[EVENT], row[PR])
+              for row in recorded[1:]
+              if len(row) > PR
+          }
+
+          keep = []
+          for line, row in zip(lines, fresh_rows):
+              if len(row) <= PR:
+                  print(f"::warning::Skipping a malformed computed row: {line!r}")
+                  continue
+              if (row[EVENT], row[PR]) in seen:
+                  print(
+                      f"Already recorded: event={row[EVENT]} pr={row[PR]}."
+                      f" Skipping."
+                  )
+                  continue
+              keep.append(line)
+
+          if not keep:
+              print("Every computed row is already in the ledger. Nothing to do.")
+              output("appended", "0")
+              raise SystemExit(0)
+
+          try:
+              with LEDGER.open("a", encoding="utf-8", newline="") as fh:
+                  # Terminating an unterminated last line is not a rewrite of
+                  # it -- no byte already in the file changes -- but it does
+                  # mean the file was left in a state this workflow never
+                  # produces, so it is worth saying so out loud.
+                  if before and not before.endswith("\n"):
+                      print(
+                          f"::warning::{LEDGER} did not end in a newline;"
+                          f" terminating the last line before appending."
+                      )
+                      fh.write("\n")
+
+                  for line in keep:
+                      fh.write(line + "\n")
+          except OSError as exc:
+              give_up(f"Cannot append to {LEDGER}: {exc}.")
+
+          for line in keep:
+              print(f"Appended: {line}")
+
+          output("appended", str(len(keep)))
+
+      # One commit per merge, whatever it appended. The push is retried
+      # exactly once, after a rebase, because the only thing that can reject
+      # it is another commit landing on `main` between the checkout and the
+      # push -- and a rebase of an append onto a newer append is exactly the
+      # merge git does well. A second rejection means something else is going
+      # on; it warns and stops rather than looping.
+      - name: Commit and Push
+        if: steps.append.outputs.appended != '' && steps.append.outputs.appended != '0'
+        shell: bash
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+          APPENDED: ${{ steps.append.outputs.appended }}
+        run: |
+          set -uo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git add -- "$LEDGER"; then
+            echo "::warning::Could not stage $LEDGER. The ledger is unchanged."
+            exit 0
+          fi
+
+          if git diff --cached --quiet -- "$LEDGER"; then
+            echo "::warning::$APPENDED row(s) were appended but $LEDGER has no" \
+                 "staged change. Nothing is committed."
+            exit 0
+          fi
+
+          if ! git commit -m "chore(ledger): record merge of pull request #$PR"; then
+            echo "::warning::Could not commit the ledger rows for pull request" \
+                 "#$PR. The ledger is unchanged on main."
+            exit 0
+          fi
+
+          if git push origin HEAD:main; then
+            echo "Recorded $APPENDED row(s) for pull request #$PR."
+            exit 0
+          fi
+
+          echo "::warning::Pushing the ledger commit for pull request #$PR was" \
+               "rejected. Rebasing onto main and retrying once."
+
+          if ! git pull --rebase origin main; then
+            # A conflict leaves a rebase in progress. The runner is thrown
+            # away either way, but an abandoned rebase makes every `git`
+            # command after it report on the rebase rather than on the
+            # repository, which is a confusing thing to leave in a log.
+            git rebase --abort || true
+
+            echo "::warning::Could not rebase the ledger commit for pull" \
+                 "request #$PR onto main. The rows are not recorded; replay" \
+                 "this workflow to record them."
+            exit 0
+          fi
+
+          if ! git push origin HEAD:main; then
+            echo "::warning::The ledger commit for pull request #$PR was" \
+                 "rejected twice. The rows are not recorded; replay this" \
+                 "workflow to record them."
+            exit 0
+          fi
+
+          echo "Recorded $APPENDED row(s) for pull request #$PR after a rebase."
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+          APPENDED: ${{ steps.append.outputs.appended }}
+          SHA: ${{ inputs.sha || github.sha }}
+        run: |
+          {
+            echo "## Run Ledger"
+            echo
+            if [ -z "$PR" ]; then
+              echo "No merged pull request for \`$SHA\`. Nothing recorded."
+            else
+              echo "Pull request #$PR: ${APPENDED:-0} row(s) appended to" \
+                   "\`$LEDGER\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
