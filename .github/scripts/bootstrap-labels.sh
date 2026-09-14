@@ -65,6 +65,11 @@ review:pass|0E8A16|Review verdict: accepted
 review:fix|D93F0B|Review verdict: bounded correction required on the same branch
 review:planning-failure|B60205|Review verdict: the Issue itself was wrong, not the code
 review:design-ambiguity|FBCA04|Review verdict: needs a human design decision before proceeding
+# Test ratchet (#218). A state marker on a pull request, applied by a human and
+# read live by ci.yml's `test-ratchet` job; no workflow ever adds or removes
+# it. Its presence downgrades a fallen suite or assertion count from a failure
+# to a warning.
+test-removal-approved|B60205|Human approval for a pull request that lowers the test suite or assertion count
 dashboard|5319E7|The control-plane dashboard Issue
 dashboard:update|5319E7|Request a dashboard re-render
 LABELS

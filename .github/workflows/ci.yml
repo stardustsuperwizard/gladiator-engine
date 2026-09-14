@@ -477,6 +477,176 @@ jobs:
             -pyflakes= \
             -ignore 'unknown permission scope "copilot-requests"'
 
+  # The test ratchet (#218): neither the number of suites that actually run
+  # nor the number of `_expect(` assertions may fall on a pull request without
+  # a human saying so on the pull request itself.
+  #
+  # Pull-request-only, and gated by `github.event_name` rather than by a
+  # trigger filter, for the reason the file header gives: a `push` to main and
+  # a `workflow_dispatch` run have no merge base to ratchet against, so there
+  # is nothing to compare and the job reports `skipped` -- which `ci` already
+  # counts as passing.
+  #
+  # Deliberately NOT behind the `changes` gate, unlike `godot` and the three
+  # control-plane jobs. This job is python-only and costs seconds, so a
+  # deny-list or allow-list here would buy nothing and add one more list to
+  # keep in sync -- and the failure mode of getting that list wrong is a
+  # ratchet that silently stops running, which is the one failure mode this
+  # whole gate exists to prevent.
+  #
+  # `contents: read` to see both sides of the merge, `pull-requests: read` to
+  # read the override label. Nothing is written back to GitHub: the report
+  # goes to `$GITHUB_STEP_SUMMARY` and the annotation stream, so a fork pull
+  # request's read-only token is all this ever needs.
+  test-ratchet:
+    name: Test Ratchet
+    if: ${{ !cancelled() && !failure() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # `fetch-depth: 0` because both sides of the merge are needed: the
+      # default shallow fetch has no merge base to find.
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Merge Base
+        id: merge-base
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          # The pull request's own two endpoints, not `github.sha` -- on a
+          # `pull_request` run that is the ephemeral merge commit.
+          status=0
+          merge_base="$(git merge-base "$HEAD_SHA" "$BASE_SHA")" || status=$?
+
+          if [ "$status" -ne 0 ] || [ -z "$merge_base" ]; then
+            echo "::error::no merge base between head $HEAD_SHA and base" \
+              "$BASE_SHA -- the ratchet has nothing to compare against"
+            exit 1
+          fi
+
+          echo "Merge base: $merge_base"
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
+
+      - name: Count Merge Base And Head
+        shell: bash
+        env:
+          MERGE_BASE: ${{ steps.merge-base.outputs.merge_base }}
+        run: |
+          set -euo pipefail
+
+          # A detached worktree under $RUNNER_TEMP, never a second checkout
+          # inside the tree: Part 5 of test-workflow-logic.sh is an absolute
+          # check with an empty allow-list, and #84 is what it remembers.
+          git worktree add --detach "$RUNNER_TEMP/base" "$MERGE_BASE"
+
+          # The HEAD checkout's copy of the counter against BOTH trees, on
+          # purpose. Running each side's own counter would let a pull request
+          # that weakens the counting rules shed suites for free; with one
+          # counter on both sides a rule change moves both numbers and the
+          # delta stays honest. `--root` is the counter's only root, so
+          # pointing it at a worktree it is not sitting in is supported.
+          python3 .github/scripts/count-tests.py count --root "$RUNNER_TEMP/base" \
+            > "$RUNNER_TEMP/base-counts.json"
+          python3 .github/scripts/count-tests.py count --root . \
+            > "$RUNNER_TEMP/head-counts.json"
+
+      - name: Compare Counts
+        id: compare
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # `status=0; cmd || status=$?`, never `if ! cmd` and never
+          # `cmd | tee`. validate-godot.sh:43-48 documents why in this
+          # repository's own words: after a negated command $? is the status
+          # of the negation, and in a pipeline it is the last command's --
+          # either way the fall gets reported and the step still exits 0. A
+          # ratchet that reports a fall and exits 0 is worse than no ratchet.
+          status=0
+          python3 .github/scripts/count-tests.py compare \
+            --base "$RUNNER_TEMP/base-counts.json" \
+            --head "$RUNNER_TEMP/head-counts.json" \
+            > "$RUNNER_TEMP/ratchet.md" || status=$?
+
+          # Unconditionally -- pass, fall, or downgrade. Both counts and their
+          # signed deltas belong in the summary of every run, so the trend is
+          # readable without digging through logs.
+          cat "$RUNNER_TEMP/ratchet.md" >> "$GITHUB_STEP_SUMMARY"
+
+          # 1 is "a count fell", which the label below may downgrade. Anything
+          # else is the counter itself failing (2 is a missing or malformed
+          # report), and that is not a test-removal decision, so no label
+          # downgrades it -- fail here, before the branch can reach it.
+          if [ "$status" -ne 0 ] && [ "$status" -ne 1 ]; then
+            echo "::error::count-tests.py compare failed (exit $status) --" \
+              "this is a broken ratchet, not a lowered count"
+            exit "$status"
+          fi
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      # The labels are read LIVE from the API here, not taken from
+      # `github.event.pull_request.labels` -- the same pattern the `changes`
+      # job above uses for its file list, and for two non-obvious reasons:
+      #
+      #   * Re-running a workflow replays the ORIGINAL event payload, so a
+      #     label added in response to a red ratchet would still be absent
+      #     from `github.event` on the re-run, and the documented escape hatch
+      #     would appear not to work.
+      #   * `pull_request` does not fire on `labeled`, so re-running this job
+      #     is the only way to apply the override without pushing a commit.
+      #
+      # Only reached when a count actually fell, so the green path costs no
+      # API call.
+      - name: Apply Ratchet
+        if: ${{ steps.compare.outputs.status != '0' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh api --paginate \
+            "repos/$REPOSITORY/issues/$PR_NUMBER/labels" \
+            --jq '.[].name' > "$RUNNER_TEMP/pr-labels.txt"
+
+          level="error"
+          approved="false"
+          if grep -qxF 'test-removal-approved' "$RUNNER_TEMP/pr-labels.txt"; then
+            level="warning"
+            approved="true"
+          fi
+
+          # One annotation carrying the whole report, with newlines
+          # percent-encoded as the workflow-command format requires. A
+          # line-per-annotation loop would be truncated: GitHub keeps only the
+          # first ten annotations of each level per step, so the detail that
+          # names which files lost assertions is exactly what would be lost.
+          encoded="$(awk '{ gsub(/%/, "%25"); printf "%s%%0A", $0 }' \
+            "$RUNNER_TEMP/ratchet.md")"
+          echo "::${level}::${encoded}"
+
+          if [ "$approved" = "true" ]; then
+            echo "test-removal-approved is on this pull request: the fall" \
+              "above is downgraded to a warning."
+            exit 0
+          fi
+
+          echo "Add the test-removal-approved label and re-run this job to" \
+            "accept the fall above."
+          exit 1
+
   # The single aggregate status check. Its id and name are both the literal
   # string `ci` because branch protection is configured against that string
   # -- one required check, however many jobs run behind it.
@@ -488,7 +658,8 @@ jobs:
   # rather than only that something did.
   ci:
     name: ci
-    needs: [changes, godot, export, workflow-logic, issue-deps, actionlint]
+    needs:
+      [changes, godot, export, workflow-logic, issue-deps, actionlint, test-ratchet]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
