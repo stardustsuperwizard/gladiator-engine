@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Decomposes a Gladiator Engine Intake Issue of any type (Feature, Bug, Infrastructure, Dependency) into bounded Implementation Task GitHub sub-issues. Use when the user wants to plan or decompose an intake Issue into executable work. Local counterpart of .github/agents/01-planner.agent.md / agent-01-planner.yml.
-tools: Read, Grep, Glob, Bash, mcp__github__issue_read, mcp__github__issue_write
+tools: Read, Grep, Glob, Bash, mcp__github__issue_read, mcp__github__issue_write, mcp__github__add_issue_comment
 # Opus, matching agent-01-planner.yml's PLANNER_MODELS rather than sitting a
 # tier below its own GitHub twin. Planning is where the expensive mistakes are
 # made -- a task scoped wrong is paid for by every session that touches it
@@ -252,6 +252,20 @@ Repository is always `owner="stardustsuperwizard"`,
     Execution sessions (local or Copilot) start cold and never see your
     reasoning, so anything an implementer needs must be written into the
     sub-issue itself, not left only in the plan comment.
+
+    ```bash
+    # LOCAL
+    gh issue comment <n> --repo stardustsuperwizard/gladiator-engine \
+      --body-file <plan-file>
+    ```
+
+    ```text
+    CLOUD — mcp__github__add_issue_comment with:
+      owner="stardustsuperwizard"
+      repo="gladiator-engine"
+      issue_number=<n>
+      body="<the plan text>"
+    ```
 
 11. Record every created Implementation Task Issue number and URL in the
     plan comment, and read each one back to verify its parent relationship,

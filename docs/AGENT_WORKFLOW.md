@@ -1805,7 +1805,10 @@ the task, and a cheap model that cannot find `gh` will try to install it. So
 the files say *use this exact call*, and say it for both surfaces, rather than
 describing the goal and leaving the route to be worked out. The subagents also
 name their `mcp__github__*` tools in `tools:`, which is what actually grants
-them — the prose alone would not.
+them — the prose alone would not. `.github/scripts/test-workflow-logic.sh`
+Part 6 now checks this for the three subagents whose contract requires them
+to publish a comment (`planner`, `reviewer`, `plan-reviewer`), so the grant is
+enforced rather than merely asserted (#72).
 
 Two operations have no cloud form, and the files say so rather than
 improvising one: `--add-blocked-by` (the MCP tools cover parent/child

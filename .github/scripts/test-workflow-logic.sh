@@ -24,7 +24,10 @@
 #           an implementation commit, and then broke that branch's retry.
 #   Part 6  A role is written down on three surfaces with nothing linking
 #           them; one that goes missing on a surface fails silently, the way
-#           an unbootstrapped label does.
+#           an unbootstrapped label does. #72 -- the planner's contract
+#           required it to post a plan comment, but its `tools:` line never
+#           granted `mcp__github__add_issue_comment`, so the cloud surface
+#           had no route to a step its own Procedure required.
 #   Part 7  The Godot version is pinned in several places that must move
 #           together, and VERSION.md wrongly claimed one default covered
 #           them all. A half-done bump would pass CI on the stale half.
@@ -862,6 +865,30 @@ for read_only_role in ("reviewer", "plan-reviewer"):
                 f" The role is read-only against code by design."
             )
 
+# --- Commenting roles hold the tool their contract requires -----------------
+# #72 -- the planner's Procedure requires it to publish a plan comment (step
+# 10), but its `tools:` line never granted `mcp__github__add_issue_comment`,
+# so the cloud surface had no route to a step its own contract required.
+# `reviewer` and `plan-reviewer` publish a verdict comment the same way.
+# `implementer` and `fixer` open pull requests, never post Issue comments, and
+# must not gain this grant merely to make the check below uniform.
+for commenting_role in ("planner", "reviewer", "plan-reviewer"):
+    agent_path = local.get(commenting_role)
+    if agent_path is None:
+        failures.append(
+            f"no {commenting_role} role found -- the comment-tool check cannot run"
+        )
+        continue
+    tools = field(frontmatter(agent_path), "tools") or ""
+    granted = {t.strip() for t in tools.split(",")}
+    if "mcp__github__add_issue_comment" not in granted:
+        failures.append(
+            f"{agent_path}: {commenting_role} has no"
+            f" `mcp__github__add_issue_comment` tool, but its contract"
+            f" requires it to publish a comment -- the cloud surface would"
+            f" have no route to that step."
+        )
+
 if failures:
     for line in failures:
         print(f"  FAIL — {line}", file=sys.stderr)
@@ -870,7 +897,8 @@ if failures:
 print(
     f"  ok   — {len(cloud)} role(s) paired across .github/agents,"
     f" .claude/agents and .claude/commands; reviewer and plan-reviewer hold"
-    f" no write tool"
+    f" no write tool; planner, reviewer and plan-reviewer hold"
+    f" mcp__github__add_issue_comment"
 )
 sys.exit(0)
 PY
