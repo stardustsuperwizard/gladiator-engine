@@ -1866,7 +1866,20 @@ check(
     f" complete={pinned_complete}",
 )
 
-# Verify the pinned inventory is distinct from walking the tree
+# Verify a bundle with no `inventory` key behaves exactly as today: its
+# inventory equals what a live walk of REPO_ROOT gives, not merely "more
+# entries than a four-item pinned list". Import the script itself rather
+# than re-deriving SKIP_DIRS or the walk order by hand -- the same rule
+# check 8 states for a reviewer applies here to the test.
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "build_plan_review_request", script
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+expected_live_files = module.Tree(module.REPO_ROOT).files
+
 live_walk_bundle = write_bundle(
     "live-walk.json",
     {
@@ -1900,15 +1913,23 @@ live_text = (
     live_out.read_text(encoding="utf-8") if live_out.is_file() else ""
 )
 
-# The live walk should produce many more files than the pinned inventory
+# A bundle without `inventory` must produce the same inventory a live walk
+# of REPO_ROOT gives -- exact equality, not a cardinality check that would
+# pass on almost any regression in the walk path.
 live_inventory_section = section(live_text, "# REPOSITORY FILE INVENTORY")
-live_count = live_inventory_section.count("- ")
+rendered_live_files = {
+    line[len("- "):]
+    for line in live_inventory_section.splitlines()
+    if line.startswith("- ")
+}
 
 check(
-    live_count > len(pinned_inventory),
-    "a bundle without inventory walks the live tree and produces many more"
-    " files than the pinned inventory",
-    f"live tree walk produced {live_count} files, expected > {len(pinned_inventory)}",
+    result.returncode == 0 and rendered_live_files == expected_live_files,
+    "a bundle without inventory walks the live tree and matches"
+    " Tree(REPO_ROOT) exactly",
+    "live tree walk did not match Tree(REPO_ROOT): "
+    f"missing={sorted(expected_live_files - rendered_live_files)[:5]},"
+    f" extra={sorted(rendered_live_files - expected_live_files)[:5]}",
 )
 
 sys.exit(1 if failures else 0)

@@ -1,5 +1,5 @@
 {
-  "_provenance": "Task #227 from epic #226, after being retargeted to #230 (plan review). This inventory is a snapshot of the repository state when this task was retargeted (2026-09-13). The task still names sync-local-session-label.py after the file had been renamed; this fixture and its pinned inventory exist to ensure check 8 still reports that stale name as unresolved.",
+  "_provenance": "Task #227 from epic #226, after being retargeted to #230 (plan review). This inventory is a snapshot of the repository tree at commit 819a6e4 (2026-09-13), the commit at which this task was retargeted. Captured with `git ls-tree -r --name-only 819a6e4`; none of SKIP_DIRS's excluded names (`.git`, `.godot`, `__pycache__`, `.import`, `node_modules`, `.venv`) are present as tracked paths in that tree, so no additional filtering beyond what `git ls-tree` already omits was needed. The task still names sync-local-session-label.py after the file had been renamed; this fixture and its pinned inventory exist to ensure check 8 still reports that stale name as unresolved.",
   "epic": {
     "number": 226,
     "title": "[epic] `needs-local-session`: make restricted-path work filterable, derived not declared",

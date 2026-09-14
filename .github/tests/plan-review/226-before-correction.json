@@ -1,5 +1,5 @@
 {
-  "_provenance": "Epic #226 (discover & repair a plan defect: inventing a second label for human-credentials) and its three tasks, #227-#229, as filed. This inventory is a snapshot of the repository state when this plan was filed (2026-09-13). #226's plan invented a second label for a fact the tree already carried, the fixture exists to pin that regression, and this inventory preserves the tree state at that time.",
+  "_provenance": "Epic #226 (discover & repair a plan defect: inventing a second label for human-credentials) and its three tasks, #227-#229, as filed. This inventory is a snapshot of the repository tree at commit 819a6e4 (2026-09-13), the commit at which this plan was captured. Captured with `git ls-tree -r --name-only 819a6e4`; none of SKIP_DIRS's excluded names (`.git`, `.godot`, `__pycache__`, `.import`, `node_modules`, `.venv`) are present as tracked paths in that tree, so no additional filtering beyond what `git ls-tree` already omits was needed. #226's plan invented a second label for a fact the tree already carried, the fixture exists to pin that regression, and this inventory preserves the tree state at that time.",
   "epic": {
     "number": 226,
     "title": "[epic] `needs-local-session`: make restricted-path work filterable, derived not declared",

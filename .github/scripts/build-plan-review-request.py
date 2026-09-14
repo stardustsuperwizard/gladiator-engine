@@ -444,7 +444,7 @@ def render_comments(epic: dict) -> str:
         " owner's newer intent, not a disagreement to resolve in the body's"
         " favour.",
         "",
-        "Agent-authored comments are excluded; see the final section.",
+        "Machine-authored comments are excluded; see the final section.",
         "",
     ]
 
