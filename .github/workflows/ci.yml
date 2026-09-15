@@ -288,6 +288,15 @@ jobs:
               # The ledger row builder the workflow above calls. Same
               # reasoning as the workflow itself.
               ".github/scripts/ledger_row.py",
+              # The pipeline report's own workflow. Control plane, covered
+              # by CONTROL_PLANE_ALLOW below, and does not load the project.
+              ".github/workflows/pipeline-report.yml",
+              # The pure ledger-derived figures the report renders. Reads
+              # `.metrics/runs.csv`; never touches the Godot project.
+              ".github/scripts/pipeline_metrics.py",
+              # The report renderer the workflow above calls. Same
+              # reasoning as `ledger_row.py` above it.
+              ".github/scripts/render-pipeline-report.py",
           ]
 
           # Carried over verbatim in content from

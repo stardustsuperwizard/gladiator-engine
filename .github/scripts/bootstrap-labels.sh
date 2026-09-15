@@ -78,6 +78,7 @@ test-removal-approved|B60205|Human approval for a pull request that lowers the t
 characterization-test|FBCA04|Human approval: this pull request's new tests legitimately pass on the merge base
 dashboard|5319E7|The control-plane dashboard Issue
 dashboard:update|5319E7|Request a dashboard re-render
+pipeline-report|5319E7|The pinned weekly pipeline-report Issue
 LABELS
 )
 

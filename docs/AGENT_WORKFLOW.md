@@ -548,7 +548,10 @@ needs before switching. `.metrics/runs.csv` records that for you: each merge
 row's `fix_round` is how many fix cycles that task took and its `verdict` is
 how the review ended, and the session rows beneath it name the model that did
 the work in `model_resolved`. Filter to the model, compare the `fix_round`
-column. See `docs/RUN_LEDGER.md`.
+column. See `docs/RUN_LEDGER.md`. The weekly `pipeline-report.yml`'s
+*Planner tier accuracy* and *Fix rounds per task* sections, published to the
+pinned `pipeline-report` Issue, already compute the aggregate version of
+that comparison across every model in the window.
 
 ### Resolved: paying for Claude sessions with a subscription instead of API credits
 
@@ -1411,7 +1414,9 @@ implementation problem. It is already recorded: the merge row that
 `run-ledger.yml` appends to `.metrics/runs.csv` carries that count in its
 `fix_round` column, derived from the `<!-- agent-fix-applied -->` comments on
 the pull request rather than from anything anyone remembered to write down.
-Sort by that column to find the tasks that were planned badly.
+The weekly `pipeline-report.yml` now sorts that column for you — see its
+*Fix rounds per task* section, published to the pinned `pipeline-report`
+Issue — instead of leaving it to a human to notice.
 
 ### Step 4 — Rollup
 
@@ -2443,6 +2448,9 @@ are custom agents and MCP servers.
 | `.github/workflows/ci.yml` | The one `pull_request`-triggered workflow (also `push` to `main` and a manual dispatch); its `changes` job decides which gates apply, six verification jobs run behind that job's `if:` (`godot`, `workflow-logic`, `issue-deps`, `actionlint` in parallel, plus `export` sequenced behind `godot` and `smoke` sequenced behind `export`), and the `ci` job aggregates all six into the single required status check |
 | `.github/workflows/godot-validation.yml` | The one reusable validation job (`workflow_call`); called by `ci.yml`'s `godot` job, `agent-02-implement.yml`, and `agent-05-fix.yml` |
 | `.github/workflows/run-ledger.yml` | The only writer of `.metrics/runs.csv`: on `push` to `main`, resolves the merged pull request for the pushed commit, appends its rows and commits them, serialised through one non-cancelling `ledger` concurrency group; every failure path warns and leaves the job green |
+| `.github/workflows/pipeline-report.yml` | Weekly (and dispatchable), credit-free: renders delivery and agent-accuracy metrics and publishes them to the pinned `pipeline-report` Issue; a render failure fails the job and leaves the previous report standing rather than replacing it |
+| `.github/scripts/pipeline_metrics.py` | The ledger-derived half of the pipeline report: delivery frequency, first-pass yield, planner tier accuracy, verdict distribution and fix rounds, computed from `.metrics/runs.csv` alone |
+| `.github/scripts/render-pipeline-report.py` | Joins `pipeline_metrics.py`'s figures with GitHub-derived ones (lead time for change, change failure rate, time to restore, CI duration) into the markdown `pipeline-report.yml` publishes; computes no metric of its own |
 | `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt |
 | `.github/actions/build-fix-request` | Shared by `agent-05-fix.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the fixer prompt |
 | `.github/actions/run-agent-session` | The one place a vendor difference lives. Runs one agent session -- Copilot CLI, or Claude Code on either credential, chosen by its `vendor` input -- walking a model preference list and classifying how the session ended into a shared outcome schema. Not yet shared by the planner, which still carries its own copy of the loop |
