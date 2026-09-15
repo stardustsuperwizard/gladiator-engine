@@ -8,7 +8,9 @@ The ledger serves as a queryable source of truth for run history, making it poss
 
 ## Storage
 
-The ledger is stored at `.metrics/runs.csv`, tracked by git like all version-controlled data. It is append-only — once a row is written, it is never modified or deleted. Exactly one workflow, `.github/workflows/run-ledger.yml`, writes to this file, ensuring deterministic ordering and atomicity.
+The ledger is stored at `.metrics/runs.csv`, tracked by git like all version-controlled data. It is append-only — once a row is written, it is never modified or deleted. Exactly one workflow, `.github/workflows/run-ledger.yml`, writes to this file, ensuring deterministic ordering and atomicity. It remains the ledger's only writer, and the ledger stays the single source of truth, even as readers are added.
+
+`.github/scripts/pipeline_metrics.py` and `.github/scripts/render-pipeline-report.py` are readers, not writers: the weekly `pipeline-report.yml` workflow calls them to derive delivery and agent-accuracy figures from this file and publishes the result to the pinned `pipeline-report` Issue. Neither script appends to, rewrites, or otherwise changes `.metrics/runs.csv`.
 
 ## Schema
 

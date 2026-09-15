@@ -1,0 +1,175 @@
+name: Pipeline Report
+
+# Weekly, credit-free report of delivery and agent-accuracy metrics, derived
+# from the run ledger and from GitHub's own state, published to a pinned
+# `pipeline-report` Issue. Patterned on `agent-00-dashboard.yml` for how it
+# publishes and on `agent-03-rollup.yml` for its credential posture.
+#
+# It computes nothing itself. `.github/scripts/render-pipeline-report.py`
+# owns every figure -- the ledger half calls `pipeline_metrics.py`, the
+# GitHub half is collected through `gh` -- and this workflow only runs it,
+# publishes exactly what it printed, and reports where. See
+# `docs/RUN_LEDGER.md` and the renderer's own module docstring for what each
+# figure means and how it fails.
+#
+# Unlike `run-ledger.yml`, this workflow *should* go red on failure: it
+# fails nothing downstream, and a red scheduled run is how the operator
+# learns the ledger or GitHub state could not be read. `continue-on-error`
+# is deliberately not used anywhere below -- it would hide the reason along
+# with the failure.
+#
+# Spends no AI credits and needs no secret beyond `GITHUB_TOKEN`. No
+# `secrets.*` reference, no `run-agent-session`, no model CLI.
+
+on:
+  # Once a week. An off-the-hour minute, the same "avoid the top-of-hour
+  # stampede" convention agent-00-dashboard.yml's commented-out cron uses.
+  schedule:
+    - cron: "23 6 * * 1"
+
+  # Manual re-run, and the only way to widen or narrow the reporting window
+  # without editing the workflow. `type: string`, never `type: number` -- a
+  # number input reaches the shell as a float (test-workflow-logic.sh Part 9
+  # exists because that broke a live dispatch path).
+  workflow_dispatch:
+    inputs:
+      weeks:
+        description: "Reporting window width in ISO weeks, ending now."
+        required: false
+        type: string
+        default: "12"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # Only the newest render matters -- an in-flight one is reading state a
+  # newer trigger has already superseded.
+  group: pipeline-report
+  cancel-in-progress: true
+
+jobs:
+  report:
+    name: Pipeline Report
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+      # The Issue carrying the report is found by this label, not by title
+      # or by searching for the body marker, so renaming it is harmless --
+      # the same rule agent-00-dashboard.yml states for the dashboard.
+      REPORT_LABEL: pipeline-report
+      REPORT_TITLE: Pipeline Report
+
+      WEEKS: ${{ inputs.weeks || '12' }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Find or Create the Report Issue
+        id: issue
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXISTING=$(gh label list --repo "$GITHUB_REPOSITORY" \
+            --limit 200 --json name --jq '.[].name')
+
+          if ! grep -qx "$REPORT_LABEL" <<<"$EXISTING"; then
+            gh label create "$REPORT_LABEL" \
+              --repo "$GITHUB_REPOSITORY" \
+              --color "5319E7" \
+              --description "The pinned weekly pipeline-report Issue" \
+              --force
+          fi
+
+          NUMBER=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --label "$REPORT_LABEL" \
+            --limit 1 \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -z "$NUMBER" ]; then
+            echo "No pipeline-report Issue yet; creating one."
+            URL=$(gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$REPORT_TITLE" \
+              --label "$REPORT_LABEL" \
+              --body "<!-- pipeline-report --> Generating…")
+            NUMBER="${URL##*/}"
+
+            # A repository allows three pinned Issues. If all three are
+            # taken this fails, and an unpinned report is still a working
+            # report, so it is not worth failing the run over.
+            gh issue pin "$NUMBER" --repo "$GITHUB_REPOSITORY" \
+              || echo "::warning::Could not pin #$NUMBER. Pin it by hand."
+          fi
+
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Report Issue is #$NUMBER"
+
+      - name: Render
+        id: render
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! .github/scripts/render-pipeline-report.py --weeks "$WEEKS" \
+              > "$RUNNER_TEMP"/pipeline-report.md \
+              2> "$RUNNER_TEMP"/pipeline-report.err; then
+            {
+              echo "## Pipeline Report render failed"
+              echo
+              echo "The report was not published; whatever report was"
+              echo "already on the Issue is left standing rather than"
+              echo "replaced with an empty or misleading one."
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP"/pipeline-report.err
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP"/pipeline-report.err >&2
+            exit 1
+          fi
+
+          ROWS=$(grep -m1 '^Read ' "$RUNNER_TEMP"/pipeline-report.md || echo "unknown")
+          echo "rows=$ROWS" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        # Explicit, not the bare default: a render that failed must never
+        # reach `gh issue edit` and overwrite a good report with a failed
+        # one's absence.
+        if: steps.render.outcome == 'success'
+        shell: bash
+        env:
+          NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          # Editing a body sends no notifications, so this can run as often
+          # as it likes without becoming noise.
+          gh issue edit "$NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file "$RUNNER_TEMP"/pipeline-report.md
+
+          echo "Published to #$NUMBER"
+
+      - name: Summary
+        if: steps.render.outcome == 'success'
+        shell: bash
+        env:
+          NUMBER: ${{ steps.issue.outputs.number }}
+          ROWS: ${{ steps.render.outputs.rows }}
+        run: |
+          {
+            echo "## Pipeline Report"
+            echo
+            echo "Published to issue #${NUMBER:-?}."
+            echo
+            echo "${ROWS:-}"
+          } >> "$GITHUB_STEP_SUMMARY"

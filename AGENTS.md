@@ -120,6 +120,15 @@ note above, and almost none of it was visible anywhere else in this file:
   `<!-- agent-session-record -->` JSON comments that `agent-02-implement.yml`,
   `agent-04-review.yml` and `agent-05-fix.yml` post. Schema and vocabularies:
   `docs/RUN_LEDGER.md`.
+- **The pipeline report.** `.github/workflows/pipeline-report.yml` runs
+  weekly (and on dispatch), spends no AI credits, and publishes a
+  credit-free markdown report to the pinned `pipeline-report` Issue. It
+  derives delivery frequency, first-pass yield, planner tier accuracy,
+  verdict distribution and fix rounds from `.metrics/runs.csv` via
+  `.github/scripts/pipeline_metrics.py`, and lead time for change, change
+  failure rate, time to restore and CI wall-clock duration from GitHub's own
+  state, via `.github/scripts/render-pipeline-report.py`. It reads the
+  ledger; it never writes it.
 - **The test ratchet**, documented under *Testing* below.
 - **An export job.** `ci.yml`'s `export` job builds a Linux artifact via
   `.github/scripts/export-godot.sh` against `export_presets.cfg`. Every scrap

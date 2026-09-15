@@ -5324,6 +5324,436 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 20: pipeline-report.yml's workflow shape and ci.yml's gate (#341).
+#
+# The renderer that pipeline-report.yml calls has its own coverage (Part 18,
+# Part 19); this part covers the workflow wrapped around it -- the schedule,
+# the credential posture, the publish-or-not gate, and the three new
+# GODOT_DENY entries in ci.yml. Text inspection for the shape checks, an
+# actual run of the extracted "Render" step's shell source for the failure
+# path (the same technique Part 13 uses on "Determine Gates"), and Part 13's
+# own harness reused unmodified for the gate. No network, no `gh`, no real
+# repository.
+# ---------------------------------------------------------------------------
+
+part20 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1])
+import wf
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+root = pathlib.Path(repo_root)
+WF_REL = ".github/workflows/pipeline-report.yml"
+CI_REL = ".github/workflows/ci.yml"
+LABELS_REL = ".github/scripts/bootstrap-labels.sh"
+
+text = (root / WF_REL).read_text(encoding="utf-8")
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part20.", dir=work_dir))
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def block_from(marker, stop_marker):
+    """The nested content under a `marker:` line, at whatever indent it
+    sits at -- `workflow_dispatch:` is nested under `on:`, `permissions:`
+    is not. Ends at the next line back at or above `marker:`'s own indent,
+    the same rule Part 9 uses to find the end of a dispatch block.
+    `stop_marker` only names the boundary for a clearer failure message."""
+    lines = text.splitlines()
+    collected = []
+    marker_indent = None
+    for line in lines:
+        if marker_indent is None:
+            m = re.match(rf"^(\s*){re.escape(marker)}:\s*$", line)
+            if m:
+                marker_indent = len(m.group(1))
+            continue
+        if not line.strip():
+            collected.append(line)
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= marker_indent and not line.lstrip().startswith("#"):
+            break
+        collected.append(line)
+    if marker_indent is None:
+        raise LookupError(f"no `{marker}:` line found before {stop_marker!r}")
+    return "\n".join(collected)
+
+
+def non_comment_lines(s):
+    return [
+        line for line in s.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+# -- c1: exactly one weekly schedule cron; workflow_dispatch present; every --
+#        declared input is type: string.
+crons = re.findall(r'^\s*-\s*cron:\s*"([^"]+)"', text, re.M)
+check(
+    len(crons) == 1,
+    f"exactly one schedule cron expression ({crons!r})",
+    f"expected exactly one `cron:` entry, found {crons!r}",
+)
+
+if len(crons) == 1:
+    fields = crons[0].split()
+    weekly = (
+        len(fields) == 5
+        and fields[2] == "*"  # day of month: every day
+        and fields[3] == "*"  # month: every month
+        and fields[4] != "*"  # day of week: a specific weekday
+    )
+    check(
+        weekly,
+        f"the cron expression ({crons[0]!r}) is weekly, not daily or finer",
+        f"cron {crons[0]!r} does not look weekly (day-of-week field must"
+        " pin one weekday)",
+    )
+
+check(
+    re.search(r"^\s*workflow_dispatch:\s*$", text, re.M) is not None,
+    "workflow_dispatch is declared",
+    "no `workflow_dispatch:` trigger found",
+)
+
+dispatch_block = block_from("workflow_dispatch", "the next top-level key")
+input_names = re.findall(r"^\s{6}([a-zA-Z0-9_]+):\s*$", dispatch_block, re.M)
+input_types = re.findall(r"^\s*type:\s*(\S+)\s*$", dispatch_block, re.M)
+check(
+    len(input_names) >= 1,
+    f"workflow_dispatch declares at least one input ({input_names!r})",
+    f"found no input keys in the workflow_dispatch block:\n{dispatch_block}",
+)
+check(
+    len(input_types) == len(input_names) and all(t == "string" for t in input_types),
+    f"every declared dispatch input is `type: string` ({dict(zip(input_names, input_types))!r})",
+    f"expected one `type: string` per input, got types={input_types!r}"
+    f" for inputs={input_names!r}",
+)
+
+# -- c2: permissions is exactly {contents: read, issues: write}. -----------
+perm_block = block_from("permissions", "concurrency")
+perms = dict(re.findall(r"^\s+(\w[\w-]*):\s*(\w+)\s*$", perm_block, re.M))
+check(
+    perms == {"contents": "read", "issues": "write"},
+    f"permissions is exactly contents: read, issues: write ({perms!r})",
+    f"expected {{'contents': 'read', 'issues': 'write'}}, got {perms!r}",
+)
+
+# -- c3: no AI credits spent -- checked against non-comment lines only, so --
+#        prose in the file's own header explaining the constraint (which
+#        names these same strings) cannot trip it.
+code_text = "\n".join(non_comment_lines(text))
+check(
+    "secrets." not in code_text,
+    "no `secrets.` expression outside comments",
+    "found a `secrets.` expression in a non-comment line",
+)
+check(
+    "run-agent-session" not in code_text,
+    "no reference to .github/actions/run-agent-session outside comments",
+    "found a run-agent-session reference in a non-comment line",
+)
+check(
+    re.search(r"\bclaude\b|\bcopilot\b", code_text, re.I) is None,
+    "no invocation of claude or copilot outside comments",
+    "found a claude/copilot CLI reference in a non-comment line",
+)
+
+# -- c4: concurrency group and cancel-in-progress. --------------------------
+concurrency_block = block_from("concurrency", "jobs")
+check(
+    re.search(r"^\s*group:\s*pipeline-report\s*$", concurrency_block, re.M)
+    is not None,
+    "concurrency group is pipeline-report",
+    f"concurrency block does not pin group: pipeline-report:\n{concurrency_block}",
+)
+check(
+    re.search(r"^\s*cancel-in-progress:\s*true\s*$", concurrency_block, re.M)
+    is not None,
+    "cancel-in-progress is true",
+    f"concurrency block does not set cancel-in-progress: true:\n{concurrency_block}",
+)
+
+# -- c5: the Publish step (the only `gh issue edit`) never runs unless the --
+#        Render step succeeded, and Render never masks its own failure with
+#        continue-on-error.
+step_texts = re.split(r"\n(?=      - name: )", text)
+publish_steps = [s for s in step_texts if "gh issue edit" in s]
+check(
+    len(publish_steps) == 1,
+    f"exactly one step calls `gh issue edit` ({len(publish_steps)} found)",
+    f"expected exactly one step calling gh issue edit, found {len(publish_steps)}",
+)
+if publish_steps:
+    publish_step = publish_steps[0]
+    if_line = re.search(r"^\s*if:\s*(.+)$", publish_step, re.M)
+    check(
+        if_line is not None
+        and "render" in if_line.group(1)
+        and "always()" not in if_line.group(1),
+        f"the publish step's `if:` gates on the render step's outcome"
+        f" ({if_line.group(1) if if_line else None!r})",
+        "the step calling gh issue edit has no if: gating it on the render"
+        " step's outcome (or uses always()), so a failed render could"
+        " still publish",
+    )
+
+render_steps = [s for s in step_texts if re.search(r"- name: Render\b", s)]
+check(
+    len(render_steps) == 1 and "continue-on-error" not in render_steps[0],
+    "the Render step does not use continue-on-error",
+    "the Render step uses continue-on-error, which would hide a failure"
+    " reason along with the failure",
+)
+
+# -- c6: the render failure path, run for real: writes $GITHUB_STEP_SUMMARY --
+#        and exits non-zero; the success path sets a `rows` output and
+#        leaves $GITHUB_STEP_SUMMARY untouched.
+render_source = wf.step_source(WF_REL, "Render", shell="bash")
+render_script = part_dir / "render.sh"
+render_script.write_text(render_source, encoding="utf-8")
+
+
+def run_render(stub_body, weeks="12"):
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    fake_scripts = case / ".github" / "scripts"
+    fake_scripts.mkdir(parents=True)
+    stub = fake_scripts / "render-pipeline-report.py"
+    stub.write_text(stub_body, encoding="utf-8")
+    stub.chmod(0o755)
+
+    output_file = case / "github_output"
+    output_file.write_text("", encoding="utf-8")
+    summary_file = case / "github_step_summary"
+    summary_file.write_text("", encoding="utf-8")
+    scratch = pathlib.Path(tempfile.mkdtemp(dir=case))
+
+    env = dict(os.environ)
+    env.update({
+        "RUNNER_TEMP": str(scratch),
+        "GITHUB_OUTPUT": str(output_file),
+        "GITHUB_STEP_SUMMARY": str(summary_file),
+        "WEEKS": weeks,
+    })
+
+    result = subprocess.run(
+        ["bash", str(render_script)],
+        capture_output=True,
+        text=True,
+        cwd=str(case),
+        env=env,
+    )
+    return result, output_file.read_text(), summary_file.read_text()
+
+
+failing_stub = (
+    "#!/usr/bin/env python3\n"
+    "import sys\n"
+    "print('pipeline_metrics: ledger unreadable', file=sys.stderr)\n"
+    "sys.exit(1)\n"
+)
+result, outputs, summary = run_render(failing_stub)
+check(
+    result.returncode != 0,
+    "a failing render exits the Render step non-zero",
+    f"exit {result.returncode}, stderr={result.stderr!r}",
+)
+check(
+    "ledger unreadable" in summary,
+    "a failing render's diagnostic reaches $GITHUB_STEP_SUMMARY",
+    f"summary={summary!r}",
+)
+check(
+    "rows=" not in outputs,
+    "a failing render sets no `rows` output",
+    f"outputs={outputs!r}",
+)
+
+succeeding_stub = (
+    "#!/usr/bin/env python3\n"
+    "print('<!-- pipeline-report -->')\n"
+    "print('# Pipeline Report')\n"
+    "print()\n"
+    "print('Read 7 ledger rows from `.metrics/runs.csv`, ...')\n"
+)
+result, outputs, summary = run_render(succeeding_stub)
+check(
+    result.returncode == 0,
+    "a succeeding render exits the Render step zero",
+    f"exit {result.returncode}, stderr={result.stderr!r}",
+)
+check(
+    "rows=Read 7 ledger rows" in outputs,
+    "a succeeding render sets the `rows` output from the rendered coverage line",
+    f"outputs={outputs!r}",
+)
+check(
+    summary == "",
+    "a succeeding render leaves $GITHUB_STEP_SUMMARY untouched",
+    f"summary={summary!r}",
+)
+
+# -- c6b: the Summary step, run for real against the `rows` output the -----
+#         succeeding render above actually produced -- backticks and all.
+#         `rows` must reach $GITHUB_STEP_SUMMARY through the step's `env:`
+#         block, not through direct `${{ }}` interpolation into the shell,
+#         or the backtick pair in the rendered coverage line triggers
+#         command substitution and eats the ledger path.
+summary_source = wf.step_source(WF_REL, "Summary", shell="bash")
+summary_script = part_dir / "summary.sh"
+summary_script.write_text(summary_source, encoding="utf-8")
+
+rows_line = outputs.strip()
+assert rows_line.startswith("rows="), f"unexpected GITHUB_OUTPUT: {outputs!r}"
+rows_value = rows_line[len("rows="):]
+
+summary_case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+summary_file = summary_case / "github_step_summary"
+summary_file.write_text("", encoding="utf-8")
+
+summary_env = dict(os.environ)
+summary_env.update({
+    "NUMBER": "99",
+    "ROWS": rows_value,
+    "GITHUB_STEP_SUMMARY": str(summary_file),
+})
+
+summary_result = subprocess.run(
+    ["bash", str(summary_script)],
+    capture_output=True,
+    text=True,
+    cwd=str(summary_case),
+    env=summary_env,
+)
+summary_text = summary_file.read_text()
+check(
+    summary_result.returncode == 0,
+    "the Summary step exits zero against the backtick-bearing `rows` output",
+    f"exit {summary_result.returncode}, stderr={summary_result.stderr!r}",
+)
+check(
+    "Read 7 ledger rows from `.metrics/runs.csv`, ..." in summary_text,
+    "the full coverage sentence, backticks and ledger path intact, reaches"
+    " $GITHUB_STEP_SUMMARY",
+    f"summary={summary_text!r}",
+)
+check(
+    "Permission denied" not in summary_result.stderr,
+    "the backticks in `rows` are not executed as command substitution",
+    f"stderr={summary_result.stderr!r}",
+)
+
+# -- c7: ci.yml's GODOT_DENY carries the three new paths, and a pull -------
+#        request touching only them resolves godot=false, control_plane=true.
+#        Same extraction and harness Part 13 uses on "Determine Gates".
+determine_gates = wf.step_source(CI_REL, "Determine Gates", shell="bash")
+gate_step = part_dir / "determine-gates.sh"
+gate_step.write_text(determine_gates, encoding="utf-8")
+
+NEW_PATHS = [
+    ".github/scripts/pipeline_metrics.py",
+    ".github/scripts/render-pipeline-report.py",
+    ".github/workflows/pipeline-report.yml",
+]
+for path in NEW_PATHS:
+    check(
+        path in determine_gates,
+        f"GODOT_DENY carries {path!r}",
+        f"{path!r} not found in ci.yml's Determine Gates step",
+    )
+
+bin_dir = part_dir / "bin"
+bin_dir.mkdir(exist_ok=True)
+gh_stub = bin_dir / "gh"
+if not gh_stub.exists():
+    gh_stub.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\ncat \"$GH_STUB_FILES\"\n",
+        encoding="utf-8",
+    )
+    gh_stub.chmod(0o755)
+
+files_case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+files_path = files_case / "files.txt"
+files_path.write_text("\n".join(NEW_PATHS) + "\n", encoding="utf-8")
+
+run_case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+output_file = run_case / "github_output"
+output_file.write_text("", encoding="utf-8")
+scratch = pathlib.Path(tempfile.mkdtemp(dir=run_case))
+
+env = dict(os.environ)
+env.update({
+    "RUNNER_TEMP": str(scratch),
+    "GITHUB_OUTPUT": str(output_file),
+    "EVENT_NAME": "pull_request",
+    "PR_NUMBER": "1",
+    "REPOSITORY": "o/r",
+    "GH_TOKEN": "stub-token",
+    "GH_STUB_FILES": str(files_path),
+    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+})
+
+result = subprocess.run(
+    ["bash", str(gate_step)],
+    capture_output=True,
+    text=True,
+    cwd=str(part_dir),
+    env=env,
+)
+gate_outputs = dict(
+    line.split("=", 1)
+    for line in output_file.read_text().splitlines()
+    if "=" in line
+)
+check(
+    result.returncode == 0
+    and gate_outputs.get("godot") == "false"
+    and gate_outputs.get("control_plane") == "true",
+    "a pull request touching only the three new paths resolves"
+    " godot=false, control_plane=true",
+    f"exit {result.returncode}, outputs={gate_outputs}, stderr={result.stderr!r}",
+)
+
+# -- c8: bootstrap-labels.sh's pipeline-report label description fits the --
+#        100-character cap GitHub enforces.
+labels_text = (root / LABELS_REL).read_text(encoding="utf-8")
+label_match = re.search(r"^pipeline-report\|[0-9A-Fa-f]{6}\|(.+)$", labels_text, re.M)
+check(
+    label_match is not None,
+    "bootstrap-labels.sh defines a pipeline-report label",
+    "no `pipeline-report|RRGGBB|description` line found in bootstrap-labels.sh",
+)
+if label_match:
+    description = label_match.group(1)
+    check(
+        len(description) <= 100,
+        f"pipeline-report label description fits the 100-char cap"
+        f" ({len(description)} chars)",
+        f"{len(description)} chars, cap is 100:\n{description}",
+    )
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -5346,6 +5776,7 @@ run_part "Part 16: smoke stage verdicts and job shape (#312)" part16
 run_part "Part 17: red-gate.py scope and merge-base verdict (#327)" part17
 run_part "Part 18: pipeline_metrics.py ledger validation and figures (#339)" part18
 run_part "Part 19: pipeline report rendering and GitHub figures (#340)" part19
+run_part "Part 20: pipeline-report.yml shape and ci.yml gate (#341)" part20
 
 echo
 if [ "$failures" -eq 0 ]; then
