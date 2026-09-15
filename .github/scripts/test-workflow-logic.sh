@@ -5754,6 +5754,291 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 21: release-preflight.py's verdicts (#223).
+#
+# The release workflow (T2, not yet built) fetches JSON and hands it to this
+# script; the script owns every decision. Covered end-to-end with fixture
+# GitHub JSON and no network, no `gh`, and no tag or release ever created --
+# Part 14's shape, for the same reason: this is a standalone decision script
+# read via `subprocess`, not a step embedded in a workflow file.
+# ---------------------------------------------------------------------------
+
+part21 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+script = pathlib.Path(repo_root) / ".github" / "scripts" / "release-preflight.py"
+case_dir = pathlib.Path(tempfile.mkdtemp(prefix="rp-case.", dir=work_dir))
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+COMMIT = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
+RUNS_OK = {"workflow_runs": [
+    {"id": 111, "status": "completed", "run_started_at": "2026-09-14T10:00:00Z"},
+]}
+JOBS_OK = {"jobs": [
+    {"name": "Godot Export", "conclusion": "success"},
+    {"name": "Godot Smoke Run", "conclusion": "success"},
+]}
+ARTIFACTS_OK = {"artifacts": [
+    {"id": 9, "name": f"godot-linux-{COMMIT}", "expired": False},
+]}
+TAGS_EMPTY: list = []
+
+
+def write(name, data, n=[0]):
+    n[0] += 1
+    path = case_dir / f"{name}-{n[0]}.json"
+    if isinstance(data, str):
+        path.write_text(data, encoding="utf-8")
+    else:
+        path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def run(*, commit=COMMIT, version="0.2.0", on_main="true",
+         runs=RUNS_OK, jobs=JOBS_OK, artifacts=ARTIFACTS_OK, tags=TAGS_EMPTY):
+    args = [
+        sys.executable, str(script),
+        "--commit", commit,
+        "--version", version,
+        "--on-main", on_main,
+        "--runs-json", str(write("runs", runs)),
+        "--jobs-json", str(write("jobs", jobs)),
+        "--artifacts-json", str(write("artifacts", artifacts)),
+        "--tags-json", str(write("tags", tags)),
+    ]
+    return subprocess.run(args, capture_output=True, text=True)
+
+
+def kv(result):
+    return dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+
+
+# -- criterion: the script is standard-library only, with no subprocess, ----
+#    urllib.request, http or socket import or call site anywhere in its
+#    source. Matches import statements and call sites, not the module
+#    docstring's own prose about what it does not do.
+source = script.read_text(encoding="utf-8")
+forbidden = re.search(
+    r"^\s*(?:import|from)\s+(subprocess|urllib\.request|http|socket)\b"
+    r"|\b(?:subprocess|socket)\.\w+\(",
+    source, re.MULTILINE,
+)
+check(
+    script.stat().st_mode & 0o111 != 0
+    and source.startswith("#!/usr/bin/env python3\n")
+    and forbidden is None,
+    "release-preflight.py is executable, starts with the python3 shebang,"
+    " and its source names no subprocess/urllib.request/http/socket",
+    f"executable={script.stat().st_mode & 0o111 != 0}, forbidden={forbidden}",
+)
+
+# -- criterion: the success case. --------------------------------------------
+result = run()
+out = kv(result)
+check(
+    result.returncode == 0
+    and out.get("verdict") == "ok"
+    and out.get("tag") == "v0.2.0"
+    and out.get("run_id") == "111"
+    and out.get("artifact_name") == f"godot-linux-{COMMIT}"
+    and "artifact_id" in out,
+    "a passing commit prints verdict=ok with tag, run_id, artifact_id and"
+    " artifact_name",
+    f"exit {result.returncode}, out={out}, stderr={result.stderr!r}",
+)
+
+# -- criterion: bad-version, five ways. --------------------------------------
+for bad_version in ("v0.2.0", "1.0.0", "0.2", "0.2.0-rc1", ""):
+    result = run(version=bad_version)
+    out = kv(result)
+    check(
+        result.returncode != 0 and out.get("reason") == "bad-version",
+        f"version {bad_version!r} is refused as bad-version",
+        f"version={bad_version!r}: exit {result.returncode}, out={out}",
+    )
+
+# -- criterion: not-on-main. -------------------------------------------------
+result = run(on_main="false")
+out = kv(result)
+check(
+    result.returncode != 0 and out.get("reason") == "not-on-main",
+    "--on-main false is refused as not-on-main",
+    f"exit {result.returncode}, out={out}",
+)
+
+# -- criterion: no-run, from an empty and from an all-incomplete runs set. ---
+result = run(runs={"workflow_runs": []})
+out = kv(result)
+check(
+    result.returncode != 0 and out.get("reason") == "no-run",
+    "an empty runs JSON is refused as no-run",
+    f"exit {result.returncode}, out={out}",
+)
+
+result = run(runs={"workflow_runs": [
+    {"id": 5, "status": "in_progress", "run_started_at": "2026-09-14T10:00:00Z"},
+]})
+out = kv(result)
+check(
+    result.returncode != 0 and out.get("reason") == "no-run",
+    "a runs JSON with only an incomplete run is refused as no-run",
+    f"exit {result.returncode}, out={out}",
+)
+
+# -- criterion: stage-not-passed, every way the issue names. -----------------
+STAGE_CASES = {
+    "export skipped": {"jobs": [
+        {"name": "Godot Export", "conclusion": "skipped"},
+        {"name": "Godot Smoke Run", "conclusion": "success"},
+    ]},
+    "smoke skipped": {"jobs": [
+        {"name": "Godot Export", "conclusion": "success"},
+        {"name": "Godot Smoke Run", "conclusion": "skipped"},
+    ]},
+    "smoke failed": {"jobs": [
+        {"name": "Godot Export", "conclusion": "success"},
+        {"name": "Godot Smoke Run", "conclusion": "failure"},
+    ]},
+    "export absent": {"jobs": [
+        {"name": "Godot Smoke Run", "conclusion": "success"},
+    ]},
+}
+for label, jobs in STAGE_CASES.items():
+    result = run(jobs=jobs)
+    out = kv(result)
+    check(
+        result.returncode != 0
+        and out.get("reason") == "stage-not-passed"
+        and out.get("message", "").strip() != "",
+        f"{label} is refused as stage-not-passed naming the offending job",
+        f"{label}: exit {result.returncode}, out={out}",
+    )
+
+# -- criterion: artifact-missing and artifact-expired. -----------------------
+result = run(artifacts={"artifacts": []})
+out = kv(result)
+check(
+    result.returncode != 0
+    and out.get("reason") == "artifact-missing"
+    and COMMIT in out.get("message", ""),
+    "no matching artifact is refused as artifact-missing, naming the artifact",
+    f"exit {result.returncode}, out={out}",
+)
+
+result = run(artifacts={"artifacts": [
+    {"id": 9, "name": f"godot-linux-{COMMIT}", "expired": True},
+]})
+out = kv(result)
+check(
+    result.returncode != 0
+    and out.get("reason") == "artifact-expired"
+    and COMMIT in out.get("message", ""),
+    "an expired artifact is refused as artifact-expired, naming the artifact",
+    f"exit {result.returncode}, out={out}",
+)
+
+# -- criterion: tag-exists. --------------------------------------------------
+result = run(tags=["v0.2.0"])
+out = kv(result)
+check(
+    result.returncode != 0
+    and out.get("reason") == "tag-exists"
+    and "v0.2.0" in out.get("message", ""),
+    "an existing v0.2.0 tag is refused as tag-exists, naming the tag",
+    f"exit {result.returncode}, out={out}",
+)
+
+# -- criterion: exactly one reason= line per refusal. ------------------------
+result = run(version="not-a-version")
+reason_lines = [l for l in result.stdout.splitlines() if l.startswith("reason=")]
+check(
+    len(reason_lines) == 1,
+    "a refusal prints exactly one reason= line",
+    f"reason_lines={reason_lines!r}",
+)
+
+# -- criterion: two completed runs -- the later run_started_at wins. ---------
+result = run(runs={"workflow_runs": [
+    {"id": 111, "status": "completed", "run_started_at": "2026-09-14T10:00:00Z"},
+    {"id": 222, "status": "completed", "run_started_at": "2026-09-14T12:00:00Z"},
+]})
+out = kv(result)
+check(
+    result.returncode == 0 and out.get("run_id") == "222",
+    "with two completed runs, the later run_started_at is selected and its"
+    " run_id is reported",
+    f"exit {result.returncode}, out={out}",
+)
+
+# -- criterion: an unreadable or non-JSON input file is fatal, names the -----
+#    file, and never prints verdict=ok.
+missing = case_dir / "does-not-exist.json"
+result = subprocess.run(
+    [
+        sys.executable, str(script),
+        "--commit", COMMIT, "--version", "0.2.0", "--on-main", "true",
+        "--runs-json", str(missing),
+        "--jobs-json", str(write("jobs", JOBS_OK)),
+        "--artifacts-json", str(write("artifacts", ARTIFACTS_OK)),
+        "--tags-json", str(write("tags", TAGS_EMPTY)),
+    ],
+    capture_output=True, text=True,
+)
+check(
+    result.returncode != 0
+    and "verdict=ok" not in result.stdout
+    and str(missing) in result.stderr,
+    "a missing --runs-json is fatal, names the file on stderr, and never"
+    " prints verdict=ok",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+not_json = write("not-json", "not actually json {{{")
+result = subprocess.run(
+    [
+        sys.executable, str(script),
+        "--commit", COMMIT, "--version", "0.2.0", "--on-main", "true",
+        "--runs-json", str(not_json),
+        "--jobs-json", str(write("jobs", JOBS_OK)),
+        "--artifacts-json", str(write("artifacts", ARTIFACTS_OK)),
+        "--tags-json", str(write("tags", TAGS_EMPTY)),
+    ],
+    capture_output=True, text=True,
+)
+check(
+    result.returncode != 0
+    and "verdict=ok" not in result.stdout
+    and str(not_json) in result.stderr,
+    "a non-JSON --runs-json is fatal, names the file on stderr, and never"
+    " prints verdict=ok",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -5777,6 +6062,7 @@ run_part "Part 17: red-gate.py scope and merge-base verdict (#327)" part17
 run_part "Part 18: pipeline_metrics.py ledger validation and figures (#339)" part18
 run_part "Part 19: pipeline report rendering and GitHub figures (#340)" part19
 run_part "Part 20: pipeline-report.yml shape and ci.yml gate (#341)" part20
+run_part "Part 21: release preflight verdicts (#223)" part21
 
 echo
 if [ "$failures" -eq 0 ]; then
