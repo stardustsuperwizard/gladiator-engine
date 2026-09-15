@@ -1,0 +1,367 @@
+name: Release
+
+# The one way this repository publishes a build (#223).
+#
+# It does not build anything. The bytes it publishes are the artifact the
+# export stage produced and the smoke stage actually ran, downloaded from that
+# very CI run -- so "the release" and "the thing that was verified" are the
+# same file rather than two builds that agree by construction. There is no
+# `setup-godot` step here, no export step, and no engine on this runner at
+# all, for the same reason `ci.yml`'s smoke job has none.
+#
+# It also decides nothing. Whether a commit is releasable is
+# `.github/scripts/release-preflight.py`'s judgement, reached from JSON this
+# workflow fetches and hands over; every step below either fetches, routes, or
+# reports. A second opinion embedded in an `if:` here is exactly the thing
+# that would let the two disagree, and the script is the half with tests
+# (Part 21 of `.github/scripts/test-workflow-logic.sh`).
+#
+# Nothing is created before that judgement comes back `verdict=ok`: on every
+# refusal path this workflow has made no tag, no release and no asset, and
+# says which of the seven refusal reasons it was in the run summary. If the
+# one creating call fails partway, the tag and release it may have made are
+# deleted again, so a failed release leaves the repository exactly as it was.
+
+on:
+  # Manual only, and deliberately the only trigger there is. No `push`, no
+  # `schedule`, no `release`, no `repository_dispatch`: publishing is a
+  # decision a person makes about a specific commit, and a workflow that could
+  # reach this job any other way would be a workflow that can publish without
+  # one.
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: >-
+          Full 40-character commit SHA to release. Must be on `main`, and must
+          be the head SHA a `ci.yml` run already exported and smoke-ran.
+        required: true
+        # `string`, never `number` -- and for `version` below that matters
+        # twice over. A `number` input reaches a step's shell as a float, so
+        # `0.2.0` would not even survive the trip. Part 9 of
+        # test-workflow-logic.sh is the check that remembers why.
+        type: string
+      version:
+        description: >-
+          Release version without a leading `v`, e.g. `0.2.0`. The tag is
+          `v<version>`. Pre-1.0 only; the preflight rejects anything else.
+        required: true
+        type: string
+
+# Serialized, and never cancelled. Two releases racing could interleave tag
+# creation with the cleanup path below, and a release cancelled between
+# `gh release create` and its own failure handler is precisely the half-made
+# state this workflow exists to avoid -- so `cancel-in-progress` is absent on
+# purpose rather than missing.
+concurrency:
+  group: release
+
+# Exactly what the two things this job does require: `contents: write` to
+# create the tag and the release, `actions: read` to read the CI run and
+# download its artifact. Nothing else is granted, and no `secrets.*` value is
+# read anywhere in this file -- `GITHUB_TOKEN` is the only credential.
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      # `fetch-depth: 0` because the ancestry check below needs `origin/main`
+      # and the candidate commit both to exist in the clone; the default
+      # shallow fetch has neither.
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Answered with `git`, because git is what knows. It is handed to the
+      # preflight as `--on-main`, and the preflight is what decides what the
+      # answer means -- this step never refuses on its own.
+      - name: Establish Whether The Commit Is On Main
+        id: ancestry
+        shell: bash
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+
+          # A commit that is not in the clone at all -- a typo, a SHA from a
+          # fork, a deleted branch tip -- makes `git` exit non-zero rather
+          # than print `false`, and that is the same answer for this purpose:
+          # it is not on main. The preflight names it `not-on-main`.
+          on_main=false
+          if git merge-base --is-ancestor "$COMMIT" origin/main 2>/dev/null; then
+            on_main=true
+          fi
+
+          echo "Commit $COMMIT on main: $on_main"
+          echo "on_main=$on_main" >> "$GITHUB_OUTPUT"
+
+      # Four fetches and no judgements. Everything lands under $RUNNER_TEMP as
+      # raw GitHub JSON, shaped exactly as `release-preflight.py` documents its
+      # four `--*-json` inputs, and the next step is where any of it is read
+      # for meaning.
+      - name: Collect The CI Evidence
+        id: evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ inputs.commit }}
+          RUNS_JSON: ${{ runner.temp }}/runs.json
+          JOBS_JSON: ${{ runner.temp }}/jobs.json
+          ARTIFACTS_JSON: ${{ runner.temp }}/artifacts.json
+          TAGS_JSON: ${{ runner.temp }}/tags.json
+          TAG_NAMES: ${{ runner.temp }}/tag-names.txt
+        run: |
+          set -euo pipefail
+
+          gh api \
+            "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$COMMIT&per_page=100" \
+            > "$RUNS_JSON"
+
+          # Which run's jobs and artifacts to FETCH, and nothing more. The
+          # selection rule -- the most recent completed run by
+          # `run_started_at` -- is `release-preflight.py`'s, restated here only
+          # because jobs and artifacts are fetched per run and the request has
+          # to name one. The script re-derives the same run from the same
+          # `runs.json` and reports the id itself; the id below is never the
+          # one that reaches the summary.
+          run_id="$(jq -r '[.workflow_runs[] | select(.status == "completed")] | sort_by(.run_started_at) | last | .id // empty' "$RUNS_JSON")"
+
+          if [ -n "$run_id" ]; then
+            echo "Selected ci.yml run $run_id for jobs and artifacts."
+            gh api "repos/$REPOSITORY/actions/runs/$run_id/jobs?per_page=100" \
+              > "$JOBS_JSON"
+            gh api "repos/$REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+              > "$ARTIFACTS_JSON"
+          else
+            # No completed run to fetch anything for. An empty object is a
+            # shape `release-preflight.py` documents as "no entries", so it
+            # refuses with `no-run` -- which is the true reason -- instead of
+            # this step inventing a failure of its own.
+            echo "No completed ci.yml run for $COMMIT; the preflight will refuse."
+            echo '{}' > "$JOBS_JSON"
+            echo '{}' > "$ARTIFACTS_JSON"
+          fi
+
+          # `--paginate` with `--jq`, never `--paginate` alone: for an array
+          # response gh emits one JSON array per page, and the concatenation
+          # is not a JSON document. Applying the filter per page and
+          # re-assembling below keeps every tag in one valid array, which is
+          # what `tag-exists` needs in order to see a tag past the first page.
+          # The list endpoint, not `git/refs/tags`, which 404s on a repository
+          # that has no tags at all -- the very first release is exactly that
+          # repository.
+          gh api --paginate "repos/$REPOSITORY/tags?per_page=100" \
+            --jq '.[].name' > "$TAG_NAMES"
+
+          jq -R -s 'split("\n") | map(select(length > 0))' \
+            < "$TAG_NAMES" > "$TAGS_JSON"
+
+      # The whole decision, made once, in the one place that has tests for it.
+      # On refusal this step reports the script's own `reason=` and `message=`
+      # and fails; nothing has been created at this point, and nothing will be.
+      - name: Preflight The Release
+        id: preflight
+        shell: bash
+        env:
+          COMMIT: ${{ inputs.commit }}
+          VERSION: ${{ inputs.version }}
+          ON_MAIN: ${{ steps.ancestry.outputs.on_main }}
+          RUNS_JSON: ${{ runner.temp }}/runs.json
+          JOBS_JSON: ${{ runner.temp }}/jobs.json
+          ARTIFACTS_JSON: ${{ runner.temp }}/artifacts.json
+          TAGS_JSON: ${{ runner.temp }}/tags.json
+          PREFLIGHT_OUT: ${{ runner.temp }}/preflight.txt
+        run: |
+          set -euo pipefail
+
+          # `status=0; cmd || status=$?`, never `if ! cmd` and never
+          # `cmd | tee`. validate-godot.sh:43-48 documents why in this
+          # repository's own words: after a negated command $? is the status of
+          # the negation, and in a pipeline it is the last command's -- either
+          # way a refusal would be reported and the step would still exit 0. A
+          # release gate that refuses and exits 0 publishes anyway.
+          status=0
+          python3 .github/scripts/release-preflight.py \
+            --commit "$COMMIT" \
+            --version "$VERSION" \
+            --on-main "$ON_MAIN" \
+            --runs-json "$RUNS_JSON" \
+            --jobs-json "$JOBS_JSON" \
+            --artifacts-json "$ARTIFACTS_JSON" \
+            --tags-json "$TAGS_JSON" \
+            > "$PREFLIGHT_OUT" || status=$?
+
+          cat "$PREFLIGHT_OUT"
+
+          if [ "$status" -ne 0 ]; then
+            # A refusal prints exactly one of each; a fatal input error (exit
+            # 2) prints neither and has already said why on stderr, so both
+            # fall back to something that still names the failure rather than
+            # leaving an empty bullet in the summary.
+            reason="$(sed -n 's/^reason=//p' "$PREFLIGHT_OUT")"
+            message="$(sed -n 's/^message=//p' "$PREFLIGHT_OUT")"
+            reason="${reason:-preflight-failed}"
+            message="${message:-release-preflight.py exited $status without a verdict; see the step log}"
+
+            # To the summary as well as to stderr, so the operator reads which
+            # of the seven reasons it was on the run's own page, without
+            # opening the raw log.
+            {
+              echo "## Release refused"
+              echo
+              echo "Nothing was created: no tag, no release, no assets."
+              echo
+              echo "- \`reason=$reason\`"
+              echo "- \`message=$message\`"
+              echo
+              echo "Candidate commit \`$COMMIT\`, requested version \`$VERSION\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            echo "reason=$reason" >&2
+            echo "message=$message" >&2
+            echo "::error::release refused: $reason -- $message"
+            exit 1
+          fi
+
+          # Read back key by key rather than appended wholesale, so this step
+          # forwards the four values it means to forward and nothing else that
+          # may one day appear on that stdout.
+          {
+            echo "tag=$(sed -n 's/^tag=//p' "$PREFLIGHT_OUT")"
+            echo "run_id=$(sed -n 's/^run_id=//p' "$PREFLIGHT_OUT")"
+            echo "artifact_id=$(sed -n 's/^artifact_id=//p' "$PREFLIGHT_OUT")"
+            echo "artifact_name=$(sed -n 's/^artifact_name=//p' "$PREFLIGHT_OUT")"
+          } >> "$GITHUB_OUTPUT"
+
+      # The bytes the smoke stage ran, fetched from the run the preflight
+      # named -- by that run's id and that artifact's name, both of them the
+      # script's output rather than a name assembled again here. `ci.yml`
+      # uploads under `godot-linux-<head sha>` and the preflight looks for
+      # `godot-linux-<commit>`; a third spelling in this file is how those two
+      # would drift apart.
+      - name: Download The Verified Artifact
+        id: download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ steps.preflight.outputs.run_id }}
+          ARTIFACT_NAME: ${{ steps.preflight.outputs.artifact_name }}
+          ASSET_DIR: ${{ runner.temp }}/release-assets
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$ASSET_DIR"
+
+          gh run download "$RUN_ID" \
+            --repo "$REPOSITORY" \
+            --name "$ARTIFACT_NAME" \
+            --dir "$ASSET_DIR"
+
+          if [ -z "$(find "$ASSET_DIR" -type f -print -quit)" ]; then
+            echo "::error::artifact $ARTIFACT_NAME from run $RUN_ID unpacked to nothing"
+            exit 1
+          fi
+
+          # Checksums of what is about to be published, in the summary of the
+          # run that published it. Not a release asset: a checksum file next
+          # to the build it describes, signed by nobody, proves only that the
+          # two were written by the same process. Here it is a record that ties
+          # the published bytes to this run's log.
+          {
+            echo "## Assets from CI run $RUN_ID"
+            echo
+            echo '```'
+            (cd "$ASSET_DIR" && find . -type f -exec sha256sum {} + | sort)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # One call makes the tag, the release and the assets. Not `git tag` and
+      # `git push`, not a release created now and assets uploaded after, and
+      # not a draft published in a second step: each of those has a window in
+      # which the repository carries half a release, and the failure handler
+      # below can only clean up what one call either did or did not do.
+      #
+      # `--prerelease` is a literal with no expression around it. Everything
+      # this repository ships before 1.0 is a pre-release, and there is no
+      # input, variable or condition that can turn the flag off.
+      - name: Create The Release
+        id: publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ steps.preflight.outputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+          RUN_ID: ${{ steps.preflight.outputs.run_id }}
+          ASSET_DIR: ${{ runner.temp }}/release-assets
+        run: |
+          set -euo pipefail
+
+          # NUL-delimited, so a path with a space or a newline in it stays one
+          # argument rather than becoming two assets and a failure.
+          assets=()
+          while IFS= read -r -d '' asset; do
+            assets+=("$asset")
+          done < <(find "$ASSET_DIR" -type f -print0 | sort -z)
+
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::no downloaded asset to publish under $ASSET_DIR"
+            exit 1
+          fi
+
+          url="$(gh release create "$TAG" \
+            --repo "$REPOSITORY" \
+            --target "$COMMIT" \
+            --prerelease \
+            --generate-notes \
+            --title "$TAG" \
+            "${assets[@]}")"
+
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Released $TAG"
+            echo
+            echo "- Release: $url"
+            echo "- Tag: \`$TAG\`"
+            echo "- Commit: \`$COMMIT\`"
+            echo "- Source CI run: $RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Only when the create call itself failed -- `failure()` alone would also
+      # catch a later step, and `steps.publish.outcome` alone would be read on
+      # a run where nothing failed at all. A create that got as far as making
+      # the tag and then failed uploading an asset leaves both behind, and a
+      # tag pointing at a release nobody published is worse than no release:
+      # the next attempt at the same version would be refused with
+      # `tag-exists` for a release that does not exist.
+      #
+      # `|| true` because this is the cleanup path, not the verdict: the job
+      # already fails on the step above, and a delete that finds nothing to
+      # delete must not replace that failure with its own.
+      - name: Delete The Half-Created Release
+        if: ${{ failure() && steps.publish.outcome == 'failure' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ steps.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          echo "Rolling back any tag or release left behind by $TAG."
+          gh release delete "$TAG" --repo "$REPOSITORY" --cleanup-tag --yes || true
+
+          {
+            echo "## Release failed and was rolled back"
+            echo
+            echo "Creating \`$TAG\` failed. Any tag or release it had made was"
+            echo "deleted, so the repository carries no half release. See the"
+            echo "step log above for the failure itself."
+          } >> "$GITHUB_STEP_SUMMARY"

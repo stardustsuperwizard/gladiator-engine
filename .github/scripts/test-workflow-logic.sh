@@ -6039,6 +6039,472 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 22: release.yml's workflow shape (#223).
+#
+# Part 21 covers the decision; this part covers the machine wrapped around it.
+# Patterned on Part 16's second half, and for the same reason: a stage whose
+# whole value is that it publishes the verified bytes, unattended, is a stage
+# whose shape can quietly invert while the YAML goes on looking right. A
+# rebuild step added here would publish bytes nobody smoke-ran; a `push`
+# trigger would make releasing automatic; a `--prerelease` behind an
+# expression would ship a 0.x build as stable; a create split into
+# tag-then-upload would leave half a release behind on failure.
+#
+# The artifact-name chain is asserted the way Part 16 asserts it for the smoke
+# job, with one more link in it: `ci.yml` uploads under `godot-linux-<sha>`,
+# `release-preflight.py` looks for `godot-linux-<commit>`, and release.yml
+# must take the name from the script's output rather than spell it a third
+# time. Those two expressions are the pair that has to agree; a literal in the
+# workflow is how they would stop agreeing.
+#
+# Text inspection only -- pyyaml is not guaranteed on a bare runner, which is
+# why the harness carries its own extractor. No network, no `gh`, no release
+# ever created.
+# ---------------------------------------------------------------------------
+
+part22 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import pathlib
+import re
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import wf
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+root = pathlib.Path(repo_root)
+
+WF_REL = ".github/workflows/release.yml"
+CI_REL = ".github/workflows/ci.yml"
+PREFLIGHT_REL = ".github/scripts/release-preflight.py"
+
+wf_path = root / WF_REL
+if not wf_path.exists():
+    print(f"  FAIL — {WF_REL} does not exist", file=sys.stderr)
+    sys.exit(1)
+
+text = wf_path.read_text(encoding="utf-8")
+
+# Full-line comments dropped for every token scan below, so the workflow may
+# explain in prose what it must not do (`git tag`, `setup-godot`) without the
+# explanation reading as the offence. Structural scans keep the original text:
+# indentation is what stands in for a parser here.
+code = "\n".join(
+    line for line in text.splitlines() if not line.strip().startswith("#")
+)
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def top_block(key):
+    """The lines nested under a top-level `key:`, to the next column-0 key."""
+
+    lines = text.splitlines()
+    try:
+        start = lines.index(f"{key}:")
+    except ValueError:
+        return None
+
+    out = []
+    for line in lines[start + 1:]:
+        if line.strip() and not line[0].isspace():
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
+def entries(block, indent):
+    """Non-comment keys at exactly `indent` spaces inside `block`."""
+
+    return [
+        line.strip()
+        for line in block.splitlines()
+        if line.strip()
+        and not line.strip().startswith("#")
+        and (len(line) - len(line.lstrip())) == indent
+    ]
+
+
+# --- The trigger: workflow_dispatch, and nothing else ----------------------
+on_block = top_block("on")
+check(
+    on_block is not None and entries(on_block, 2) == ["workflow_dispatch:"],
+    "workflow_dispatch is the only trigger",
+    f"release.yml's `on:` block declares"
+    f" {entries(on_block, 2) if on_block else None!r}. Publishing is a"
+    f" decision a person makes; any other trigger is a route that reaches it"
+    f" without one.",
+)
+
+input_names = entries(on_block or "", 6)
+check(
+    input_names == ["commit:", "version:"],
+    "the dispatch inputs are exactly commit and version",
+    f"release.yml declares inputs {input_names!r}, expected"
+    f" ['commit:', 'version:'].",
+)
+
+required = re.findall(r"^\s*required:\s*(\S+)\s*$", on_block or "", re.M)
+types = re.findall(r"^\s*type:\s*(\S+)\s*$", on_block or "", re.M)
+check(
+    required == ["true", "true"] and types == ["string", "string"],
+    "both inputs are `required: true` and `type: string`",
+    f"release.yml's inputs declare required={required!r} type={types!r}."
+    f" Both must be required, and both `string` -- a `number` input reaches"
+    f" the shell as a float, which Part 9 exists to remember.",
+)
+
+# --- Credential posture ----------------------------------------------------
+permissions = top_block("permissions")
+check(
+    permissions is not None
+    and sorted(entries(permissions, 2)) == ["actions: read", "contents: write"],
+    "permissions are exactly contents: write and actions: read",
+    f"release.yml's `permissions:` block is"
+    f" {sorted(entries(permissions, 2)) if permissions else None!r}, expected"
+    f" exactly ['actions: read', 'contents: write'].",
+)
+
+check(
+    "secrets." not in code,
+    "release.yml reads no secret",
+    "release.yml references `secrets.` -- publishing runs on GITHUB_TOKEN"
+    " alone, so a second credential here is a new key to leak.",
+)
+
+check(
+    "GH_TOKEN: ${{ github.token }}" in code,
+    "gh runs on GITHUB_TOKEN",
+    "release.yml never sets `GH_TOKEN: ${{ github.token }}`, so its `gh`"
+    " calls have no credential at all.",
+)
+
+uses = re.findall(r"^\s*uses:\s*(\S+)\s*$", code, re.M)
+check(
+    uses and all(u.startswith("actions/checkout@") for u in uses),
+    f"the only action used is actions/checkout ({uses!r})",
+    f"release.yml uses {uses!r}. A third-party action in the one job that can"
+    f" write a release is a supply-chain hole with publish rights.",
+)
+
+# --- Concurrency: serialized, never cancelled ------------------------------
+concurrency = top_block("concurrency")
+check(
+    concurrency is not None
+    and re.search(r"^\s*group:\s*release\s*$", concurrency, re.M) is not None
+    and "cancel-in-progress" not in concurrency,
+    "releases are serialized under group `release` and never cancelled",
+    f"release.yml's `concurrency:` block is {concurrency!r}. It must group on"
+    f" `release` and must NOT cancel in progress -- a run cancelled between"
+    f" `gh release create` and its rollback leaves the half release behind.",
+)
+
+# --- No rebuild anywhere in it ---------------------------------------------
+for token, why in (
+    ("setup-godot", "installing an engine here would publish a rebuild"),
+    ("export-godot.sh", "the published bytes are the artifact, never a new build"),
+    ("smoke-godot.sh", "the smoke stage already ran; re-running it is not releasing"),
+    ("--export-release", "exporting is ci.yml's job, two stages earlier"),
+):
+    check(
+        token not in code,
+        f"release.yml references no {token}",
+        f"release.yml references {token} -- {why}.",
+    )
+
+version_literals = re.findall(
+    r"\b\d+\.\d+(?:\.\d+)?-(?:stable|beta\d*|rc\d*|dev\d*)\b", code
+) + re.findall(r"^\s*godot-version:\s*\S", code, re.M)
+check(
+    not version_literals,
+    "release.yml names no Godot version",
+    f"release.yml names Godot version(s) {version_literals!r}. It installs no"
+    f" engine, so any version here is a new pin site Part 7 would have to"
+    f" keep in agreement for nothing.",
+)
+
+# --- One creating call, carrying everything --------------------------------
+creates = re.findall(r"gh release create", code)
+check(
+    len(creates) == 1,
+    "exactly one `gh release create` invocation",
+    f"release.yml contains {len(creates)} `gh release create` invocations,"
+    f" expected exactly 1.",
+)
+
+for flag, why in (
+    ("--target", "the release must point at the dispatched commit, not at a branch tip"),
+    ("--prerelease", "everything before 1.0 ships as a pre-release"),
+    ("--generate-notes", "the notes are generated, not hand-written in this file"),
+):
+    check(
+        flag in code,
+        f"the create call carries {flag}",
+        f"the `gh release create` call carries no {flag} -- {why}.",
+    )
+
+# `--prerelease` with nothing conditional around it. An expression on that
+# line is the one way a 0.x build ships as stable.
+prerelease_lines = [
+    line.strip() for line in code.splitlines() if "--prerelease" in line
+]
+check(
+    all(
+        re.fullmatch(r"--prerelease\s*\\?", line) is not None
+        for line in prerelease_lines
+    ),
+    "--prerelease is a literal flag with no expression around it",
+    f"`--prerelease` appears as {prerelease_lines!r}. It must be an"
+    f" unconditional literal: no input, variable or expression may turn it"
+    f" off.",
+)
+
+check(
+    '"${assets[@]}"' in code,
+    "the create call publishes the downloaded assets in the same invocation",
+    "the `gh release create` call carries no asset argument, so the release"
+    " would be created empty and the assets uploaded (or not) afterwards.",
+)
+
+for token, why in (
+    ("git tag", "the tag is created by `gh release create --target`, in one call"),
+    ("git push", "nothing here pushes to the repository"),
+    ("--draft", "a draft published in a second step is two windows, not one"),
+):
+    check(
+        token not in code,
+        f"release.yml contains no {token}",
+        f"release.yml contains {token} -- {why}.",
+    )
+
+# --- Rollback: guarded on the create step, and after it --------------------
+steps = []
+for line in code.splitlines():
+    if line.lstrip().startswith("- name:"):
+        steps.append([line])
+    elif steps:
+        steps[-1].append(line)
+steps = ["\n".join(s) for s in steps]
+
+create_steps = [s for s in steps if "gh release create" in s]
+delete_steps = [s for s in steps if "gh release delete" in s]
+
+create_id = None
+if create_steps:
+    m = re.search(r"^\s*id:\s*(\S+)\s*$", create_steps[0], re.M)
+    create_id = m.group(1) if m else None
+
+check(
+    len(delete_steps) == 1 and "--cleanup-tag" in delete_steps[0],
+    "one rollback step deletes the release and its tag together",
+    f"release.yml has {len(delete_steps)} `gh release delete` step(s), and"
+    f" the rollback must pass `--cleanup-tag` -- a tag surviving a failed"
+    f" create refuses the next attempt with `tag-exists` for a release that"
+    f" does not exist.",
+)
+
+delete_if = (
+    re.search(r"^\s*if:\s*(.+)$", delete_steps[0], re.M) if delete_steps else None
+)
+check(
+    create_id is not None
+    and delete_if is not None
+    and f"steps.{create_id}.outcome" in delete_if.group(1)
+    and "failure()" in delete_if.group(1),
+    "the rollback runs only when the create step itself failed",
+    f"the rollback step's `if:` is"
+    f" {delete_if.group(1).strip() if delete_if else None!r}, which must name"
+    f" both `failure()` and `steps.{create_id}.outcome` -- `failure()` alone"
+    f" also fires for a later step, and the outcome alone is read on runs"
+    f" where nothing failed.",
+)
+
+check(
+    create_steps
+    and delete_steps
+    and code.index(delete_steps[0]) > code.index(create_steps[0]),
+    "the rollback step appears after the create step",
+    "release.yml's `gh release delete` step is not after its"
+    " `gh release create` step; a rollback declared first cleans up nothing.",
+)
+
+# --- Preflight, then download, then create: in that file order -------------
+order = []
+for marker in (
+    ".github/scripts/release-preflight.py",
+    "gh run download",
+    "gh release create",
+):
+    order.append((marker, code.find(marker)))
+
+check(
+    all(pos != -1 for _, pos in order)
+    and [pos for _, pos in order] == sorted(pos for _, pos in order),
+    "preflight, then artifact download, then release creation",
+    f"release.yml's steps are out of order: {order!r}. Nothing may be"
+    f" downloaded before the preflight passes, and nothing published before"
+    f" the download.",
+)
+
+# --- The artifact name, end to end -----------------------------------------
+# `ci.yml` uploads it, `release-preflight.py` looks for it, release.yml
+# downloads whatever the script said. The first two are the expressions that
+# must agree; the third must not spell the name at all.
+ci_text = (root / CI_REL).read_text(encoding="utf-8")
+ci_names = [
+    n.strip() for n in re.findall(r"^\s*name:\s*(godot-linux-.+)$", ci_text, re.M)
+]
+preflight_text = (root / PREFLIGHT_REL).read_text(encoding="utf-8")
+script_name = re.search(
+    r'artifact_name\s*=\s*f"([^"{]*)\{args\.commit\}"', preflight_text
+)
+
+check(
+    ci_names
+    and script_name is not None
+    and all(n.startswith(script_name.group(1)) for n in ci_names),
+    f"ci.yml uploads and release-preflight.py looks for the same"
+    f" {script_name.group(1) if script_name else None!r} name shape",
+    f"ci.yml uploads {ci_names!r} but release-preflight.py builds"
+    f" {script_name.group(1) if script_name else None!r}<commit>. A release"
+    f" that looks for a name nothing uploads refuses every commit with"
+    f" `artifact-missing`.",
+)
+
+check(
+    "godot-linux-" not in code,
+    "release.yml spells no artifact name of its own",
+    "release.yml contains a literal `godot-linux-` name. The name it"
+    " downloads must come from the preflight's `artifact_name` output, or"
+    " this file becomes a third spelling that can drift from the other two.",
+)
+
+check(
+    re.search(r"steps\.\w+\.outputs\.artifact_name", code) is not None
+    and re.search(r"steps\.\w+\.outputs\.run_id", code) is not None,
+    "the download names the run and artifact the preflight reported",
+    "release.yml's download step does not read `artifact_name` and `run_id`"
+    " from the preflight's outputs, so it is downloading from a run the"
+    " script did not judge.",
+)
+
+# --- The refusal path reports, in the summary, and fails -------------------
+preflight_steps = [
+    s for s in steps if ".github/scripts/release-preflight.py" in s
+]
+check(
+    len(preflight_steps) == 1,
+    "exactly one step runs the preflight",
+    f"release.yml runs the preflight in {len(preflight_steps)} steps; the"
+    f" decision is made once or it is not a decision.",
+)
+
+refusal = preflight_steps[0] if preflight_steps else ""
+check(
+    "GITHUB_STEP_SUMMARY" in refusal
+    and re.search(r"reason=", refusal) is not None
+    and re.search(r"message=", refusal) is not None
+    and re.search(r"^\s*exit 1\s*$", refusal, re.M) is not None,
+    "a refusal writes reason= and message= to the step summary and fails",
+    "the preflight step does not write both `reason=` and `message=` to"
+    " $GITHUB_STEP_SUMMARY and `exit 1`. An operator must see which of the"
+    " seven refusal reasons it was without opening the raw log.",
+)
+
+check(
+    all(
+        marker in code
+        for marker in ("sha256sum", "$GITHUB_STEP_SUMMARY")
+    ),
+    "the published assets are checksummed into the step summary",
+    "release.yml never runs `sha256sum` into $GITHUB_STEP_SUMMARY, so the"
+    " run that published the bytes leaves no record of which bytes they"
+    " were.",
+)
+
+published = create_steps[0] if create_steps else ""
+check(
+    "GITHUB_STEP_SUMMARY" in published
+    and "$url" in published
+    and "$TAG" in published
+    and "$RUN_ID" in published,
+    "the successful path reports the release URL, the tag and the source run",
+    "the create step does not write the release URL, the tag and the source"
+    " CI run id to $GITHUB_STEP_SUMMARY.",
+)
+
+# --- This is the only workflow that can publish ----------------------------
+PUBLISHERS = (
+    "gh release create",
+    "gh release upload",
+    "softprops/action-gh-release",
+    "ncipollo/release-action",
+    "actions/create-release",
+    "actions/upload-release-asset",
+)
+others = []
+for path in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+    if path.as_posix() == WF_REL:
+        continue
+    body = "\n".join(
+        line for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.strip().startswith("#")
+    )
+    for token in PUBLISHERS:
+        if token in body:
+            others.append((path.as_posix(), token))
+
+check(
+    not others,
+    f"release.yml is the only workflow that can publish a release",
+    f"these workflows can publish a release too: {others!r}. One publishing"
+    f" path is what makes the preflight unavoidable.",
+)
+
+# --- House rules -----------------------------------------------------------
+unset = [
+    line
+    for line, src in wf.all_steps(WF_REL)
+    if not src.lstrip().startswith("set -euo pipefail")
+]
+check(
+    not unset,
+    "every embedded shell program begins `set -euo pipefail`",
+    f"release.yml has run: blocks at line(s) {unset!r} that do not begin"
+    f" `set -euo pipefail`.",
+)
+
+stray = []
+for line in code.splitlines():
+    m = re.match(r"^\s*(?:path|[A-Z][A-Z0-9_]*):\s*(\S.*?)\s*$", line)
+    if not m:
+        continue
+    value = m.group(1)
+    if "/" not in value or value.startswith((".github/", "./.github/")):
+        continue
+    if "runner.temp" not in value:
+        stray.append(value)
+
+check(
+    not stray,
+    "every path release.yml names is under ${{ runner.temp }}",
+    f"release.yml names paths outside $RUNNER_TEMP: {stray!r}. A downloaded"
+    f" build inside the checkout is #84 repeating.",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -6063,6 +6529,7 @@ run_part "Part 18: pipeline_metrics.py ledger validation and figures (#339)" par
 run_part "Part 19: pipeline report rendering and GitHub figures (#340)" part19
 run_part "Part 20: pipeline-report.yml shape and ci.yml gate (#341)" part20
 run_part "Part 21: release preflight verdicts (#223)" part21
+run_part "Part 22: release workflow shape (#223)" part22
 
 echo
 if [ "$failures" -eq 0 ]; then
