@@ -1319,11 +1319,13 @@ verification job that has to be kept in sync by hand every time a job is
 added or removed.
 
 It reports on *every* pull request, always, including a docs-only one that
-skips all five of `ci.yml`'s verification jobs (`godot`, `export`,
-`workflow-logic`, `issue-deps`, `actionlint`). Four of those five run in
-parallel; `export` is the one exception, sequenced behind `godot` so that a
-project whose suites are red never spends a runner producing a build nobody
-should download. That is deliberate: those jobs are gated by each
+skips all six of `ci.yml`'s verification jobs (`godot`, `export`, `smoke`,
+`workflow-logic`, `issue-deps`, `actionlint`). Four of those six run in
+parallel; `export` and `smoke` are each sequenced behind the job before it in
+the chain — `export` behind `godot`, so that a project whose suites are red
+never spends a runner producing a build nobody should download, and `smoke`
+behind `export`, because there is nothing to download and run headless until
+the build exists. That is deliberate: those jobs are gated by each
 job's own `if:`, decided once by the `changes` job, rather than by the
 workflow's trigger. A job skipped by `if:` still reports — as `skipped`,
 which the `ci` job counts as passing — where a workflow skipped by a
@@ -1416,10 +1418,12 @@ it is re-rendered, and an issue view can be filtered to surface it — but
 neither one pushes.
 
 What is left is human: confirm the epic's own acceptance criteria hold end
-to end, do the **Human Validation Required** checks in the Godot editor, then
-close the epic. Nothing closes an epic automatically — that transition is
-the human sign-off, and automating it would remove the only checkpoint in the
-pipeline.
+to end, do the **Human Validation Required** checks in the Godot editor —
+narrowed to rendering, feel, and input devices now that the `smoke` job
+plays a scripted headless match to a known end state on every pull request
+that touches Godot — then close the epic. Nothing closes an epic
+automatically — that transition is the human sign-off, and automating it
+would remove the only checkpoint in the pipeline.
 
 Child states are read from `subIssues.nodes[].state` rather than the cached
 `subIssuesSummary` counters, which can lag the close event.
@@ -2124,10 +2128,10 @@ Six things about that loop are decisions rather than obvious consequences:
   `gdscript-lint.yml` by `paths` at its own trigger, unchanged — so there is
   a `ci` check to read whatever the PR touched, and what varies is how many
   of its jobs ran rather than whether anything reports. A prose-only PR
-  skips all five: nothing it changed falls outside the `changes` job's Godot
+  skips all six: nothing it changed falls outside the `changes` job's Godot
   deny-list, and nothing falls inside its control-plane allow-list. A
-  control-plane PR skips `godot` and `export`, which read the same gate;
-  `workflow-logic`, `issue-deps` and
+  control-plane PR skips `godot`, `export` and `smoke`, all three of which
+  read the same gate; `workflow-logic`, `issue-deps` and
   `actionlint` all run, because `.github/workflows/**`, `.github/actions/**`,
   `.github/scripts/**`, `.github/agents/**`, `.claude/agents/**` and
   `.claude/commands/**` are precisely what that allow-list covers. Either
@@ -2428,7 +2432,7 @@ are custom agents and MCP servers.
 | `.github/workflows/agent-05-fix.yml` | Applies a bounded correction against the latest `FIX` verdict, on `agent:fixer:copilot`; refuses fork PRs and diffs it cannot push before spending a session; ends with an independent validation job on the pushed SHA |
 | `.github/workflows/issue-dependencies.yml` | Turns an Issue's `## Dependencies` table into GitHub dependencies, on the `blocker` label or a dispatch; `sweep` rebuilds the whole chain |
 | `.github/workflows/issue-local-session.yml` | Derives an Issue's `human-credentials` label from its `## Files or Subsystems Expected to Change` section by calling `sync-human-credentials-label.py`, on Issue open, on Issue edit, or on a dispatch; `sweep` re-derives the whole open backlog |
-| `.github/workflows/ci.yml` | The one `pull_request`-triggered workflow (also `push` to `main` and a manual dispatch); its `changes` job decides which gates apply, five verification jobs run behind that job's `if:` (`godot`, `workflow-logic`, `issue-deps`, `actionlint` in parallel, plus `export` sequenced behind `godot`), and the `ci` job aggregates all five into the single required status check |
+| `.github/workflows/ci.yml` | The one `pull_request`-triggered workflow (also `push` to `main` and a manual dispatch); its `changes` job decides which gates apply, six verification jobs run behind that job's `if:` (`godot`, `workflow-logic`, `issue-deps`, `actionlint` in parallel, plus `export` sequenced behind `godot` and `smoke` sequenced behind `export`), and the `ci` job aggregates all six into the single required status check |
 | `.github/workflows/godot-validation.yml` | The one reusable validation job (`workflow_call`); called by `ci.yml`'s `godot` job, `agent-02-implement.yml`, and `agent-05-fix.yml` |
 | `.github/workflows/run-ledger.yml` | The only writer of `.metrics/runs.csv`: on `push` to `main`, resolves the merged pull request for the pushed commit, appends its rows and commits them, serialised through one non-cancelling `ledger` concurrency group; every failure path warns and leaves the job green |
 | `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt |
@@ -2450,6 +2454,7 @@ are custom agents and MCP servers.
 | `.github/agents/05-fixer.agent.md` | Fixer role, bounded-correction contract |
 | `.github/agents/07-plan-reviewer.agent.md` | Plan-review role, the eight-check contract against an epic's plan — see *Plan review* |
 | `.github/scripts/validate-godot.sh` | Single source of truth for validation; CI and agents call it |
+| `.github/scripts/smoke-godot.sh` | Single source of truth for the smoke stage: runs an already-exported build headless with `--smoke`, under a `SMOKE_TIMEOUT_SECONDS` wall-clock cap, and requires `SmokeMatchDriver`'s completion marker in its output; `ci.yml`'s `smoke` job calls it unchanged against the artifact `export` published |
 | `.github/ISSUE_TEMPLATE/99-execute_task.md` | Planner-emitted bounded task |
 | `.github/pull_request_template.md` | Handoff record, verdict |
 | `CLAUDE.md` | Points Claude Code at the same contract Copilot reads |

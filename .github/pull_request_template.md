@@ -52,7 +52,10 @@ Closes #<issue-number>
 
 ## Human Validation Required
 
-<!-- What a human must check in the Godot editor before this is trusted. -->
+<!-- CI already downloads the exported build and plays a scripted headless
+     match through to a known end state (the `smoke` job, #220). What that
+     run cannot judge -- rendering, feel, and input devices -- is what is
+     left here, checked in the Godot editor. -->
 
 - [ ] <or "None">
 
