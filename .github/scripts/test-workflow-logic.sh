@@ -51,6 +51,10 @@
 #           accepted a plan one -- would publish a label answering a
 #           question nobody asked, and a truncation gate relaxed for the
 #           newer mode would publish a verdict whose reasoning was cut off.
+#   Part 16 A smoke stage is worth exactly its verdict. One that passed a
+#           build which exited 0 having played nothing -- or that waited on a
+#           hung child instead of killing it -- would be a green check and a
+#           held runner, and both look fine in the YAML.
 #
 # Like `test-issue-dependencies.sh`, this needs nothing but python3: no
 # network, no credentials, no GitHub CLI, and it never touches a real
@@ -3618,6 +3622,444 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 16: the smoke stage's verdicts and its job's shape (#312).
+#
+# The smoke stage exists to catch the one failure an export gate cannot: a
+# build that is produced, published, downloaded, started -- and never reaches
+# an end state. Its whole value is in the verdict it returns, and a verdict is
+# exactly the thing that can quietly invert. `smoke-godot.sh` is therefore run
+# here against four fake executables rather than a real build: a marker with
+# exit 0, an exit 0 with no marker, a non-zero exit, and one that never exits
+# at all. Fakes, not Godot, because this part must run on a bare runner in
+# seconds and because the cases it pins -- above all "exited 0 having done
+# nothing" -- are awkward to provoke from a real engine on purpose.
+#
+# The sleeper is the reason the timeout is a feature and not a comment: it
+# sleeps far past the deliberately short SMOKE_TIMEOUT_SECONDS given to it, so
+# a script that waited on its child instead of killing it would fail here by
+# taking a minute, rather than by hanging a CI runner months from now.
+#
+# The second half asserts the job stays a thin wrapper: identical artifact name
+# to the export job's upload, `chmod +x` before the run, logs uploaded on
+# failure, everything under $RUNNER_TEMP -- and no `setup-godot`, no
+# `export-godot.sh`, no Godot version literal anywhere in it. A smoke job that
+# grew its own engine install would be verifying a rebuild rather than the
+# bytes the export stage published, which is the one thing this stage promises.
+#
+# python3 and bash only, no network, no credentials, no engine, and every byte
+# written under the harness's own work_dir.
+# ---------------------------------------------------------------------------
+
+part16 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part16.", dir=work_dir))
+
+SCRIPT = pathlib.Path(repo_root, ".github/scripts/smoke-godot.sh")
+CI = pathlib.Path(".github/workflows/ci.yml")
+
+# Short enough that a failing timeout is caught in seconds, long enough that a
+# loaded runner's process spawn does not trip it. The sleeper sleeps twenty
+# times this.
+SHORT_TIMEOUT = 3
+SLEEP_SECONDS = 60
+
+failures = []
+
+
+def check(ok, ok_msg, fail_msg):
+    if ok:
+        print(f"  ok   — {ok_msg}")
+    else:
+        failures.append(fail_msg)
+        print(f"  FAIL — {fail_msg}", file=sys.stderr)
+
+
+# --- The four fakes --------------------------------------------------------
+# Each stands in for one thing an exported build can do. The marker's text is
+# the engine's, character for character -- `SmokeMatchDriver.MARKER_FORMAT`
+# filled in -- because a script that accepted some looser shape would pass a
+# build that printed nothing of the kind.
+FAKES = {
+    "complete": (
+        'echo "Smoke match complete: 4 rounds, 17 turns."\n'
+        "exit 0\n"
+    ),
+    "no-marker": (
+        'echo "booted, and quit again having played nothing"\n'
+        "exit 0\n"
+    ),
+    "crashed": (
+        'echo "SCRIPT ERROR: something the build did not survive" >&2\n'
+        "exit 3\n"
+    ),
+    "hung": (
+        'echo "waiting for a turn nobody is going to take"\n'
+        f"sleep {SLEEP_SECONDS}\n"
+    ),
+}
+
+for name, body in FAKES.items():
+    fake = part_dir / name
+    fake.write_text("#!/usr/bin/env bash\n" + body, encoding="utf-8")
+    fake.chmod(0o755)
+
+
+def run_smoke(name):
+    """Run the script against one fake. Returns (returncode, output, seconds)."""
+
+    env = dict(os.environ)
+    env["SMOKE_TIMEOUT_SECONDS"] = str(SHORT_TIMEOUT)
+    env["SMOKE_LOG_DIR"] = str(part_dir / f"logs-{name}")
+
+    started = time.monotonic()
+    try:
+        proc = subprocess.run(
+            [str(SCRIPT), str(part_dir / name)],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            # A backstop on the harness itself, not the assertion: the
+            # sleeper's own bound is checked below. Without it a script that
+            # failed to cap its child would hang this test instead of failing
+            # it.
+            timeout=SLEEP_SECONDS + 30,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "", time.monotonic() - started
+
+    return proc.returncode, proc.stdout + proc.stderr, time.monotonic() - started
+
+
+code_pass, out_pass, _ = run_smoke("complete")
+code_no_marker, out_no_marker, _ = run_smoke("no-marker")
+code_crashed, out_crashed, _ = run_smoke("crashed")
+code_hung, out_hung, elapsed_hung = run_smoke("hung")
+
+check(
+    code_pass == 0,
+    "a run that exits 0 having printed the completion marker passes",
+    f"smoke-godot.sh returned {code_pass!r} for a build that printed the"
+    f" marker and exited 0; it must be the one case that passes."
+    f"\n         Output: {out_pass.strip()[:400]}",
+)
+
+check(
+    code_no_marker not in (0, None),
+    "a run that exits 0 without the marker fails",
+    f"smoke-godot.sh returned {code_no_marker!r} for a build that exited 0"
+    f" having printed no marker. Exit 0 is never sufficient -- a build that"
+    f" boots and quits having played nothing exits 0 too.",
+)
+
+check(
+    code_crashed not in (0, None),
+    "a run that exits non-zero fails",
+    f"smoke-godot.sh returned {code_crashed!r} for a build that exited 3.",
+)
+
+check(
+    code_hung not in (0, None),
+    "a run that never exits fails",
+    f"smoke-godot.sh returned {code_hung!r} for a build that never exits.",
+)
+
+check(
+    elapsed_hung < SHORT_TIMEOUT + 25,
+    f"the sleeper is killed at SMOKE_TIMEOUT_SECONDS"
+    f" ({elapsed_hung:.1f}s against a {SHORT_TIMEOUT}s cap and a"
+    f" {SLEEP_SECONDS}s sleep)",
+    f"smoke-godot.sh took {elapsed_hung:.1f}s to report on a build that sleeps"
+    f" {SLEEP_SECONDS}s under a {SHORT_TIMEOUT}s cap -- it is waiting on the"
+    f" child rather than killing it, which is a CI runner held to the job"
+    f" timeout with no diagnosis attached.",
+)
+
+# --- The three failures are told apart ------------------------------------
+# One non-zero exit for three causes is a stage whose log says only that
+# something went wrong. Each failure names itself, greppably.
+VERDICTS = {
+    "no-marker": (out_no_marker, r"exited 0 but printed no completion marker"),
+    "crashed": (out_crashed, r"exited non-zero \(exit 3\)"),
+    "hung": (out_hung, rf"timed out after {SHORT_TIMEOUT}s"),
+}
+
+for name, (out, pattern) in VERDICTS.items():
+    check(
+        re.search(pattern, out) is not None,
+        f"the {name} failure reports its own distinct cause",
+        f"smoke-godot.sh's output for the {name} case matches no"
+        f" /{pattern}/ -- three causes reported alike is a stage whose log"
+        f" says only that something went wrong."
+        f"\n         Output: {out.strip()[:400]}",
+    )
+
+# Every failure path prints the captured output and the paths of both files it
+# wrote: without them a CI reader has an uploaded artifact and no idea which
+# file in it is which.
+EVIDENCE = {
+    "no-marker": (out_no_marker, "booted, and quit again having played nothing"),
+    "crashed": (out_crashed, "SCRIPT ERROR: something the build did not survive"),
+    "hung": (out_hung, "waiting for a turn nobody is going to take"),
+}
+
+for name, (out, echoed) in EVIDENCE.items():
+    missing = [
+        label
+        for label, needle in (
+            ("the captured output", echoed),
+            ("the stdout/stderr file path", "smoke-stdout.log"),
+            ("the engine log file path", "smoke-engine.log"),
+        )
+        if needle not in out
+    ]
+    check(
+        not missing,
+        f"the {name} failure prints the captured output and both file paths",
+        f"smoke-godot.sh's {name} failure omits {', '.join(missing)}.",
+    )
+
+# --- The script verifies a build; it never produces one --------------------
+# Asserted over non-comment lines: the header prose may name `export-godot.sh`
+# as the script it is modelled on, and does. Running it would be another
+# matter.
+script_code = "\n".join(
+    line
+    for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+    if not line.lstrip().startswith("#")
+)
+
+for token, why in (
+    ("--export-release", "exporting is the previous stage's job"),
+    ("export-godot.sh", "the stage verifies the published bytes, never a rebuild"),
+    ("setup-godot", "there is no engine to install to run an exported build"),
+    ("--path", "the argument is a built executable, never a project directory"),
+):
+    check(
+        token not in script_code,
+        f"smoke-godot.sh runs no {token}",
+        f"smoke-godot.sh's executable lines contain {token} -- {why}.",
+    )
+
+check(
+    "--headless" in script_code and "-- --smoke" in script_code,
+    "smoke-godot.sh runs the executable with --headless -- --smoke",
+    "smoke-godot.sh does not invoke the executable with `--headless` and a"
+    " bare `--` before `--smoke`; without the separator the flag never"
+    " reaches OS.get_cmdline_user_args() and the build plays no match.",
+)
+
+# --- The job stays a thin wrapper ------------------------------------------
+ci_lines = CI.read_text(encoding="utf-8").splitlines()
+
+
+def job_block(job):
+    """The lines of one job, from its key to the next thing at job indent.
+
+    Stops at the first non-blank line indented two spaces or less, comments
+    included -- the comment introducing the NEXT job sits there, and sweeping
+    it in would have this part asserting things about a job it is not reading.
+    """
+
+    try:
+        start = ci_lines.index(f"  {job}:")
+    except ValueError:
+        return None
+
+    out = []
+    for line in ci_lines[start + 1:]:
+        if line.strip() and (len(line) - len(line.lstrip())) <= 2:
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
+smoke = job_block("smoke")
+export = job_block("export")
+ci_job = job_block("ci")
+
+if smoke is None or export is None or ci_job is None:
+    missing = [
+        n for n, b in (("smoke", smoke), ("export", export), ("ci", ci_job))
+        if b is None
+    ]
+    print(
+        f"  FAIL — {CI} declares no {', '.join(missing)} job",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+check(
+    re.search(r"^\s*needs:\s*\[changes, godot, export\]\s*$", smoke, re.M)
+    is not None,
+    "the smoke job needs [changes, godot, export]",
+    "the smoke job's `needs:` is not [changes, godot, export] -- it has"
+    " nothing to download until the export job has run.",
+)
+
+smoke_if = re.search(r"^\s*if:\s*(.+)$", smoke, re.M)
+export_if = re.search(r"^\s*if:\s*(.+)$", export, re.M)
+check(
+    smoke_if is not None
+    and export_if is not None
+    and smoke_if.group(1).strip() == export_if.group(1).strip(),
+    "the smoke job carries the export job's gate verbatim",
+    f"the smoke job's gate is"
+    f" {smoke_if.group(1).strip() if smoke_if else None!r} but the export"
+    f" job's is {export_if.group(1).strip() if export_if else None!r}. A"
+    f" docs-only pull request must skip both alike, so that `ci` -- which"
+    f" counts `skipped` as passing -- stays green without either running.",
+)
+
+check(
+    re.search(r"^\s*timeout-minutes:\s*\d+\s*$", smoke, re.M) is not None,
+    "the smoke job declares a timeout-minutes backstop",
+    "the smoke job declares no `timeout-minutes:` -- the script's own cap is"
+    " the diagnosed bound, but nothing else bounds a runner wedged outside"
+    " it.",
+)
+
+# The artifact name, character for character. A download naming anything else
+# fails the stage for a reason that has nothing to do with the build.
+smoke_artifact = re.findall(r"^\s*name:\s*(godot-linux-.+)$", smoke, re.M)
+export_artifact = re.findall(r"^\s*name:\s*(godot-linux-.+)$", export, re.M)
+check(
+    len(smoke_artifact) == 1
+    and len(export_artifact) == 1
+    and smoke_artifact[0].strip() == export_artifact[0].strip(),
+    "the smoke job downloads the exact artifact name the export job uploads",
+    f"the smoke job downloads {smoke_artifact!r} while the export job uploads"
+    f" {export_artifact!r}. These must be one string, head-SHA fallback"
+    f" included.",
+)
+
+check(
+    "uses: actions/download-artifact@v4" in smoke,
+    "the smoke job downloads the published artifact",
+    "the smoke job has no `actions/download-artifact@v4` step -- it must run"
+    " the bytes the export stage published, not a rebuild.",
+)
+
+check(
+    re.search(r"chmod \+x", smoke) is not None,
+    "the smoke job chmod +x's the downloaded binary",
+    "the smoke job never `chmod +x`'s the downloaded executable. The"
+    " executable bit does not survive the artifact round trip, so the run"
+    " would fail on a permission error rather than on the build.",
+)
+
+check(
+    ".github/scripts/smoke-godot.sh" in smoke,
+    "the smoke job runs the repository's smoke script",
+    "the smoke job does not call `.github/scripts/smoke-godot.sh` -- the"
+    " stage's logic lives in the script so that a local run and a CI run mean"
+    " the same thing.",
+)
+
+# Steps, split on the `- name:` that opens each one, so a condition is read
+# against the step it actually belongs to.
+steps = []
+for line in smoke.splitlines():
+    if line.lstrip().startswith("- name:"):
+        steps.append([line])
+    elif steps:
+        steps[-1].append(line)
+
+upload_steps = [
+    "\n".join(s) for s in steps if "uses: actions/upload-artifact" in "\n".join(s)
+]
+check(
+    len(upload_steps) == 1
+    and re.search(r"^\s*if:\s*failure\(\)\s*$", upload_steps[0], re.M) is not None,
+    "the smoke job uploads its logs, and only when the run failed",
+    "the smoke job has no single log-upload step conditioned on `failure()`."
+    " A green run's logs say nothing the step log does not; a red one is"
+    " exactly when the engine's own log is needed.",
+)
+
+for token, why in (
+    ("setup-godot", "installing an engine here would verify a rebuild"),
+    ("export-godot.sh", "the stage runs the published bytes, never a new build"),
+    ("--export-release", "exporting is the previous stage's job"),
+):
+    check(
+        token not in smoke,
+        f"the smoke job references no {token}",
+        f"the smoke job references {token} -- {why}.",
+    )
+
+# A version literal here would be a new pin site (Part 7's rule), and this job
+# has no business naming an engine version at all: it never installs one.
+version_literals = re.findall(
+    r"\b\d+\.\d+(?:\.\d+)?-(?:stable|beta\d*|rc\d*|dev\d*)\b", smoke
+) + re.findall(r"^\s*godot-version:\s*\S", smoke, re.M)
+check(
+    not version_literals,
+    "the smoke job names no Godot version",
+    f"the smoke job names Godot version(s) {version_literals!r}. It installs"
+    f" no engine, so any version here is a new pin site that Part 7 would"
+    f" have to keep in agreement for nothing.",
+)
+
+# Every path the job writes is under $RUNNER_TEMP: #84 is what Part 5
+# remembers, and a job that downloads a binary into the checkout is the same
+# class of mistake.
+stray = []
+for line in smoke.splitlines():
+    m = re.match(r"^\s*(?:path|[A-Z][A-Z0-9_]*):\s*(\S.*?)\s*$", line)
+    if not m:
+        continue
+    value = m.group(1)
+    if "/" not in value or value.startswith((".github/", "./.github/")):
+        continue
+    if "runner.temp" not in value:
+        stray.append(value)
+
+check(
+    not stray,
+    "every path the smoke job names is under ${{ runner.temp }}",
+    f"the smoke job writes outside $RUNNER_TEMP: {stray!r}. A downloaded"
+    f" build inside the checkout is #84 repeating.",
+)
+
+needs = re.search(r"needs:\s*\[(.*?)\]", ci_job, re.S)
+check(
+    needs is not None and "smoke" in [n.strip() for n in needs.group(1).split(",")],
+    "the ci aggregate check needs the smoke job",
+    "`smoke` is not in the `ci` job's `needs:` list, so a failed smoke run"
+    " would leave the one required status check green.",
+)
+
+# Part 5's rule, stated for this stage: changing how a gate runs must still
+# run that gate. The deny-list already says so for validate-godot.sh and
+# setup-godot/.
+deny = re.search(r"GODOT_DENY = \[(.*?)^\s*\]", CI.read_text(encoding="utf-8"),
+                 re.S | re.M)
+check(
+    deny is not None and "smoke-godot.sh" not in deny.group(1),
+    "smoke-godot.sh is not on the Godot deny-list",
+    "ci.yml's GODOT_DENY lists smoke-godot.sh, so a pull request changing how"
+    " the smoke stage runs would skip the stage it changed.",
+)
+
+if not failures:
+    print(f"  ok   — {len(FAKES)} fake builds judged, and the smoke job's"
+          f" shape pinned")
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -3636,6 +4078,7 @@ run_part "Part 12: count-tests.py suites, assertions and compare (#283)" part12
 run_part "Part 13: run ledger gate logic, pull_request and push (#295)" part13
 run_part "Part 14: ledger_row.py field derivation (#296)" part14
 run_part "Part 15: session-record writers (#297)" part15
+run_part "Part 16: smoke stage verdicts and job shape (#312)" part16
 
 echo
 if [ "$failures" -eq 0 ]; then
