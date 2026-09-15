@@ -5611,6 +5611,56 @@ check(
     f"summary={summary!r}",
 )
 
+# -- c6b: the Summary step, run for real against the `rows` output the -----
+#         succeeding render above actually produced -- backticks and all.
+#         `rows` must reach $GITHUB_STEP_SUMMARY through the step's `env:`
+#         block, not through direct `${{ }}` interpolation into the shell,
+#         or the backtick pair in the rendered coverage line triggers
+#         command substitution and eats the ledger path.
+summary_source = wf.step_source(WF_REL, "Summary", shell="bash")
+summary_script = part_dir / "summary.sh"
+summary_script.write_text(summary_source, encoding="utf-8")
+
+rows_line = outputs.strip()
+assert rows_line.startswith("rows="), f"unexpected GITHUB_OUTPUT: {outputs!r}"
+rows_value = rows_line[len("rows="):]
+
+summary_case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+summary_file = summary_case / "github_step_summary"
+summary_file.write_text("", encoding="utf-8")
+
+summary_env = dict(os.environ)
+summary_env.update({
+    "NUMBER": "99",
+    "ROWS": rows_value,
+    "GITHUB_STEP_SUMMARY": str(summary_file),
+})
+
+summary_result = subprocess.run(
+    ["bash", str(summary_script)],
+    capture_output=True,
+    text=True,
+    cwd=str(summary_case),
+    env=summary_env,
+)
+summary_text = summary_file.read_text()
+check(
+    summary_result.returncode == 0,
+    "the Summary step exits zero against the backtick-bearing `rows` output",
+    f"exit {summary_result.returncode}, stderr={summary_result.stderr!r}",
+)
+check(
+    "Read 7 ledger rows from `.metrics/runs.csv`, ..." in summary_text,
+    "the full coverage sentence, backticks and ledger path intact, reaches"
+    " $GITHUB_STEP_SUMMARY",
+    f"summary={summary_text!r}",
+)
+check(
+    "Permission denied" not in summary_result.stderr,
+    "the backticks in `rows` are not executed as command substitution",
+    f"stderr={summary_result.stderr!r}",
+)
+
 # -- c7: ci.yml's GODOT_DENY carries the three new paths, and a pull -------
 #        request touching only them resolves godot=false, control_plane=true.
 #        Same extraction and harness Part 13 uses on "Determine Gates".

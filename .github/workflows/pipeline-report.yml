@@ -164,11 +164,12 @@ jobs:
         shell: bash
         env:
           NUMBER: ${{ steps.issue.outputs.number }}
+          ROWS: ${{ steps.render.outputs.rows }}
         run: |
           {
             echo "## Pipeline Report"
             echo
             echo "Published to issue #${NUMBER:-?}."
             echo
-            echo "${{ steps.render.outputs.rows }}"
+            echo "${ROWS:-}"
           } >> "$GITHUB_STEP_SUMMARY"
