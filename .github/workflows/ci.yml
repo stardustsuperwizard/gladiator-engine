@@ -1074,6 +1074,13 @@ jobs:
       #
       # Guarded on `gate_applies` as well as on the status: a skipped `verdict`
       # step has no outputs at all, and an empty string is not `0`.
+      #
+      # A broken gate cannot reach this step either, and that is load-bearing
+      # rather than lucky. An `if:` carrying no status-check function has
+      # `success()` implied, so the moment `verdict` exits 2 this step is
+      # skipped along with the rest of the job -- the label branch is never
+      # offered a failure that was not a verdict. `test-ratchet` above depends
+      # on exactly the same implication for exactly the same reason.
       - name: Apply Red Gate
         if: >-
           ${{ steps.plan.outputs.gate_applies == 'true'
