@@ -4060,6 +4060,439 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 17: red-gate.py picks the suites in scope and judges the base log
+# (#327).
+#
+# Part 12's shape, for the same reason: red-gate.py's two modes are decided
+# entirely by files, so synthetic fixture trees and fixture logs pin them
+# without Godot, without git and without the repository's own tree, whose
+# suites and log lines change over time. Every fixture is written under this
+# harness's own work_dir via tempfile.mkdtemp(), never into the checkout.
+#
+# What each case is here to stop:
+#
+#   green/red      A gate that cannot tell a suite that failed at the merge
+#                  base from one that passed there is not a gate.
+#   no suite lines A bootstrap that failed to compile prints no PASS/FAIL line
+#                  at all. Folding that into `red` would hide the most
+#                  generous verdict this gate gives.
+#   free-text FAIL Suites print their own violations as `FAIL <text>`
+#                  (rules/tests/charge_lockout_test.gd:61 and siblings). A
+#                  prefix match reads those as suite results and calls a green
+#                  suite red.
+#   comment-only   A docstring edit cannot honestly produce a red run, so it
+#                  must not be asked to.
+#   no test files  The epic is explicit that such a pull request neither
+#                  passes nor fails this gate.
+#   transitive     Attribution has to follow count-tests.py's reachability
+#                  definition, not the file's own name.
+#   deleted        A deleted file cannot be run at all.
+#   bad inputs     Exit 2 is a broken gate and exit 1 is a verdict a label may
+#                  downgrade. Blurring them makes the label downgrade a
+#                  malfunction.
+#
+# python3 only, no network, no credentials: red-gate.py is invoked as a
+# subprocess exactly as CI would run it, so what is checked is the script that
+# actually ships.
+# ---------------------------------------------------------------------------
+
+part17 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+script = pathlib.Path(repo_root) / ".github" / "scripts" / "red-gate.py"
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def write_tree(base, files):
+    for rel, content in files.items():
+        path = base / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def fixture_dir(prefix):
+    return pathlib.Path(tempfile.mkdtemp(prefix=prefix, dir=work_dir))
+
+
+def bootstrap(entries):
+    """A `_suites` literal in the shape tests/test_bootstrap.gd uses: a
+    display name, which is what `_check()` prints, and a `X.run` Callable."""
+    body = "".join(
+        f'\t{{"name": "{display}", "run": {cls}.run}},\n' for display, cls in entries
+    )
+    return f"extends Node\n\nvar _suites: Array[Dictionary] = [\n{body}]\n"
+
+
+def suite_source(class_name, functions=(), calls=()):
+    lines = [f"class_name {class_name}", ""]
+    for name, assertion in functions:
+        lines.append(f"static func {name}() -> Array:")
+        lines.append(f'\treturn _expect({assertion}, "{name}")')
+        lines.append("")
+    lines.append("static func run() -> bool:")
+    for other in calls:
+        lines.append(f"\tif not {other}.run():")
+        lines.append("\t\treturn false")
+    for name, _ in functions:
+        lines.append(f"\tif not {name}().is_empty():")
+        lines.append("\t\treturn false")
+    lines.append("\treturn true")
+    return "\n".join(lines) + "\n"
+
+
+def plan(base_root, head_root, changed, name="changed.txt"):
+    """Run `plan` and return (CompletedProcess, parsed JSON or {})."""
+    listing = pathlib.Path(head_root).parent / name
+    listing.write_text("\n".join(changed) + "\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable, str(script), "plan",
+            "--base-root", str(base_root),
+            "--head-root", str(head_root),
+            "--changed-files", str(listing),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        return result, json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return result, {}
+
+
+def verdict(plan_path, log_path):
+    return subprocess.run(
+        [
+            sys.executable, str(script), "verdict",
+            "--plan", str(plan_path), "--base-log", str(log_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+def write_plan(directory, document, name="plan.json"):
+    path = pathlib.Path(directory) / name
+    path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def write_log(directory, text, name="base.log"):
+    path = pathlib.Path(directory) / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+# A tree with one registered suite that reaches a second suite only through
+# its own run(). Reused by most cases below; each case gets its own copy so a
+# case can edit its head without disturbing another's.
+def standard_trees(prefix, head_beta, base_beta):
+    case = fixture_dir(prefix)
+    base_root = case / "base"
+    head_root = case / "head"
+    boot = bootstrap([("Alpha Suite", "AlphaTest"), ("Gamma Suite", "GammaTest")])
+    alpha = suite_source("AlphaTest", calls=["BetaTest"])
+    gamma = suite_source("GammaTest", functions=[("_test_gamma", "true")])
+    for root, beta in ((base_root, base_beta), (head_root, head_beta)):
+        files = {
+            "tests/test_bootstrap.gd": boot,
+            "tests/alpha_test.gd": alpha,
+            "rules/tests/gamma_test.gd": gamma,
+        }
+        if beta is not None:
+            files["tests/beta_test.gd"] = beta
+        write_tree(root, files)
+    return case, base_root, head_root
+
+
+BETA_BASE = suite_source("BetaTest", functions=[("_test_beta", "true")])
+BETA_HEAD = suite_source(
+    "BetaTest",
+    functions=[("_test_beta", "true"), ("_test_new_behaviour", "false")],
+)
+
+# -- 7: a test file reachable only transitively is attributed to the ---------
+#       registered suite that reaches it.
+case7, base7, head7 = standard_trees("rg-case7.", BETA_HEAD, BETA_BASE)
+result, document = plan(base7, head7, ["tests/beta_test.gd", "rules/state.gd"])
+in_scope = document.get("in_scope", [])
+paths = {entry["path"]: entry for entry in document.get("paths", [])}
+check(
+    result.returncode == 0
+    and document.get("gate_applies") is True
+    and [entry["suite"] for entry in in_scope] == ["Alpha Suite"]
+    and in_scope[0]["files"] == ["tests/beta_test.gd"]
+    and in_scope[0]["functions"] == ["_test_new_behaviour"]
+    and paths.get("rules/state.gd", {}).get("kind") == "production"
+    and paths.get("tests/beta_test.gd", {}).get("kind") == "test",
+    "a test file registered nowhere is attributed to the registered suite that"
+    " reaches it, and a production path is reported as production",
+    f"expected Alpha Suite in scope for tests/beta_test.gd;"
+    f" exit {result.returncode}, document={document or result.stdout!r}",
+)
+
+plan7 = write_plan(case7, document)
+
+# -- 1: a suite green at the merge base fails the gate, and is named. --------
+green_log = write_log(case7, "PASS Alpha Suite\nPASS Gamma Suite\n", "green.log")
+result = verdict(plan7, green_log)
+check(
+    result.returncode == 1
+    and "Alpha Suite" in result.stdout
+    and "green-at-base" in result.stdout
+    and "asserts nothing the pull request changed" in result.stdout,
+    "a suite that passed at the merge base exits 1, is named, and the report"
+    " says the test asserts nothing the pull request changed",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+# -- 2: a suite red at the merge base satisfies the gate. -------------------
+red_log = write_log(case7, "FAIL Alpha Suite\nPASS Gamma Suite\n", "red.log")
+result = verdict(plan7, red_log)
+check(
+    result.returncode == 0
+    and "| Alpha Suite | `red` |" in result.stdout
+    and "_test_new_behaviour" in result.stdout
+    and "verdict unit is the **registered test suite**" in result.stdout,
+    "a suite that failed at the merge base exits 0, and the report is printed"
+    " with the function names and the unit statement on a passing run too",
+    f"exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+# -- 3: a base log with no suite-level line at all. --------------------------
+nothing_log = write_log(
+    case7,
+    "Godot Engine v4.7.2.stable.official\n"
+    "SCRIPT ERROR: Parse Error: Identifier \"Combatant\" not declared.\n"
+    "          at: GDScript::reload (res://tests/test_bootstrap.gd:51)\n",
+    "nothing.log",
+)
+result = verdict(plan7, nothing_log)
+check(
+    result.returncode == 0
+    and "| Alpha Suite | `did-not-load` |" in result.stdout
+    and "No suite-level result line appears in the merge-base log at all"
+    in result.stdout
+    and "| Alpha Suite | `red` |" not in result.stdout,
+    "a base log with no suite line reports every in-scope suite did-not-load,"
+    " exits 0, and says so once at the top rather than calling it red",
+    f"exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+# -- 4: a suite's own `FAIL <violation>` output is not a suite result. -------
+violation_log = write_log(
+    case7,
+    "FAIL beta_test.gd: expected lockout to clear on round end, got 2\n"
+    "FAIL Alpha Suite is not this line, it is free text mentioning it\n"
+    "PASS Alpha Suite\n"
+    "PASS Gamma Suite\n",
+    "violations.log",
+)
+result = verdict(plan7, violation_log)
+check(
+    result.returncode == 1 and "| Alpha Suite | `green-at-base` |" in result.stdout,
+    "free-text `FAIL <violation>` lines are not read as suite results: the"
+    " suite's own PASS line still decides, and the gate still exits 1",
+    f"expected exit 1 with Alpha Suite green; exit {result.returncode},"
+    f" stdout={result.stdout!r}",
+)
+
+violation_only_log = write_log(
+    case7,
+    "FAIL beta_test.gd: expected lockout to clear on round end, got 2\n"
+    "FAIL Alpha Suite is not this line either\n",
+    "violations-only.log",
+)
+result = verdict(plan7, violation_only_log)
+check(
+    result.returncode == 0 and "| Alpha Suite | `did-not-load` |" in result.stdout,
+    "a log holding only free-text FAIL lines counts as no suite line at all,"
+    " not as a red suite",
+    f"expected did-not-load; exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+# -- 5: a comment-only change to a test file is not in scope. ---------------
+comment_head = BETA_BASE.replace(
+    "static func run() -> bool:",
+    "## Documented here, and nowhere else.\n"
+    "# An ordinary comment too.\n"
+    "static func run() -> bool:",
+)
+case5, base5, head5 = standard_trees("rg-case5.", comment_head, BETA_BASE)
+result, document = plan(base5, head5, ["tests/beta_test.gd"])
+paths = {entry["path"]: entry for entry in document.get("paths", [])}
+check(
+    result.returncode == 0
+    and document.get("gate_applies") is False
+    and document.get("in_scope") == []
+    and paths.get("tests/beta_test.gd", {}).get("reason") == "comment-only",
+    "a comment-only change to a test file is skipped with reason"
+    " comment-only, and the gate does not apply",
+    f"exit {result.returncode}, document={document or result.stdout!r}",
+)
+
+comment_plan = write_plan(case5, document)
+result = verdict(comment_plan, write_log(case5, "PASS Alpha Suite\n"))
+check(
+    result.returncode == 0 and "the gate does not apply" in result.stdout,
+    "verdict on a plan with nothing in scope exits 0 saying the gate does not"
+    " apply, rather than passing or failing it",
+    f"exit {result.returncode}, stdout={result.stdout!r}",
+)
+
+# -- 6: a pull request touching no test file at all. ------------------------
+case6, base6, head6 = standard_trees("rg-case6.", BETA_BASE, BETA_BASE)
+result, document = plan(
+    base6, head6, ["rules/state.gd", "docs/hex-skirmish-game-spec.md"]
+)
+check(
+    result.returncode == 0
+    and document.get("gate_applies") is False
+    and document.get("in_scope") == []
+    and [entry["kind"] for entry in document.get("paths", [])]
+    == ["production", "production"],
+    "a pull request touching no test file puts no suite in scope and both"
+    " paths are production",
+    f"exit {result.returncode}, document={document or result.stdout!r}",
+)
+
+# -- 8: a deleted test file is not in scope. --------------------------------
+case8, base8, head8 = standard_trees("rg-case8.", None, BETA_BASE)
+result, document = plan(base8, head8, ["tests/beta_test.gd"])
+paths = {entry["path"]: entry for entry in document.get("paths", [])}
+check(
+    result.returncode == 0
+    and document.get("gate_applies") is False
+    and paths.get("tests/beta_test.gd", {}).get("reason") == "deleted",
+    "a test file deleted by the pull request is skipped with reason deleted",
+    f"exit {result.returncode}, document={document or result.stdout!r}",
+)
+
+# The registry, a .uid sidecar and a non-test file under tests/ are skipped
+# too, each with its own recorded reason -- the plan has to say why, not just
+# leave them out.
+case8b, base8b, head8b = standard_trees("rg-case8b.", BETA_HEAD, BETA_BASE)
+write_tree(head8b, {
+    "tests/beta_test.gd.uid": "uid://abc123\n",
+    "tests/helpers/fixture_builder.gd": "class_name FixtureBuilder\n",
+})
+result, document = plan(
+    base8b,
+    head8b,
+    [
+        "tests/test_bootstrap.gd",
+        "tests/beta_test.gd.uid",
+        "tests/helpers/fixture_builder.gd",
+    ],
+)
+reasons = {
+    entry["path"]: entry["reason"] for entry in document.get("paths", [])
+}
+check(
+    result.returncode == 0
+    and document.get("gate_applies") is False
+    and reasons.get("tests/test_bootstrap.gd") == "bootstrap-registry"
+    and reasons.get("tests/beta_test.gd.uid") == "uid-file"
+    and reasons.get("tests/helpers/fixture_builder.gd") == "not-a-test-file",
+    "the bootstrap registry, a .uid sidecar and a non-test file under tests/"
+    " are each skipped with their own recorded reason",
+    f"exit {result.returncode}, reasons={reasons}, stdout={result.stdout!r}",
+)
+
+# A suite reachable from no registered suite is skipped, not failed: the
+# orphan contract test already fails the build for it.
+case8c, base8c, head8c = standard_trees("rg-case8c.", BETA_HEAD, BETA_BASE)
+write_tree(head8c, {
+    "tests/orphan_test.gd": suite_source(
+        "OrphanTest", functions=[("_test_orphan", "true")]
+    ),
+})
+result, document = plan(base8c, head8c, ["tests/orphan_test.gd"])
+reasons = {
+    entry["path"]: entry["reason"] for entry in document.get("paths", [])
+}
+check(
+    result.returncode == 0
+    and document.get("gate_applies") is False
+    and reasons.get("tests/orphan_test.gd") == "unreachable",
+    "a test file no registered suite reaches is skipped as unreachable, not"
+    " demanded red",
+    f"exit {result.returncode}, reasons={reasons}, stdout={result.stdout!r}",
+)
+
+# -- 9: unusable inputs exit 2, never 1. ------------------------------------
+empty_log = write_log(case7, "", "empty.log")
+result = verdict(plan7, empty_log)
+check(
+    result.returncode == 2,
+    "an empty base log exits 2 -- a broken gate, not a verdict a label may"
+    " downgrade",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+result = verdict(plan7, case7 / "does-not-exist.log")
+check(
+    result.returncode == 2,
+    "a missing base log exits 2",
+    f"exit {result.returncode}, stderr={result.stderr!r}",
+)
+
+result = verdict(case7 / "does-not-exist.json", red_log)
+check(
+    result.returncode == 2,
+    "a missing plan exits 2",
+    f"exit {result.returncode}, stderr={result.stderr!r}",
+)
+
+not_a_plan = case7 / "not-a-plan.json"
+not_a_plan.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
+result = verdict(not_a_plan, red_log)
+check(
+    result.returncode == 2,
+    "a JSON file that is not a plan this script produced exits 2",
+    f"exit {result.returncode}, stderr={result.stderr!r}",
+)
+
+broken_json = case7 / "broken.json"
+broken_json.write_text("{ not json at all", encoding="utf-8")
+result = verdict(broken_json, red_log)
+check(
+    result.returncode == 2,
+    "a malformed plan exits 2",
+    f"exit {result.returncode}, stderr={result.stderr!r}",
+)
+
+# The report names the escape hatch on every path, so a human reading a
+# failing job knows the override exists and where its reason is recorded.
+result = verdict(plan7, green_log)
+check(
+    "characterization-test" in result.stdout
+    and "recorded in the pull request body" in result.stdout,
+    "the report names the characterization-test escape hatch and where its"
+    " reason is recorded",
+    f"stdout={result.stdout!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -4079,6 +4512,7 @@ run_part "Part 13: run ledger gate logic, pull_request and push (#295)" part13
 run_part "Part 14: ledger_row.py field derivation (#296)" part14
 run_part "Part 15: session-record writers (#297)" part15
 run_part "Part 16: smoke stage verdicts and job shape (#312)" part16
+run_part "Part 17: red-gate.py scope and merge-base verdict (#327)" part17
 
 echo
 if [ "$failures" -eq 0 ]; then
