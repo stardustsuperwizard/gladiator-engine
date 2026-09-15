@@ -58,6 +58,13 @@ authorisation to *shape* the deferred work correctly when it arrives, and to
 refuse changes that would make the work below harder. Section 11 says exactly
 what is and is not actionable now.
 
+> **Owner decision, 2026-09-15.** The public API is **a future release, not
+> MVP**. Design and build with an eye toward it; do not build it first, and do
+> not let it displace anything in §5.2's order. Recorded in extraction plan
+> §5.3 alongside the rest of the deferred work, which is where a session
+> checking scope will look — this document is not that list and must not
+> become a way around it.
+
 ---
 
 ## 1. The premise this replaces
@@ -252,6 +259,17 @@ hold, unchanged. Third-party clients add these.
    back door. This is not a fairness gesture — it is the only mechanism that
    *tells us* whether the SDK is sufficient. A first-party client with a
    shortcut is a first-party client that cannot detect the gap.
+
+   **This constrains a networked client and nothing else.** It says a client
+   that talks to the authority over a wire must talk to it through the public
+   API. It does not say every client must talk over a wire. The hotseat scene
+   merged under epic #203 constructs `Authority` directly and submits through
+   `ActionRunner` in-process, which is the second architectural commitment
+   working exactly as intended — there is no API for it to bypass, so there is
+   nothing here for it to violate. `ActionOptions` computing affordances
+   locally is likewise correct and is the very pattern §3 endorses: it asks
+   `rules/` its own predicates rather than re-deriving them. **Nothing in this
+   document asks for a line of the existing client to change.**
 
 8. **Content is served, never assumed.** A client may not be required to have
    shipped with card text, champion names, or art in order to render a match.

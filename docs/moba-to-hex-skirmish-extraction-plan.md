@@ -364,6 +364,20 @@ additive rather than exploratory.
 - **Ruleset identity handshake.** Client sends a hash of its rules code at
   connect; server refuses a mismatch with "update required" instead of playing
   a match the two ends disagree about (guide §9.3).
+- **The public client API and its SDK.** **Owner decision, 2026-09-15: a
+  future release, not MVP.** Letting players bring their own client — a web
+  client, a terminal client, an agent — is a stated goal, and
+  `docs/headless-authority-and-client-sdk.md` works out what it requires. None
+  of it is MVP work. Design and build with an eye toward it; do not build it
+  first, and do not let it displace anything in §5.2's order. It is listed
+  here, rather than only in that document, because this is the list a session
+  checks before building something that feels obviously missing.
+
+  Note what it is *not* deferred behind: the hotseat client merged under epic
+  #203 needs no API and is untouched by any of this. The one thing that binds
+  earlier is constraint 8 of that document — the card schema must be able to
+  load content served from outside this repository — which is cheap while the
+  card system is being built and a retrofit afterwards.
 - **Server-supplied balance data.** Serving `.tres` values from the authority
   so a balance change does not require a client release (§5.5).
 - **AI opponent.** A post-MVP feature release, not MVP work — the owner's
