@@ -364,6 +364,20 @@ additive rather than exploratory.
 - **Ruleset identity handshake.** Client sends a hash of its rules code at
   connect; server refuses a mismatch with "update required" instead of playing
   a match the two ends disagree about (guide §9.3).
+- **The public client API and its SDK.** **Owner decision, 2026-09-15: a
+  future release, not MVP.** Letting players bring their own client — a web
+  client, a terminal client, an agent — is a stated goal, and
+  `docs/headless-authority-and-client-sdk.md` works out what it requires. None
+  of it is MVP work. Design and build with an eye toward it; do not build it
+  first, and do not let it displace anything in §5.2's order. It is listed
+  here, rather than only in that document, because this is the list a session
+  checks before building something that feels obviously missing.
+
+  Note what it is *not* deferred behind: the hotseat client merged under epic
+  #203 needs no API and is untouched by any of this. The one thing that binds
+  earlier is constraint 8 of that document — the card schema must be able to
+  load content served from outside this repository — which is cheap while the
+  card system is being built and a retrofit afterwards.
 - **Server-supplied balance data.** Serving `.tres` values from the authority
   so a balance change does not require a client release (§5.5).
 - **AI opponent.** A post-MVP feature release, not MVP work — the owner's
@@ -421,6 +435,18 @@ identical final state. At that point, adding networking is a transport change, n
 > match must have been resolved by the same ruleset. Recorded here because the
 > answer changes decisions in §5.3, §7, and guide §5, and those decisions are
 > free now and expensive after there is networking code to revise.
+
+> **Extended 2026-09-15.** The note above says "ship only a client to
+> players." That is now too narrow: the stated goal has grown to **let players
+> bring their own client**, built by anyone, in any language, against a
+> published API. Everything below survives that change unaltered — all four
+> constraints hold, and the operator-run authority matters more when the
+> client is a stranger's, not less. What changes is that the four constraints
+> are no longer sufficient on their own.
+> `docs/headless-authority-and-client-sdk.md` carries the additional ones,
+> along with the decision that the authority **serves the legal action set**
+> so that a third-party client needs no copy of `rules/`. Read this section
+> first; it is still the foundation, and that document does not restate it.
 
 None of this is MVP work and none of it changes §5.1. It is written down so
 the deferred networking work is shaped correctly when it arrives.

@@ -19,6 +19,18 @@ Three documents, three jobs — keep them that way:
 
 Do not put Godot specifics in the spec, and do not put mechanics in the guide.
 
+A fourth answers a question about the boundary *around* the game rather than
+about the game, added 2026-09-15:
+
+| Document | Answers |
+| --- | --- |
+| `docs/headless-authority-and-client-sdk.md` | *How does a third party play without our client?* |
+
+It is not build-order work and says so at the top, as plan §5.5 does. Content
+licensing is a related question and is **tracked outside this repository** —
+what matters inside it is the engineering constraint in *Before the card
+system* below, which that document reaches independently as its constraint 8.
+
 **Current state (2026-09-15): Slice 0, spec reconciliation, and the core action
 framework are all built and merged.** Extraction plan §5.1 is in the tree: the
 hex board with cube distance and symmetric line of sight; the
@@ -85,6 +97,28 @@ system fills; `rules/cards/` does not exist yet. Do not build ahead of §5.2's
 build order (§12), and check §5.3 before building something that feels
 obviously missing — it may be missing on purpose.
 
+**Before the card system — one constraint, revised 2026-09-15.** The card
+schema must be able to load content **served from outside this repository**,
+not only from a `res://rules/cards/*.tres` path compiled into the build. A card
+system that only ever reads compiled-in paths works perfectly in hotseat and is
+a retrofit afterwards, so this is cheap now and expensive later.
+
+`docs/headless-authority-and-client-sdk.md` reaches the same requirement from
+the API side, where it is constraint 8: a third-party client cannot be required
+to have shipped with card text in order to render a match. That is the reason
+that matters for anyone working in this tree.
+
+> **Revised 2026-09-15, later the same day.** This section previously said
+> `rules/cards/` must not be created until a licence boundary was settled, and
+> pointed at a `docs/licensing-and-content-boundary.md` that is no longer in
+> this repository. **Owner decision: mechanic-only cards live in this
+> repository under its MIT licence, like everything else here, and creating
+> `rules/cards/` is not gated on anything.** A card that is purely a rule
+> — "+1 Health" — carries no expression a licence could protect anyway. The
+> content-ownership question is real but is tracked outside this repository;
+> do not reintroduce it here, and do not treat its absence as license to add
+> authored art, flavour text or lore to `resources/` without asking.
+
 **§4's Setup Sequence is unbuilt too, and was absent from both lists above
 until 2026-09-15.** `MatchSetup` says as much in its own first paragraph: it is
 spec §4's *placeholder*, not §4 — no roster building against
@@ -135,13 +169,24 @@ note above, and almost none of it was visible anywhere else in this file:
   of export logic lives in the script, so a local run and the CI job mean the
   same thing, and the build goes under `$RUNNER_TEMP` — never into the
   checkout.
-- **A smoke driver, but not a smoke stage.** `scripts/smoke_bootstrap.gd` and
+- **A smoke driver, and a smoke stage.** `scripts/smoke_bootstrap.gd` and
   `scripts/smoke_match_driver.gd` play a scripted headless match behind a
-  `--smoke` command-line flag. The CI job that would run it against the
-  exported artifact does **not** exist (#312, a blocker under epic #220), and
-  the driver is itself failing as of 2026-09-14 (#319, also a blocker). Do not
-  read the presence of the driver as a working smoke stage, and do not read a
-  green CI run as evidence that the exported build plays a match.
+  `--smoke` command-line flag, and `ci.yml`'s `smoke` job runs it against the
+  exported artifact — it needs `export`, downloads the Linux build, and calls
+  `.github/scripts/smoke-godot.sh`, which holds every scrap of the logic so a
+  local run and the CI job mean the same thing.
+
+  > **Corrected 2026-09-15.** This entry previously read "a smoke driver, but
+  > not a smoke stage" and said the CI job "does **not** exist (#312)". That
+  > was true when written and had already stopped being true: #312 landed in
+  > `cf3cbe5` (PR #318) and #313 followed in `770324a` (PR #326), both before
+  > the 2026-09-15 revisions elsewhere in this file, and neither updated this
+  > entry. The correction is documentary — the job is in `ci.yml` and can be
+  > read there. **What is not corrected, because it was not verified:** no
+  > commit in the tree references #319, the failing `--smoke` driver, so treat
+  > that one as open until its Issue says otherwise. A session with no Godot
+  > binary cannot settle it either way, which is the situation the correction
+  > was made from.
 - **One Godot pin, in one place.** 4.7.2-stable, as the input default of
   `.github/actions/setup-godot`. No call site restates it, and Part 7 of
   `.github/scripts/test-workflow-logic.sh` fails a *second* literal even when
@@ -243,10 +288,14 @@ ambient RNG from inside `rules/`.
 - `.github/scripts/validate-godot.sh` is the local entry point. It exits **127**
   when no Godot binary is on the `PATH`. That is *could not validate*, not
   *validated*, and the two must not be reported as the same thing.
-- CI also exports a playable Linux build (`ci.yml`'s `export` job). Nothing yet
-  runs that artifact: the smoke stage is #312 and the `--smoke` driver it would
-  call is failing (#319), so a green suite says the code is correct, not that
-  the exported game starts.
+- CI exports a playable Linux build (`ci.yml`'s `export` job) and runs it
+  (`ci.yml`'s `smoke` job). **Corrected 2026-09-15** — this previously said
+  "nothing yet runs that artifact," which #312 stopped being true; see the
+  control-plane entry above for the full correction. A green unit suite still
+  says the code is correct rather than that the exported game starts; it is the
+  `smoke` job, not the suite, that speaks to the second. #319 (the `--smoke`
+  driver failing) is unverified by this correction and should be treated as
+  open.
 - Report validation that could not be performed.
 
 ## Completion

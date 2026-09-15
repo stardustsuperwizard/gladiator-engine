@@ -17,6 +17,7 @@ pointer to it, not a copy.
 | Anything in `rules/`, or Godot specifics anywhere | `docs/godot-implementation-guide.md` |
 | Reaching for a Godot API you have not seen in this repo | `docs/engine-reference/godot/` |
 | Build order, scope, what to build next | `docs/moba-to-hex-skirmish-extraction-plan.md` §5–§7 |
+| Anything crossing a process boundary — an API, networking, a client we did not write | `docs/headless-authority-and-client-sdk.md` |
 | Anything sourced from `mikeys_game_bones-rules-moba` | `AUDIT_NOTES.md`, then log the decision in `EXTRACTION_LOG.md` |
 | Anything sourced from any *other* outside repository | `THIRD_PARTY_NOTICES.md` — log the decision and carry its licence notice |
 | Anything in `rules/` | `.github/instructions/rules.instructions.md` |
@@ -92,7 +93,10 @@ Attack, Pass). The Combat Segment turn sequencer (epic #181) and hotseat UI
 
 **The next work**: §11 (victory determination) and §10 step 6's final-round branch
 (both via #173), and the card system (unblocking Focus/Mulligan and §10 steps
-1–4). Everything in §5.3 is explicitly
+1–4). **One constraint on the card system**: the card schema has to be able to
+load content served from outside this repository, not only compiled-in
+`res://` paths. `AGENTS.md` carries the full version under *Before the card
+system*. Everything in §5.3 is explicitly
 deferred — check that list before building something that feels obviously
 missing, because it may be missing on purpose.
 
