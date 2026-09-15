@@ -28,6 +28,8 @@ const RES_FIXTURE_BINARY_DIR_NAME := "fighter_templates_test_binary"
 const RES_FIXTURE_TEMPLATE_ID := "res_fixture_template"
 const RES_FIXTURE_TEMPLATE_BINARY_PATH := RES_FIXTURE_BINARY_DIR + "fixture_template.res"
 const RES_FIXTURE_TEMPLATE_REMAP_PATH := RES_FIXTURE_DIR + "fixture_template.tres.remap"
+const RES_FIXTURE_DIRECT_RES_ID := "direct_res_template"
+const RES_FIXTURE_DIRECT_RES_PATH := RES_FIXTURE_DIR + "direct_res_template.res"
 const RES_FIXTURE_BUDGET_ID := "res_fixture_budget"
 const RES_FIXTURE_BUDGET_PATH := RES_FIXTURE_DIR + "fixture_budget.res"
 const RES_FIXTURE_JUNK_REMAP_PATH := RES_FIXTURE_DIR + "junk.tres.remap"
@@ -429,6 +431,25 @@ static func _test_from_directory_registers_binary_res_and_ignores_remap() -> Arr
 			)
 		)
 
+	# Verify a .res file directly in the enumerated directory is also registered
+	var direct_res := templates.template(RES_FIXTURE_DIRECT_RES_ID)
+	violations.append_array(
+		_expect(
+			direct_res != null,
+			"from_directory() must register a FighterTemplate saved as .res directly in the enumerated directory"
+		)
+	)
+	if direct_res != null:
+		(
+			violations
+			. append_array(
+				_expect(
+					direct_res.display_name == RES_FIXTURE_DIRECT_RES_ID,
+					"the direct .res template must be the one this test saved in the fixture directory"
+				)
+			)
+		)
+
 	# Verify non-template resources are skipped
 	violations.append_array(
 		_expect(
@@ -486,12 +507,21 @@ static func _write_res_fixture() -> bool:
 		return false
 
 	# Write the .tres.remap in the template directory pointing to the external binary
-	# (simulating the sidecar the export pipeline writes at res://resources/fighters/warrior.tres.remap)
+	# (simulating the sidecar the export pipeline writes at
+	# res://resources/fighters/warrior.tres.remap)
 	var remap_file := FileAccess.open(RES_FIXTURE_TEMPLATE_REMAP_PATH, FileAccess.WRITE)
 	if remap_file == null:
 		return false
 	remap_file.store_string('[remap]\npath="' + RES_FIXTURE_TEMPLATE_BINARY_PATH + '"\n')
 	remap_file.close()
+
+	# Save a second FighterTemplate as .res directly in the template directory
+	# (tests that ResourceLoader.list_directory() returns plain .res entries)
+	var direct_template := FighterTemplate.new()
+	direct_template.template_id = RES_FIXTURE_DIRECT_RES_ID
+	direct_template.display_name = RES_FIXTURE_DIRECT_RES_ID
+	if ResourceSaver.save(direct_template, RES_FIXTURE_DIRECT_RES_PATH) != OK:
+		return false
 
 	# Save a non-FighterTemplate resource in the template directory to test skipping
 	var budget := ConstructionBudget.new()
@@ -519,7 +549,7 @@ static func _cleanup_res_fixture() -> void:
 		return
 
 	for fixture_path in [
-		RES_FIXTURE_TEMPLATE_REMAP_PATH, RES_FIXTURE_BUDGET_PATH, RES_FIXTURE_JUNK_REMAP_PATH
+		RES_FIXTURE_TEMPLATE_REMAP_PATH, RES_FIXTURE_DIRECT_RES_PATH, RES_FIXTURE_BUDGET_PATH, RES_FIXTURE_JUNK_REMAP_PATH
 	]:
 		var relative: String = fixture_path.trim_prefix(RES_FIXTURE_DIR)
 		if dir.file_exists(relative):
@@ -532,11 +562,13 @@ static func _cleanup_res_fixture() -> void:
 
 		var binary_dir := DirAccess.open(RES_FIXTURE_BINARY_DIR)
 		if binary_dir != null:
+			binary_dir.list_dir_begin()
 			var file_name := binary_dir.get_next()
 			while file_name != "":
 				if not binary_dir.current_is_dir():
 					binary_dir.remove(file_name)
 				file_name = binary_dir.get_next()
+			binary_dir.list_dir_end()
 
 		if parent.dir_exists(RES_FIXTURE_BINARY_DIR_NAME):
 			parent.remove(RES_FIXTURE_BINARY_DIR_NAME)
