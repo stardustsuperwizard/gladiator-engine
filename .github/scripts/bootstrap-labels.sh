@@ -70,6 +70,12 @@ review:design-ambiguity|FBCA04|Review verdict: needs a human design decision bef
 # it. Its presence downgrades a fallen suite or assertion count from a failure
 # to a warning.
 test-removal-approved|B60205|Human approval for a pull request that lowers the test suite or assertion count
+# Red gate (#221). A state marker on a pull request, applied by a human and
+# read live by ci.yml's `red-gate` job; no workflow ever adds or removes it.
+# Its presence downgrades a suite that passed against the merge base from a
+# failure to a warning -- the escape hatch for a characterization test, which
+# records behaviour that already exists and so is green there on purpose.
+characterization-test|FBCA04|Human approval: this pull request's new tests legitimately pass on the merge base
 dashboard|5319E7|The control-plane dashboard Issue
 dashboard:update|5319E7|Request a dashboard re-render
 LABELS
