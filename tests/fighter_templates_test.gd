@@ -433,12 +433,12 @@ static func _test_from_directory_registers_binary_res_and_ignores_remap() -> Arr
 
 	# Verify a .res file directly in the enumerated directory is also registered
 	var direct_res := templates.template(RES_FIXTURE_DIRECT_RES_ID)
-	(
-		violations
-		. append_array(
-			_expect(
-				direct_res != null,
-				"from_directory() must register a FighterTemplate saved as .res directly in the enumerated directory"
+	violations.append_array(
+		_expect(
+			direct_res != null,
+			(
+				"from_directory() must register a FighterTemplate saved as .res "
+				+ "directly in the enumerated directory"
 			)
 		)
 	)
