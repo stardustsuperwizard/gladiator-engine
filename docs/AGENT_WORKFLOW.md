@@ -772,6 +772,7 @@ points, two different products* above.
 | `planned` label | Planner | — | Intake Issue has been decomposed |
 | `review:*` label | Reviewer | — | Last verdict on a PR |
 | `test-removal-approved` label | You | — | A human has approved this pull request lowering the test suite or assertion count |
+| `characterization-test` label | You | — | A human has approved this pull request's new tests legitimately passing on the merge base |
 | `blocker` label | Planner, any agent, you | `issue-dependencies.yml` | This Issue blocks at least one other; wire its `## Dependencies` table into GitHub dependencies |
 | `dashboard:update` label | You | `agent-00-dashboard.yml` | Re-render the control plane |
 | `dashboard` label | `agent-00` | `agent-00-dashboard.yml` | This Issue is the generated control plane |
@@ -804,6 +805,12 @@ appear if the job trusted that payload. That is why `test-ratchet` reads its
 labels live from the API instead, and why the documented procedure is *add
 the label, then re-run the job* — re-running is what makes the job look again,
 not the label add itself.
+
+`characterization-test` is a fourth label of the same shape, read live by
+`ci.yml`'s `red-gate` job for the same reason and by the same procedure — add
+the label, then re-run the job. It marks the genuine case the red gate would
+otherwise reject: a refactor whose new test covers behavior that already
+worked, so the test legitimately passes against the merge base.
 
 Review is the one thing that fires without a tap, on `ready_for_review`. That
 is deliberate: it is a safety net on work you already chose to start, and
@@ -841,6 +848,7 @@ depends on the color. Checked live against the repository on 2026-08-22:
 | `review:planning-failure` | `#B60205` | `agent-04-review.yml` and `agent-02-implement.yml` (duplicated, not shared) |
 | `review:design-ambiguity` | `#FBCA04` | `agent-04-review.yml` and `agent-02-implement.yml` (duplicated, not shared) |
 | `test-removal-approved` | `#B60205` | `.github/scripts/bootstrap-labels.sh` only — no workflow's `ensure_label` guard recreates it |
+| `characterization-test` | `#FBCA04` | `.github/scripts/bootstrap-labels.sh` only — no workflow's `ensure_label` guard recreates it |
 | `dashboard` | `#5319E7` | `agent-00-dashboard.yml` |
 | `dashboard:update` | `#5319E7` | `agent-00-dashboard.yml` |
 

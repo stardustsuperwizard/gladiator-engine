@@ -215,6 +215,14 @@ ambient RNG from inside `rules/`.
 
 - The unit tests that assert combat resolution against the tabletop rules
   *are* the specification. Write them alongside the resolver, not after.
+  This is enforced: `ci.yml`'s `red-gate` job runs a pull request's new and
+  changed tests against the merge base and fails when one of them already
+  passes there — the unit is the test suite, and `red-gate.py`'s docstring
+  says why. `characterization-test` is the human-only override, for the
+  genuine case: a refactor whose new test covers behavior that already
+  worked. The ratchet and the red gate bound opposite directions — the
+  ratchet stops a test being removed or gutted, the red gate stops a test
+  being added that asserts nothing.
 - Existing tests represent established behavior.
 - Do not weaken, remove, or skip tests merely to make an implementation pass.
   This is enforced: `ci.yml`'s `test-ratchet` job fails a pull request whose

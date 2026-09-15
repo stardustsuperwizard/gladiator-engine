@@ -101,7 +101,10 @@ Do not:
 - close the parent epic;
 - apply the `test-removal-approved` label. It is the human-only override for
   the test ratchet in `ci.yml`, and an agent that applies it is approving its
-  own test deletion.
+  own test deletion;
+- apply the `characterization-test` label. It is the human-only override for
+  the red gate in `ci.yml`, and an agent that applies it is excusing its own
+  test from the only check that says the test asserts anything.
 
 If you discover work outside the supplied implementation contract, do not
 implement it and do not create an Issue for it. Report it under

@@ -129,7 +129,9 @@ Neither do sibling tasks, and neither does anything you notice in passing.
 3. Implement the smallest change that satisfies the acceptance criteria.
 4. Follow existing repository architecture and conventions.
 5. Add or update tests when the acceptance criteria require it, or when they
-   are needed to demonstrate the requested behavior.
+   are needed to demonstrate the requested behavior. A test added for new
+   behavior must fail without the production change — `ci.yml`'s `red-gate`
+   job checks this against the merge base.
 6. Run `.github/scripts/validate-godot.sh`.
 7. Fix defects that validation surfaces **within** the task's scope.
 8. Stop and report anything you cannot resolve inside the contract.
@@ -149,7 +151,10 @@ Do not:
 - close the parent epic;
 - apply the `test-removal-approved` label. It is the human-only override for
   the test ratchet in `ci.yml`, and an agent that applies it is approving its
-  own test deletion.
+  own test deletion;
+- apply the `characterization-test` label. It is the human-only override for
+  the red gate in `ci.yml`, and an agent that applies it is excusing its own
+  test from the only check that says the test asserts anything.
 
 If you find work outside the contract, do not implement it and do not file an
 Issue for it. Report it under **Discovered out-of-scope work** and let the
