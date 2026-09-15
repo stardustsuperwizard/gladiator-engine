@@ -4493,6 +4493,391 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 18: pipeline_metrics.py's ledger validation and derived figures (#339).
+#
+# Part 14's shape, for the same reason: this is the reader side of the same
+# ledger schema, exercised with fixture CSVs written under the harness's own
+# temp directory plus one pass against the real, committed `.metrics/runs.csv`
+# -- python3 only, no network, no `gh`, no real repository beyond that one
+# read-only fixture already checked in.
+# ---------------------------------------------------------------------------
+
+part18 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import csv
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+scripts_dir = pathlib.Path(repo_root) / ".github" / "scripts"
+script = scripts_dir / "pipeline_metrics.py"
+case_dir = pathlib.Path(tempfile.mkdtemp(prefix="pm-case.", dir=work_dir))
+
+sys.path.insert(0, str(scripts_dir))
+import ledger_row  # noqa: E402
+import pipeline_metrics  # noqa: E402
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def row(**fields):
+    base = {name: "" for name in ledger_row.HEADER}
+    base.update(fields)
+    return [base[name] for name in ledger_row.HEADER]
+
+
+def write_ledger(name, data_rows, header=None):
+    path = case_dir / name
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerow(list(header) if header is not None else list(ledger_row.HEADER))
+        for data_row in data_rows:
+            writer.writerow(data_row)
+    return path
+
+
+def run_cli(ledger_path, now="2026-09-15T12:00:00Z", weeks=None):
+    args = [sys.executable, str(script), "--ledger", str(ledger_path), "--json", "--now", now]
+    if weeks is not None:
+        args += ["--weeks", str(weeks)]
+    return subprocess.run(args, capture_output=True, text=True)
+
+
+def model_of(result):
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+
+def collect_shares(node, found):
+    if isinstance(node, dict):
+        if set(node.keys()) == {"numerator", "denominator", "percent"}:
+            found.append(node)
+        else:
+            for value in node.values():
+                collect_shares(value, found)
+    elif isinstance(node, list):
+        for value in node:
+            collect_shares(value, found)
+
+
+# -- criterion 1: --help exits 0, the file is executable with the shebang, --
+#    and the source has no subprocess/urllib/requests import or call site.
+help_result = subprocess.run(
+    [sys.executable, str(script), "--help"], capture_output=True, text=True,
+)
+source = script.read_text(encoding="utf-8")
+forbidden_import = re.search(
+    r"^\s*(?:import|from)\s+(subprocess|urllib|requests)\b", source, re.MULTILINE,
+)
+forbidden_call = re.search(r"\b(?:subprocess|urllib|requests)\.\w+\(", source)
+check(
+    help_result.returncode == 0
+    and source.splitlines()[0] == "#!/usr/bin/env python3"
+    and os.access(script, os.X_OK)
+    and forbidden_import is None
+    and forbidden_call is None,
+    "--help exits 0, the shebang and executable bit are set, and the source"
+    " has no subprocess/urllib/requests import or call site",
+    f"exit {help_result.returncode}, forbidden_import={forbidden_import},"
+    f" forbidden_call={forbidden_call}, executable={os.access(script, os.X_OK)},"
+    f" stderr={help_result.stderr!r}",
+)
+
+# -- criterion 2: HEADER is imported, not restated. -------------------------
+check(
+    pipeline_metrics.HEADER is ledger_row.HEADER,
+    "pipeline_metrics.HEADER is the same object as ledger_row.HEADER",
+    f"pipeline_metrics.HEADER={pipeline_metrics.HEADER!r} is not ledger_row.HEADER",
+)
+
+# -- criteria 3/4: against the committed ledger, the model's top-level keys -
+#    are exactly the six the epic asks for, and coverage matches the file.
+real_ledger = pathlib.Path(repo_root) / ".metrics" / "runs.csv"
+with real_ledger.open(newline="", encoding="utf-8") as f:
+    reader = csv.reader(f)
+    next(reader)
+    real_data_rows = list(reader)
+expected_merge = sum(1 for r in real_data_rows if r[1] == "merge")
+expected_session = sum(1 for r in real_data_rows if r[1] == "session")
+timestamps = [r[0] for r in real_data_rows]
+
+real_result = run_cli(real_ledger)
+real_model = model_of(real_result)
+check(
+    real_result.returncode == 0
+    and list(real_model.keys()) == [
+        "coverage", "delivery_frequency", "first_pass_yield",
+        "tier_accuracy", "verdict_distribution", "fix_rounds",
+    ],
+    "running against the committed ledger exits 0 and the model's top-level"
+    " keys are exactly the six the epic asks for",
+    f"exit {real_result.returncode}, keys={list(real_model.keys())},"
+    f" stderr={real_result.stderr!r}",
+)
+
+real_coverage = real_model.get("coverage", {})
+check(
+    real_coverage.get("merge_rows") == expected_merge
+    and real_coverage.get("session_rows") == expected_session
+    and real_coverage.get("rows")
+    == expected_merge + expected_session + real_coverage.get("skipped_rows", -1)
+    and real_coverage.get("first_timestamp") == min(timestamps)
+    and real_coverage.get("last_timestamp") == max(timestamps),
+    "coverage.merge_rows/session_rows/rows and first/last_timestamp match"
+    " the committed ledger",
+    f"coverage={real_coverage}, expected merge={expected_merge}"
+    f" session={expected_session}",
+)
+
+# -- criterion 5: a missing ledger path is fatal. ---------------------------
+missing_path = case_dir / "does-not-exist.csv"
+result = run_cli(missing_path)
+check(
+    result.returncode != 0 and result.stdout == "" and str(missing_path) in result.stderr,
+    "a missing ledger path exits non-zero, prints nothing to stdout, and"
+    " names the path on stderr",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+# -- criterion 6: a header-only ledger is fatal. -----------------------------
+header_only = write_ledger("header-only.csv", [])
+result = run_cli(header_only)
+check(
+    result.returncode != 0
+    and result.stdout == ""
+    and "no data rows" in result.stderr,
+    "a ledger holding only the header row exits non-zero, prints nothing to"
+    " stdout, and says it holds no data rows",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+# -- criterion 7: a mismatched header is fatal. -----------------------------
+bad_header = write_ledger("bad-header.csv", [], header=["not", "the", "header"])
+result = run_cli(bad_header)
+check(
+    result.returncode != 0
+    and result.stdout == ""
+    and "header" in result.stderr.lower()
+    and "match" in result.stderr.lower(),
+    "a ledger whose first line is not the imported header exits non-zero,"
+    " prints nothing to stdout, and says the header does not match",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+# -- criterion 8: a too-short row and an unparseable timestamp both degrade -
+#    non-fatally, counted in coverage.skipped_rows.
+degraded = write_ledger("degraded.csv", [
+    row(timestamp="2026-09-15T00:00:00Z", event="merge", issue="1", pr="401",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+    ["too", "few", "fields"],
+    row(timestamp="not-a-timestamp", event="merge", issue="2", pr="402",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+    row(timestamp="2026-09-15T00:00:01Z", event="merge", issue="3", pr="403",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+])
+result = run_cli(degraded)
+model = model_of(result)
+check(
+    result.returncode == 0
+    and model.get("coverage", {}).get("skipped_rows") == 2
+    and model.get("coverage", {}).get("merge_rows") == 2,
+    "a wrong-field-count row and an unparseable-timestamp row are both"
+    " skipped and counted in coverage.skipped_rows; every other row still"
+    " contributes",
+    f"exit {result.returncode}, coverage={model.get('coverage')},"
+    f" stderr={result.stderr!r}",
+)
+
+# -- criterion 9: identical flags produce byte-identical stdout. ------------
+result_a = run_cli(real_ledger)
+result_b = run_cli(real_ledger)
+check(
+    result_a.returncode == 0 and result_a.stdout == result_b.stdout,
+    "two runs with identical --ledger/--weeks/--now produce byte-identical"
+    " stdout",
+    f"a={result_a.stdout!r}, b={result_b.stdout!r}",
+)
+
+# -- criterion 10: every share is {numerator, denominator, percent}, null --
+#     below MIN_DENOMINATOR_FOR_PERCENT.
+shares = []
+collect_shares(real_model, shares)
+check(
+    len(shares) >= 4
+    and all(set(s.keys()) == {"numerator", "denominator", "percent"} for s in shares)
+    and all(s["percent"] is None for s in shares if s["denominator"] < 10),
+    "every share in the model has numerator/denominator/percent, and percent"
+    " is null whenever the denominator is below 10",
+    f"shares={shares}",
+)
+
+# -- criterion 11: first_pass_yield over fix_round 0, 1, 0. -----------------
+fpy_ledger = write_ledger("fpy.csv", [
+    row(timestamp="2026-09-15T00:00:00Z", event="merge", issue="1", pr="501",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+    row(timestamp="2026-09-15T00:00:01Z", event="merge", issue="2", pr="502",
+        tier_label="opus", fix_round="1", verdict="pass", run_url="u"),
+    row(timestamp="2026-09-15T00:00:02Z", event="merge", issue="3", pr="503",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+])
+result = run_cli(fpy_ledger)
+fpy = model_of(result).get("first_pass_yield", {})
+check(
+    result.returncode == 0
+    and fpy.get("numerator") == 2
+    and fpy.get("denominator") == 3
+    and fpy.get("percent") is None,
+    "first_pass_yield over fix_round 0, 1, 0 reports numerator 2,"
+    " denominator 3, percent null",
+    f"first_pass_yield={fpy}",
+)
+
+
+# -- criterion 12: tier_accuracy escalation, non-escalation and ------------
+#     unclassified, for a haiku merge row and its one session.
+def tier_fixture(name, model_resolved):
+    ledger = write_ledger(name, [
+        row(timestamp="2026-09-15T00:00:00Z", event="merge", issue="1", pr="601",
+            tier_label="haiku", fix_round="0", verdict="pass", run_url="u"),
+        row(timestamp="2026-09-15T00:00:00Z", event="session", issue="1", pr="601",
+            role="implementer", vendor="claude", model_requested="claude-haiku-4-5",
+            model_resolved=model_resolved, outcome="completed",
+            duration_seconds="10", run_url="u"),
+    ])
+    return model_of(run_cli(ledger))
+
+
+haiku_escalated = tier_fixture("tier-escalated.csv", "claude-opus-5").get(
+    "tier_accuracy", {}
+).get("haiku", {})
+check(
+    haiku_escalated.get("escalated") == 1,
+    "a haiku merge whose session resolved claude-opus-5 reports"
+    " tier_accuracy.haiku.escalated == 1",
+    f"haiku={haiku_escalated}",
+)
+
+haiku_not_escalated = tier_fixture(
+    "tier-not-escalated.csv", "claude-haiku-4-5-20251001"
+).get("tier_accuracy", {}).get("haiku", {})
+check(
+    haiku_not_escalated.get("escalated") == 0,
+    "the same fixture with model_resolved claude-haiku-4-5-20251001 reports"
+    " 0 escalated",
+    f"haiku={haiku_not_escalated}",
+)
+
+haiku_unclassified = tier_fixture(
+    "tier-unclassified.csv", "some-unrecognised-model"
+).get("tier_accuracy", {}).get("haiku", {})
+check(
+    haiku_unclassified.get("unclassified") == 1
+    and haiku_unclassified.get("share", {}).get("denominator") == 0,
+    "the same fixture with an unrecognised model ID reports unclassified == 1"
+    " and a share denominator of 0",
+    f"haiku={haiku_unclassified}",
+)
+
+# -- criterion 13: verdict_distribution over one of each verdict, plus ------
+#     an empty one and an off-vocabulary one.
+verdict_ledger = write_ledger("verdicts.csv", [
+    row(timestamp="2026-09-15T00:00:00Z", event="merge", issue="1", pr="701",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+    row(timestamp="2026-09-15T00:00:01Z", event="merge", issue="2", pr="702",
+        tier_label="opus", fix_round="0", verdict="fix", run_url="u"),
+    row(timestamp="2026-09-15T00:00:02Z", event="merge", issue="3", pr="703",
+        tier_label="opus", fix_round="0", verdict="design-ambiguity", run_url="u"),
+    row(timestamp="2026-09-15T00:00:03Z", event="merge", issue="4", pr="704",
+        tier_label="opus", fix_round="0", verdict="planning-failure", run_url="u"),
+    row(timestamp="2026-09-15T00:00:04Z", event="merge", issue="5", pr="705",
+        tier_label="opus", fix_round="0", verdict="", run_url="u"),
+    row(timestamp="2026-09-15T00:00:05Z", event="merge", issue="6", pr="706",
+        tier_label="opus", fix_round="0", verdict="something-else", run_url="u"),
+])
+result = run_cli(verdict_ledger)
+verdict_distribution = model_of(result).get("verdict_distribution", {})
+check(
+    result.returncode == 0
+    and verdict_distribution == {
+        "pass": 1, "fix": 1, "design-ambiguity": 1, "planning-failure": 1,
+        "none": 1, "other": 1,
+    },
+    "verdict_distribution over one of each named verdict, one empty and one"
+    " off-vocabulary value reports 1 in each bucket",
+    f"verdict_distribution={verdict_distribution}",
+)
+
+# -- criterion 14: fix_rounds over 0, 1, 2, 4 -- counts and the flagged list.
+fixround_ledger = write_ledger("fixrounds.csv", [
+    row(timestamp="2026-09-15T00:00:00Z", event="merge", issue="10", pr="801",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+    row(timestamp="2026-09-15T00:00:01Z", event="merge", issue="11", pr="802",
+        tier_label="opus", fix_round="1", verdict="pass", run_url="u"),
+    row(timestamp="2026-09-15T00:00:02Z", event="merge", issue="12", pr="803",
+        tier_label="opus", fix_round="2", verdict="pass", run_url="u"),
+    row(timestamp="2026-09-15T00:00:03Z", event="merge", issue="13", pr="804",
+        tier_label="opus", fix_round="4", verdict="pass", run_url="u"),
+])
+result = run_cli(fixround_ledger)
+fix_rounds_model = model_of(result).get("fix_rounds", {})
+needs_human_review = fix_rounds_model.get("needs_human_review", [])
+check(
+    result.returncode == 0
+    and fix_rounds_model.get("0") == 1
+    and fix_rounds_model.get("1") == 1
+    and fix_rounds_model.get("2") == 1
+    and fix_rounds_model.get("3+") == 1
+    and len(needs_human_review) == 2
+    and {
+        (entry["issue"], entry["pr"], entry["fix_round"])
+        for entry in needs_human_review
+    } == {(12, 803, 2), (13, 804, 4)},
+    "fix_rounds over 0, 1, 2, 4 reports counts 1/1/1/1 for 0/1/2/3+ and"
+    " lists exactly the two tasks at 2 or more with their issue and pr",
+    f"fix_rounds={fix_rounds_model}",
+)
+
+# -- criterion 15: delivery_frequency over three ISO weeks with 2, 0, 1 -----
+#     merges, aligned so the whole window is three complete weeks.
+delivery_ledger = write_ledger("delivery.csv", [
+    row(timestamp="2026-08-24T10:00:00Z", event="merge", issue="20", pr="901",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+    row(timestamp="2026-08-25T10:00:00Z", event="merge", issue="21", pr="902",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+    row(timestamp="2026-09-07T10:00:00Z", event="merge", issue="22", pr="903",
+        tier_label="opus", fix_round="0", verdict="pass", run_url="u"),
+])
+result = run_cli(delivery_ledger, now="2026-09-14T00:00:00Z", weeks=3)
+weeks_entries = model_of(result).get("delivery_frequency", {}).get("weeks", [])
+check(
+    result.returncode == 0
+    and [entry["merges"] for entry in weeks_entries] == [2, 0, 1]
+    and all("percent" not in entry for entry in weeks_entries),
+    "delivery_frequency over three ISO weeks with 2, 0 and 1 merges reports"
+    " one entry per week with those counts and no percentage on any entry",
+    f"weeks={weeks_entries}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -4513,6 +4898,7 @@ run_part "Part 14: ledger_row.py field derivation (#296)" part14
 run_part "Part 15: session-record writers (#297)" part15
 run_part "Part 16: smoke stage verdicts and job shape (#312)" part16
 run_part "Part 17: red-gate.py scope and merge-base verdict (#327)" part17
+run_part "Part 18: pipeline_metrics.py ledger validation and figures (#339)" part18
 
 echo
 if [ "$failures" -eq 0 ]; then
