@@ -19,7 +19,7 @@ Three documents, three jobs — keep them that way:
 
 Do not put Godot specifics in the spec, and do not put mechanics in the guide.
 
-**Current state (2026-09-12): Slice 0, spec reconciliation, and the core action
+**Current state (2026-09-15): Slice 0, spec reconciliation, and the core action
 framework are all built and merged.** Extraction plan §5.1 is in the tree: the
 hex board with cube distance and symmetric line of sight; the
 `FighterTemplate`/`Fighter` model over authored `.tres`; `DeterministicRng` and
@@ -85,10 +85,58 @@ system fills; `rules/cards/` does not exist yet. Do not build ahead of §5.2's
 build order (§12), and check §5.3 before building something that feels
 obviously missing — it may be missing on purpose.
 
+**§4's Setup Sequence is unbuilt too, and was absent from both lists above
+until 2026-09-15.** `MatchSetup` says as much in its own first paragraph: it is
+spec §4's *placeholder*, not §4 — no roster building against
+`ConstructionBudget`, no deployment rules, no mulligan, no roll-off, no
+feature-token placement. It hands back a hardcoded board with a fixed roster so
+that the parts above it have something to run on.
+
+Only the mulligan there is card-blocked. §5.2's roll-off is not — turn order is
+today the order `MatchSetup` happened to add its players in, and neither the
+loser's compensating ability draw nor the later-round behind-on-points
+tiebreak exists. Feature tokens are absent from `Board` as well (`board.gd`
+puts them out of scope), which leaves §11's second tiebreaker nothing to count
+and §2's "holding" nothing to hold. A match therefore cannot legally start any
+more than it can legally end.
+
 **Known rough edges from the UI work:** #214 (the selected fighter is not
 cleared when passing to the next Turn, leaving the board display confused) and
 #215 (scene files lack `uid://` headers, making them fragile to refactoring).
 Neither blocks play, but both are worth fixing soonish.
+
+**Control-plane state (2026-09-15).** The *Agent Roles* section below describes
+how the control plane works. This is what of it exists — a run of
+infrastructure work landed on 2026-09-13 and 2026-09-14, after the revision
+note above, and almost none of it was visible anywhere else in this file:
+
+- **The run ledger.** `.metrics/runs.csv` is an append-only,
+  version-controlled record of control-plane runs: one row per merge, one per
+  agent session. `.github/workflows/run-ledger.yml` is its only writer, it
+  derives every field from GitHub's own JSON through
+  `.github/scripts/ledger_row.py` rather than from any model's prose, and it is
+  built never to fail a merge — a lost row is a gap in a ledger, a red run is a
+  signal that the merge itself went wrong. The session rows come from the
+  `<!-- agent-session-record -->` JSON comments that `agent-02-implement.yml`,
+  `agent-04-review.yml` and `agent-05-fix.yml` post. Schema and vocabularies:
+  `docs/RUN_LEDGER.md`.
+- **The test ratchet**, documented under *Testing* below.
+- **An export job.** `ci.yml`'s `export` job builds a Linux artifact via
+  `.github/scripts/export-godot.sh` against `export_presets.cfg`. Every scrap
+  of export logic lives in the script, so a local run and the CI job mean the
+  same thing, and the build goes under `$RUNNER_TEMP` — never into the
+  checkout.
+- **A smoke driver, but not a smoke stage.** `scripts/smoke_bootstrap.gd` and
+  `scripts/smoke_match_driver.gd` play a scripted headless match behind a
+  `--smoke` command-line flag. The CI job that would run it against the
+  exported artifact does **not** exist (#312, a blocker under epic #220), and
+  the driver is itself failing as of 2026-09-14 (#319, also a blocker). Do not
+  read the presence of the driver as a working smoke stage, and do not read a
+  green CI run as evidence that the exported build plays a match.
+- **One Godot pin, in one place.** 4.7.2-stable, as the input default of
+  `.github/actions/setup-godot`. No call site restates it, and Part 7 of
+  `.github/scripts/test-workflow-logic.sh` fails a *second* literal even when
+  it matches today's value. Change the version there and nowhere else.
 
 **The spec is the authority on mechanics, and an implementation session does
 not redesign them.** Most of the rules are inherited from a settled tabletop
@@ -173,7 +221,15 @@ ambient RNG from inside `rules/`.
   suite count or `_expect(` assertion count is lower than its merge base's,
   and `test-removal-approved` is the human-only override.
 - Add tests for new behavior when practical.
-- Tests run headless (`godot --headless`).
+- Tests run headless (`godot --headless`), against Godot **4.7.2-stable** —
+  pinned once, as `.github/actions/setup-godot`'s input default.
+- `.github/scripts/validate-godot.sh` is the local entry point. It exits **127**
+  when no Godot binary is on the `PATH`. That is *could not validate*, not
+  *validated*, and the two must not be reported as the same thing.
+- CI also exports a playable Linux build (`ci.yml`'s `export` job). Nothing yet
+  runs that artifact: the smoke stage is #312 and the `--smoke` driver it would
+  call is failing (#319), so a green suite says the code is correct, not that
+  the exported game starts.
 - Report validation that could not be performed.
 
 ## Completion
@@ -203,10 +259,28 @@ conditions that would make a fifth or sixth role worth adding. Read it before
 proposing one.
 
 A fifth role, plan review, checks a planner's sub-issues against their parent
-epic before any task is dispatched — read-only, local-only in v1, and its
-verdict is advice rather than a dispatch gate. See *Plan review* in
-`docs/AGENT_WORKFLOW.md` for the eight checks it works and the three
-verdicts, and `.claude/agents/plan-reviewer.md` for the agent contract.
+epic before any task is dispatched — read-only, and its verdict is advice
+rather than a dispatch gate. What it has no v1 of is a **workflow**: there is
+no `agent-07-*.yml`, no `agent:plan-reviewer:*` label, and no dispatch path
+that reads a verdict, so a `PLAN FIX` sitting on an epic binds nothing until a
+human acts on it.
+
+It is not, however, local-only. The cloud profile
+(`.github/agents/07-plan-reviewer.agent.md`), the deterministic request
+assembler as a composite action (`.github/actions/build-plan-review-request/`)
+and plan-verdict parsing inside `extract-review-verdict` are all in the tree.
+See *Plan review* in `docs/AGENT_WORKFLOW.md` for the eight checks it works and
+the three verdicts. The agent contract lives in **two** files that must be
+edited together — `.claude/agents/plan-reviewer.md` and
+`.github/agents/07-plan-reviewer.agent.md`.
+
+> **Revised 2026-09-15.** This section previously called plan review
+> "local-only in v1." That was true when written and stopped being true within
+> the week: #243 added the cloud profile and #245 the control-plane wiring. The
+> load-bearing claim was always *no workflow reads the verdict*, which still
+> holds; "local-only" was a loose restatement of it that a session could
+> reasonably have read as licence to edit the local half of the role contract
+> and leave the cloud half behind.
 
 The control plane is label-driven. **Every trigger is keyed on a label name,
 and a fresh clone has none of them** — run `.github/scripts/bootstrap-labels.sh`
@@ -247,6 +321,23 @@ the directory that points to it.
 > having seen the contract, the pointer file is missing or misnamed — the
 > instruction to check manually is the fallback, not the plan.
 
+## Local session hooks
+
+`.claude/settings.json` wires two hooks for Claude Code sessions: a
+`SessionStart` hook that reports the branch, which `TurnAction` subclasses
+exist, and whether a Godot binary is present; and a `PreToolUse` hook on
+`git commit` that greps staged `rules/` files for outward references and
+ambient RNG.
+
+**The second is advisory and always exits 0.** It is not a second enforcement
+point, and it deliberately reproduces only the two rules that are honestly one
+grep — the base-class and inbound-type contracts need real derivation and are
+left alone rather than half-copied. Enforcement belongs to the contract tests
+(`extraction_contract_test.gd`, `ambient_rng_contract_test.gd`,
+`base_class_contract_test.gd`, `tests/inbound_type_contract_test.gd`), and a
+violation fails the build there whatever the hook said. A hook that stayed
+quiet is not a check that passed.
+
 ## Issue Dependencies
 
 One Issue waiting on another is written in that Issue's `## Dependencies`
@@ -269,6 +360,11 @@ full contract is *Declaring Issue dependencies* in
   most others require the notice to travel with the work, and reproducing it
   costs nothing next to being wrong about what counts as substantial.
 - Findings about the source repo go in `AUDIT_NOTES.md`.
+- Control-plane **runs** are recorded automatically and never by hand.
+  `run-ledger.yml` appends to `.metrics/runs.csv` on merge; that file is
+  append-only, has exactly one writer, and `ci.yml` closes its gates when a
+  pull request touches nothing else. Do not hand-edit it, sort it, or
+  regenerate it in a pull request. `docs/RUN_LEDGER.md` is the schema.
 - When a document is revised because it was **wrong** — not merely
   incomplete — say so in the document, dated, with what it previously claimed.
   A settled decision that leaves no trace of why it was settled gets
