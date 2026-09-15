@@ -19,7 +19,10 @@ far as a `PASS` on green CI; merging is yours.
 
 It also never applies the `test-removal-approved` label. That label is the
 human-only override for the test ratchet in `ci.yml`, and a run that could
-label its own pull request could clear its own ratchet.
+label its own pull request could clear its own ratchet. The same is true of
+`characterization-test`, the human-only override for the red gate: a run
+that could apply it could excuse its own test from the only check that says
+the test asserts anything.
 
 ## GitHub access
 

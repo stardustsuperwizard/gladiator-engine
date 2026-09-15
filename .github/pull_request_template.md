@@ -29,6 +29,9 @@ Closes #<issue-number>
 - [ ] Existing tests pass — <result>
 - [ ] Tests added for new behavior — <result, or why not practical>
 
+<!-- Only fill this in if `characterization-test` is on this PR. -->
+- [ ] `characterization-test` reason — <why this test legitimately passes on the merge base>
+
 ## Acceptance Criteria
 
 <!-- Copy from the Issue. Any unmet criterion must be called out, not hidden. -->
