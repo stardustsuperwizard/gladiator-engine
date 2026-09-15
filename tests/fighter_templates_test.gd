@@ -16,17 +16,21 @@ const ARCHER_PATH := "res://resources/fighters/archer.tres"
 const CONSTRUCTION_BUDGET_PATH := "res://resources/fighters/construction_budget.tres"
 
 ## Fixture built under user:// for the exported-build regression test --
-## reproducing what the export pipeline actually ships (a binary .res, a
-## non-FighterTemplate resource, and a .remap sidecar) without depending on a
-## real export. See `rules/tests/fighter_template_test.gd::TEST_TRES_PATH` for
-## the same "test writes and cleans up its own user:// fixture" pattern.
+## reproducing what the export pipeline actually ships (a binary .res in an
+## external directory, a .remap sidecar in the template directory pointing to it,
+## a non-FighterTemplate resource, and a standalone .remap naming a nonexistent file)
+## without depending on a real export. See `rules/tests/fighter_template_test.gd::TEST_TRES_PATH`
+## for the same "test writes and cleans up its own user:// fixture" pattern.
 const RES_FIXTURE_DIR := "user://fighter_templates_test_fixture/"
 const RES_FIXTURE_DIR_NAME := "fighter_templates_test_fixture"
+const RES_FIXTURE_BINARY_DIR := "user://fighter_templates_test_binary/"
+const RES_FIXTURE_BINARY_DIR_NAME := "fighter_templates_test_binary"
 const RES_FIXTURE_TEMPLATE_ID := "res_fixture_template"
-const RES_FIXTURE_TEMPLATE_PATH := RES_FIXTURE_DIR + "fixture_template.res"
+const RES_FIXTURE_TEMPLATE_BINARY_PATH := RES_FIXTURE_BINARY_DIR + "fixture_template.res"
+const RES_FIXTURE_TEMPLATE_REMAP_PATH := RES_FIXTURE_DIR + "fixture_template.tres.remap"
 const RES_FIXTURE_BUDGET_ID := "res_fixture_budget"
 const RES_FIXTURE_BUDGET_PATH := RES_FIXTURE_DIR + "fixture_budget.res"
-const RES_FIXTURE_REMAP_PATH := RES_FIXTURE_DIR + "fixture_template.tres.remap"
+const RES_FIXTURE_JUNK_REMAP_PATH := RES_FIXTURE_DIR + "junk.tres.remap"
 
 
 static func run() -> bool:
@@ -384,19 +388,21 @@ static func _test_from_directory_unreadable_path_yields_empty_instance() -> Arra
 
 
 ## The exported-build repair this task adds: an authored `.tres` is not the
-## only form `from_directory()` must accept. The export pipeline converts it
-## to a binary `.res` and writes a `.tres.remap` sidecar alongside it (see
-## `FighterTemplates.from_directory()`'s docstring) -- this pins that a
-## `FighterTemplate` saved as `.res` is registered, a non-`FighterTemplate`
-## resource saved the same way is still skipped, and a `.remap` file in the
-## same directory neither registers anything nor disturbs enumeration of the
-## real entries.
+## only form `from_directory()` must accept. The export pipeline relocates the
+## binary to `res://.godot/exported/<hash>/export-<md5>-<name>.res` and writes
+## a `.tres.remap` sidecar in the original directory pointing to it (see
+## `FighterTemplates.from_directory()`'s docstring). `ResourceLoader.list_directory()`
+## strips the `.remap` suffix and returns logical resource paths; `load()` then
+## resolves them through the remap to the relocated binary. This test pins that a
+## `FighterTemplate` loaded through a `.remap` file is registered, a non-
+## `FighterTemplate` resource is still skipped, and `.remap` files neither
+## register themselves nor disturb enumeration.
 static func _test_from_directory_registers_binary_res_and_ignores_remap() -> Array[String]:
 	var violations: Array[String] = []
 
 	var setup_ok := _write_res_fixture()
 	violations.append_array(
-		_expect(setup_ok, "test setup must be able to write the user:// .res fixture directory")
+		_expect(setup_ok, "test setup must be able to write the user:// fixture directories")
 	)
 	if not setup_ok:
 		_cleanup_res_fixture()
@@ -404,11 +410,12 @@ static func _test_from_directory_registers_binary_res_and_ignores_remap() -> Arr
 
 	var templates := FighterTemplates.from_directory(RES_FIXTURE_DIR)
 
+	# Verify the template behind the .remap is registered
 	var found := templates.template(RES_FIXTURE_TEMPLATE_ID)
 	violations.append_array(
 		_expect(
 			found != null,
-			"from_directory() must register a FighterTemplate saved as a binary .res file"
+			"from_directory() must register a FighterTemplate loaded through a .tres.remap sidecar"
 		)
 	)
 	if found != null:
@@ -417,18 +424,33 @@ static func _test_from_directory_registers_binary_res_and_ignores_remap() -> Arr
 			. append_array(
 				_expect(
 					found.display_name == RES_FIXTURE_TEMPLATE_ID,
-					"the registered .res template must be the one this test wrote to the fixture directory"
+					"the registered template must be the one this test saved to the external binary directory"
 				)
 			)
 		)
 
+	# Verify non-template resources are skipped
 	violations.append_array(
 		_expect(
 			templates.template(RES_FIXTURE_BUDGET_ID) == null,
 			(
 				"from_directory() must not register a non-FighterTemplate resource "
-				+ "(a ConstructionBudget saved as .res) under any template_id"
+				+ "(a ConstructionBudget saved as .res in the template directory)"
 			)
+		)
+	)
+
+	# Verify .remap files produce no spurious registrations
+	violations.append_array(
+		_expect(
+			templates.template("fixture_template.tres.remap") == null,
+			"from_directory() must not treat a .remap filename as a resource to register"
+		)
+	)
+	violations.append_array(
+		_expect(
+			templates.template("junk") == null,
+			"from_directory() must not register a .remap file that points to a nonexistent location"
 		)
 	)
 
@@ -438,10 +460,12 @@ static func _test_from_directory_registers_binary_res_and_ignores_remap() -> Arr
 
 
 ## Writes the fixture `_test_from_directory_registers_binary_res_and_ignores_remap()`
-## exercises: a `FighterTemplate` saved as binary `.res`, a `ConstructionBudget`
-## (a real Resource that is not a `FighterTemplate`) saved the same way, and a
-## `.tres.remap` sidecar naming no file that actually exists. Returns `false`
-## without partially cleaning up on failure -- the caller cleans up either way.
+## exercises: a `FighterTemplate` saved as binary `.res` in an external directory,
+## a `.tres.remap` sidecar in the template directory pointing to it, a
+## `ConstructionBudget` (a real Resource that is not a `FighterTemplate`) saved
+## in the template directory, and a standalone `.remap` sidecar naming a
+## nonexistent file. Returns `false` without partially cleaning up on failure --
+## the caller cleans up either way.
 static func _write_res_fixture() -> bool:
 	var parent := DirAccess.open("user://")
 	if parent == null:
@@ -449,23 +473,39 @@ static func _write_res_fixture() -> bool:
 	if not parent.dir_exists(RES_FIXTURE_DIR_NAME):
 		if parent.make_dir(RES_FIXTURE_DIR_NAME) != OK:
 			return false
+	if not parent.dir_exists(RES_FIXTURE_BINARY_DIR_NAME):
+		if parent.make_dir(RES_FIXTURE_BINARY_DIR_NAME) != OK:
+			return false
 
+	# Save the FighterTemplate as binary in the external directory (simulating
+	# the export pipeline's relocated location at res://.godot/exported/<hash>/...)
 	var template := FighterTemplate.new()
 	template.template_id = RES_FIXTURE_TEMPLATE_ID
 	template.display_name = RES_FIXTURE_TEMPLATE_ID
-	if ResourceSaver.save(template, RES_FIXTURE_TEMPLATE_PATH) != OK:
+	if ResourceSaver.save(template, RES_FIXTURE_TEMPLATE_BINARY_PATH) != OK:
 		return false
 
+	# Write the .tres.remap in the template directory pointing to the external binary
+	# (simulating the sidecar the export pipeline writes at res://resources/fighters/warrior.tres.remap)
+	var remap_file := FileAccess.open(RES_FIXTURE_TEMPLATE_REMAP_PATH, FileAccess.WRITE)
+	if remap_file == null:
+		return false
+	remap_file.store_string('[remap]\npath="' + RES_FIXTURE_TEMPLATE_BINARY_PATH + '"\n')
+	remap_file.close()
+
+	# Save a non-FighterTemplate resource in the template directory to test skipping
 	var budget := ConstructionBudget.new()
 	budget.budget_id = RES_FIXTURE_BUDGET_ID
 	if ResourceSaver.save(budget, RES_FIXTURE_BUDGET_PATH) != OK:
 		return false
 
-	var remap_file := FileAccess.open(RES_FIXTURE_REMAP_PATH, FileAccess.WRITE)
-	if remap_file == null:
+	# Write a standalone .remap that doesn't correspond to any real registration
+	# (tests that .remap files alone don't create spurious registrations)
+	var junk_remap := FileAccess.open(RES_FIXTURE_JUNK_REMAP_PATH, FileAccess.WRITE)
+	if junk_remap == null:
 		return false
-	remap_file.store_string('[remap]\npath="res://resources/fighters/does_not_exist.tres"\n')
-	remap_file.close()
+	junk_remap.store_string('[remap]\npath="res://does_not_exist.res"\n')
+	junk_remap.close()
 
 	return true
 
@@ -479,15 +519,27 @@ static func _cleanup_res_fixture() -> void:
 		return
 
 	for fixture_path in [
-		RES_FIXTURE_TEMPLATE_PATH, RES_FIXTURE_BUDGET_PATH, RES_FIXTURE_REMAP_PATH
+		RES_FIXTURE_TEMPLATE_REMAP_PATH, RES_FIXTURE_BUDGET_PATH, RES_FIXTURE_JUNK_REMAP_PATH
 	]:
 		var relative: String = fixture_path.trim_prefix(RES_FIXTURE_DIR)
 		if dir.file_exists(relative):
 			dir.remove(relative)
 
 	var parent := DirAccess.open("user://")
-	if parent != null and parent.dir_exists(RES_FIXTURE_DIR_NAME):
-		parent.remove(RES_FIXTURE_DIR_NAME)
+	if parent != null:
+		if parent.dir_exists(RES_FIXTURE_DIR_NAME):
+			parent.remove(RES_FIXTURE_DIR_NAME)
+
+		var binary_dir := DirAccess.open(RES_FIXTURE_BINARY_DIR)
+		if binary_dir != null:
+			var file_name := binary_dir.get_next()
+			while file_name != "":
+				if not binary_dir.current_is_dir():
+					binary_dir.remove(file_name)
+				file_name = binary_dir.get_next()
+
+		if parent.dir_exists(RES_FIXTURE_BINARY_DIR_NAME):
+			parent.remove(RES_FIXTURE_BINARY_DIR_NAME)
 
 
 ## Every read above -- refusal(), template(), template_for(),

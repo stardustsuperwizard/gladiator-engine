@@ -112,12 +112,15 @@ func templates_by_fighter(state: GameState) -> Dictionary:
 ## `ConstructionBudget`, is skipped. Not recursive: the authored directory is
 ## flat.
 ##
-## Both the authored text form (`.tres`) and the binary form the export
-## pipeline converts it to (`.res`, per the `editor/export/
-## convert_text_resources_to_binary` project setting) are candidate resource
-## files. A `.tres.remap` sidecar the export writes alongside a converted
-## `.res` is metadata, not a resource -- it ends in neither `.tres` nor `.res`
-## and is never `load()`ed.
+## In an authored environment, resources are saved as `.tres` text files. In an
+## exported build, the export pipeline relocates binaries to
+## `res://.godot/exported/<hash>/export-<md5>-<name>.res` and leaves `.tres.remap`
+## sidecars in the original directory. `ResourceLoader.list_directory()` strips
+## `.remap` suffixes and returns logical resource paths (e.g., `warrior.tres`
+## from `warrior.tres.remap`). This allows `load()` to resolve them through
+## Godot's remap system, retrieving the binary from its relocated location.
+## Both forms — direct `.tres` and `.tres.remap`-resolved — work under the same
+## `load()` call.
 ##
 ## An unreadable `directory_path` yields an empty, still-usable instance rather
 ## than `null` -- the same "nothing is repaired, nothing crashes" direction
@@ -125,19 +128,15 @@ func templates_by_fighter(state: GameState) -> Dictionary:
 static func from_directory(directory_path: String = DEFAULT_TEMPLATES_DIR) -> FighterTemplates:
 	var instance := FighterTemplates.new()
 
-	var dir := DirAccess.open(directory_path)
-	if dir == null:
+	var entries := ResourceLoader.list_directory(directory_path)
+	if entries.is_empty():
 		return instance
 
-	dir.list_dir_begin()
-	var file_name := dir.get_next()
-	while file_name != "":
-		var is_resource_file := file_name.ends_with(".tres") or file_name.ends_with(".res")
-		if not dir.current_is_dir() and is_resource_file:
-			var resource: Variant = load(directory_path.path_join(file_name))
-			if resource is FighterTemplate:
-				instance.register(resource)
-		file_name = dir.get_next()
-	dir.list_dir_end()
+	for entry in entries:
+		if entry.ends_with("/"):
+			continue
+		var resource: Variant = load(directory_path.path_join(entry))
+		if resource is FighterTemplate:
+			instance.register(resource)
 
 	return instance
