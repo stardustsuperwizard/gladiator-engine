@@ -433,20 +433,20 @@ static func _test_from_directory_registers_binary_res_and_ignores_remap() -> Arr
 
 	# Verify a .res file directly in the enumerated directory is also registered
 	var direct_res := templates.template(RES_FIXTURE_DIRECT_RES_ID)
-	violations.append_array(
-		_expect(
-			direct_res != null,
-			"from_directory() must register a FighterTemplate saved as .res directly in the enumerated directory"
+	(
+		violations
+		. append_array(
+			_expect(
+				direct_res != null,
+				"from_directory() must register a FighterTemplate saved as .res directly in the enumerated directory"
+			)
 		)
 	)
 	if direct_res != null:
-		(
-			violations
-			. append_array(
-				_expect(
-					direct_res.display_name == RES_FIXTURE_DIRECT_RES_ID,
-					"the direct .res template must be the one this test saved in the fixture directory"
-				)
+		violations.append_array(
+			_expect(
+				direct_res.display_name == RES_FIXTURE_DIRECT_RES_ID,
+				"the direct .res template must be the one this test saved in the fixture directory"
 			)
 		)
 
@@ -549,7 +549,10 @@ static func _cleanup_res_fixture() -> void:
 		return
 
 	for fixture_path in [
-		RES_FIXTURE_TEMPLATE_REMAP_PATH, RES_FIXTURE_DIRECT_RES_PATH, RES_FIXTURE_BUDGET_PATH, RES_FIXTURE_JUNK_REMAP_PATH
+		RES_FIXTURE_TEMPLATE_REMAP_PATH,
+		RES_FIXTURE_DIRECT_RES_PATH,
+		RES_FIXTURE_BUDGET_PATH,
+		RES_FIXTURE_JUNK_REMAP_PATH
 	]:
 		var relative: String = fixture_path.trim_prefix(RES_FIXTURE_DIR)
 		if dir.file_exists(relative):
