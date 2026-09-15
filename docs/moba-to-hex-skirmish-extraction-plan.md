@@ -422,6 +422,18 @@ identical final state. At that point, adding networking is a transport change, n
 > answer changes decisions in §5.3, §7, and guide §5, and those decisions are
 > free now and expensive after there is networking code to revise.
 
+> **Extended 2026-09-15.** The note above says "ship only a client to
+> players." That is now too narrow: the stated goal has grown to **let players
+> bring their own client**, built by anyone, in any language, against a
+> published API. Everything below survives that change unaltered — all four
+> constraints hold, and the operator-run authority matters more when the
+> client is a stranger's, not less. What changes is that the four constraints
+> are no longer sufficient on their own.
+> `docs/headless-authority-and-client-sdk.md` carries the additional ones,
+> along with the decision that the authority **serves the legal action set**
+> so that a third-party client needs no copy of `rules/`. Read this section
+> first; it is still the foundation, and that document does not restate it.
+
 None of this is MVP work and none of it changes §5.1. It is written down so
 the deferred networking work is shaped correctly when it arrives.
 

@@ -317,6 +317,12 @@ the project in the editor on an older engine does not abort.
 None of this is MVP work (extraction plan §5.3). It is written down only so the
 deferred decision is not re-litigated from scratch later.
 
+> **Revised 2026-09-15.** This section covers the case where both ends are
+> builds of this project. For clients we did not write — the bring-your-own-
+> interface posture — see `docs/headless-authority-and-client-sdk.md`, which
+> extends plan §5.5 and revises §9.1 below. §9.2 and §9.3 apply unchanged and
+> matter more, not less, when the client is a stranger's.
+
 Godot 4's high-level multiplayer (`MultiplayerAPI`, `@rpc` annotations,
 `ENetMultiplayerPeer`) is more than adequate for a turn-based game: the traffic
 is a handful of small messages per turn, and none of the latency-hiding
@@ -351,6 +357,18 @@ is advisory: the server's copy is the one whose output is the match. Keep the
 client's use of it read-only in that sense — never let a locally resolved
 `TurnResult` become the client's committed state instead of the one that came
 back over the wire.
+
+> **Revised 2026-09-15.** The paragraph above is still correct about *our*
+> client, and wrong as a general statement about clients. It assumes the
+> shipped client is a Godot export over this source tree, which was the only
+> case §5.5 contemplated. `docs/headless-authority-and-client-sdk.md` adopts a
+> further goal — third parties build their own clients, in their own
+> languages — and a React or Python client cannot contain a copy of `rules/`
+> at all. That document's decision is that the authority **serves the legal
+> action set** rather than expecting the client to derive it, which removes
+> the client's need for a rules copy entirely. Our own client may still carry
+> one for local highlighting; nothing else may be required to. Read that
+> document before designing anything that assumes a client-side resolver.
 
 ### 9.2 What crosses the wire is a per-player view, not `GameState`
 
