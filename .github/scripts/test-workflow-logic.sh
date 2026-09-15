@@ -4878,6 +4878,452 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 19: render-pipeline-report.py's GitHub-derived figures, its rendering
+# and its two failure classes (#340).
+#
+# Part 14's shape again, and Part 18's in particular -- this is the renderer
+# sitting on top of the module Part 18 covers. python3 only, fixture ledgers
+# and one fixture `--github-json` document, no network, no `gh` and no real
+# repository beyond a read-only pass over the committed `.metrics/runs.csv`.
+# The two `gh` paths are exercised by putting a temp directory on `PATH`:
+# empty, to prove `--github-json` reaches no `gh` call at all, and holding a
+# `gh` that exits 1, to prove an outage degrades four sections rather than
+# the report.
+# ---------------------------------------------------------------------------
+
+part19 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import csv
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+scripts_dir = pathlib.Path(repo_root) / ".github" / "scripts"
+script = scripts_dir / "render-pipeline-report.py"
+case_dir = pathlib.Path(tempfile.mkdtemp(prefix="rpr-case.", dir=work_dir))
+
+sys.path.insert(0, str(scripts_dir))
+import ledger_row  # noqa: E402
+
+NOW = "2026-09-15T12:00:00Z"
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+def row(**fields):
+    base = {name: "" for name in ledger_row.HEADER}
+    base.update(fields)
+    return [base[name] for name in ledger_row.HEADER]
+
+
+def merge_row(timestamp, issue, pr, fix_round="0", tier_label="opus",
+              verdict="pass"):
+    return row(timestamp=timestamp, event="merge", issue=str(issue),
+               pr=str(pr), tier_label=tier_label, fix_round=fix_round,
+               verdict=verdict, run_url="u")
+
+
+def write_ledger(name, data_rows, header=None):
+    path = case_dir / name
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerow(list(header) if header is not None else list(ledger_row.HEADER))
+        for data_row in data_rows:
+            writer.writerow(data_row)
+    return path
+
+
+def write_github(name, issues=(), pull_requests=(), ci_runs=()):
+    path = case_dir / name
+    path.write_text(json.dumps({
+        "issues": list(issues),
+        "pull_requests": list(pull_requests),
+        "ci_runs": list(ci_runs),
+    }, indent=2), encoding="utf-8")
+    return path
+
+
+def ci_run(database_id, conclusion, started, completed,
+           branch="main", event="push"):
+    return {
+        "databaseId": database_id, "workflowName": "CI",
+        "headBranch": branch, "event": event, "status": "completed",
+        "conclusion": conclusion, "startedAt": started, "updatedAt": completed,
+        "url": "u",
+    }
+
+
+# A PATH with no `gh` on it at all, and one with a `gh` that always fails.
+# Both hold only that, so nothing else can satisfy the lookup.
+empty_bin = case_dir / "bin-empty"
+empty_bin.mkdir()
+failing_bin = case_dir / "bin-failing"
+failing_bin.mkdir()
+failing_gh = failing_bin / "gh"
+failing_gh.write_text(
+    "#!/bin/sh\n"
+    "echo 'gh: could not resolve to a Repository' >&2\n"
+    "exit 1\n",
+    encoding="utf-8",
+)
+failing_gh.chmod(0o755)
+
+
+def run_cli(ledger_path, github_json=None, now=NOW, weeks=None, path_dir=None,
+            extra=()):
+    args = [sys.executable, str(script), "--ledger", str(ledger_path),
+            "--now", now]
+    if github_json is not None:
+        args += ["--github-json", str(github_json)]
+    if weeks is not None:
+        args += ["--weeks", str(weeks)]
+    args += list(extra)
+
+    env = dict(os.environ)
+    if path_dir is not None:
+        env["PATH"] = str(path_dir)
+    return subprocess.run(args, capture_output=True, text=True, env=env)
+
+
+def section(text, heading):
+    """The body of `## heading`, up to the next `## `."""
+
+    marker = f"\n## {heading}\n"
+    if marker not in text:
+        return ""
+    body = text.split(marker, 1)[1]
+    return body.split("\n## ", 1)[0]
+
+
+# -- criterion 1: --help exits 0, executable, with the shebang. -------------
+help_result = subprocess.run(
+    [sys.executable, str(script), "--help"], capture_output=True, text=True,
+)
+source = script.read_text(encoding="utf-8")
+check(
+    help_result.returncode == 0
+    and source.splitlines()[0] == "#!/usr/bin/env python3"
+    and os.access(script, os.X_OK),
+    "--help exits 0 and the file is executable with a python3 shebang",
+    f"exit {help_result.returncode}, executable={os.access(script, os.X_OK)},"
+    f" first line={source.splitlines()[0]!r}, stderr={help_result.stderr!r}",
+)
+
+# -- criteria 2/3/4: with GitHub state supplied and no `gh` anywhere on -----
+#    PATH, the report renders in full, starting with the marker and carrying
+#    a heading for each of the six headline metrics and three supporting
+#    series.
+basic_ledger = write_ledger("basic.csv", [
+    merge_row("2026-09-02T00:00:00Z", 301, 901),
+    merge_row("2026-09-03T00:00:00Z", 303, 903, fix_round="1"),
+    merge_row("2026-09-04T00:00:00Z", 305, 905),
+])
+basic_github = write_github(
+    "basic-github.json",
+    issues=[{"number": 301, "title": "t", "body": "",
+             "createdAt": "2026-09-01T00:00:00Z", "labels": []}],
+)
+
+result = run_cli(basic_ledger, basic_github, path_dir=empty_bin)
+report = result.stdout
+check(
+    result.returncode == 0 and report.strip() != "",
+    "with --github-json supplied and `gh` absent from PATH the script exits 0"
+    " and prints the report, so no gh call is reached",
+    f"exit {result.returncode}, stdout={report[:400]!r}, stderr={result.stderr!r}",
+)
+check(
+    report.splitlines()[0] == "<!-- pipeline-report -->",
+    "the first line of stdout is the <!-- pipeline-report --> marker",
+    f"first line={report.splitlines()[0] if report else ''!r}",
+)
+
+HEADINGS = [
+    "Lead time for change", "Delivery frequency", "Change failure rate",
+    "Time to restore", "First-pass yield", "Planner tier accuracy",
+    "Verdict distribution", "Fix rounds per task", "CI wall-clock duration",
+]
+missing_headings = [h for h in HEADINGS if f"\n## {h}\n" not in report]
+check(
+    not missing_headings,
+    "the report carries a heading for each of the six headline metrics and"
+    " each of the three supporting series",
+    f"missing headings: {missing_headings}",
+)
+
+# -- criterion 5: the coverage paragraph's figures match the committed ------
+#    ledger exactly.
+real_ledger = pathlib.Path(repo_root) / ".metrics" / "runs.csv"
+with real_ledger.open(newline="", encoding="utf-8") as f:
+    reader = csv.reader(f)
+    next(reader)
+    real_rows = [r for r in reader if r]
+real_timestamps = [r[0] for r in real_rows]
+
+real_result = run_cli(real_ledger, basic_github)
+real_report = real_result.stdout
+coverage_line = ""
+for line in real_report.splitlines():
+    if line.startswith("Read "):
+        coverage_line = line
+        break
+check(
+    real_result.returncode == 0
+    and f"Read {len(real_rows)} ledger rows" in coverage_line
+    and min(real_timestamps) in coverage_line
+    and max(real_timestamps) in coverage_line
+    and "12 weeks" in coverage_line
+    and "2026-09-15T12:00:00Z" in coverage_line
+    and "0 rows were skipped" in coverage_line,
+    "the coverage paragraph states the committed ledger's row count, its"
+    " earliest and latest timestamp, the reporting window and the"
+    " skipped-row count",
+    f"exit {real_result.returncode}, coverage line={coverage_line!r},"
+    f" rows={len(real_rows)}, first={min(real_timestamps) if real_timestamps else None}",
+)
+
+# -- criterion 6: a thin denominator renders `k of n` and no percent sign ---
+#    anywhere; a denominator of 12 renders a percentage.
+check(
+    "%" not in report
+    and "2 of 3 merges in the window landed without a fix round" in report
+    and "0 of 3 merges in the window are attributable" in report,
+    "with every denominator below 10 the whole report is free of a percent"
+    " sign and renders its rates as `k of n`",
+    f"report={report!r}",
+)
+
+wide_ledger = write_ledger("wide.csv", [
+    merge_row(f"2026-09-0{1 + index // 4}T0{index % 4}:00:00Z",
+              400 + index, 1000 + index,
+              fix_round="0" if index < 8 else "1")
+    for index in range(12)
+])
+wide = run_cli(wide_ledger, basic_github)
+yield_line = ""
+for line in wide.stdout.splitlines():
+    if "landed without a fix round" in line:
+        yield_line = line
+        break
+check(
+    wide.returncode == 0 and "66.67%" in yield_line and "(8 of 12)" in yield_line,
+    "a fixture whose first-pass-yield denominator is 12 renders that rate as"
+    " a percentage alongside its counts",
+    f"exit {wide.returncode}, yield line={yield_line!r}",
+)
+
+# -- criterion 7: lead time for change, with one covered and one excluded --
+#    merge.
+lead_ledger = write_ledger("lead.csv", [
+    merge_row("2026-09-03T00:00:00Z", 330, 903),
+    merge_row("2026-09-04T00:00:00Z", 999, 904),
+])
+lead_github = write_github(
+    "lead-github.json",
+    issues=[{"number": 330, "title": "t", "body": "",
+             "createdAt": "2026-09-01T00:00:00Z", "labels": []}],
+)
+lead = run_cli(lead_ledger, lead_github)
+lead_section = section(lead.stdout, "Lead time for change")
+check(
+    lead.returncode == 0
+    and "2 days" in lead_section
+    and "covers 1 merge" in lead_section
+    and "1 merge excluded" in lead_section,
+    "a merge at 2026-09-03T00:00:00Z whose Issue was created"
+    " 2026-09-01T00:00:00Z reports a 2 day lead time, and the section states"
+    " the merges covered and the merges excluded",
+    f"exit {lead.returncode}, section={lead_section!r}",
+)
+
+# -- criterion 8: change failure rate, one attribution by each rule. --------
+cfr_github = write_github(
+    "cfr-github.json",
+    issues=[{"number": 960, "title": "Finding from review",
+             "body": "Discovered in #903 (https://example.invalid/903)",
+             "createdAt": "2026-09-06T00:00:00Z",
+             "labels": [{"name": "deferred-finding"}]}],
+    pull_requests=[{"number": 950, "title": 'Revert "Add the thing (#901)"',
+                    "mergedAt": "2026-09-05T00:00:00Z", "url": "u"}],
+)
+cfr = run_cli(basic_ledger, cfr_github)
+cfr_section = section(cfr.stdout, "Change failure rate")
+check(
+    cfr.returncode == 0
+    and "2 of 3" in cfr_section
+    and "- #901" in cfr_section
+    and "- #903" in cfr_section
+    and "- #905" not in cfr_section,
+    "one merge reverted by a later merged `Revert ... (#N)` pull request and"
+    " one referenced by a later `deferred-finding` Issue give a numerator of"
+    " 2 over a denominator of 3, naming both attributed pull requests",
+    f"exit {cfr.returncode}, section={cfr_section!r}",
+)
+
+# -- criteria 9/10: time to restore and CI wall-clock duration over one -----
+#     success/failure/failure/success sequence.
+#     The three runs that must not count are in the fixture on purpose: a
+#     pull-request run, a run off `main`, and an in-progress run whose
+#     `updatedAt` is not a finish.
+ci_github = write_github("ci-github.json", ci_runs=[
+    ci_run(1, "success", "2026-09-10T00:00:00Z", "2026-09-10T00:10:00Z"),
+    ci_run(2, "failure", "2026-09-10T01:00:00Z", "2026-09-10T01:20:00Z"),
+    ci_run(3, "failure", "2026-09-10T02:00:00Z", "2026-09-10T02:30:00Z"),
+    ci_run(4, "success", "2026-09-10T03:00:00Z", "2026-09-10T03:40:00Z"),
+    ci_run(5, "failure", "2026-09-10T02:15:00Z", "2026-09-10T05:15:00Z",
+           event="pull_request"),
+    ci_run(6, "failure", "2026-09-10T02:20:00Z", "2026-09-10T06:20:00Z",
+           branch="topic"),
+    dict(ci_run(7, "", "2026-09-10T03:30:00Z", "2026-09-10T09:30:00Z"),
+         status="in_progress"),
+])
+ci = run_cli(basic_ledger, ci_github)
+restore_section = section(ci.stdout, "Time to restore")
+check(
+    ci.returncode == 0
+    and "1 red period" in restore_section
+    and "2h 40m" in restore_section,
+    "a success/failure/failure/success run sequence on main reports exactly"
+    " one red period lasting from the first failing run's start to the"
+    " restoring run's completion (01:00 to 03:40 -- 2h 40m)",
+    f"exit {ci.returncode}, section={restore_section!r}",
+)
+
+duration_section = section(ci.stdout, "CI wall-clock duration")
+check(
+    "Median 25m" in duration_section
+    and "90th percentile 40m" in duration_section
+    and "4 runs" in duration_section,
+    "the CI wall-clock section reports the median (25m), the 90th percentile"
+    " (40m) and the run count (4) over the window's main push runs, counting"
+    " neither a pull-request run, nor a run off main, nor an in-progress one",
+    f"section={duration_section!r}",
+)
+
+green_github = write_github("green-github.json", ci_runs=[
+    ci_run(5, "success", "2026-09-10T00:00:00Z", "2026-09-10T00:10:00Z"),
+    ci_run(6, "success", "2026-09-10T01:00:00Z", "2026-09-10T01:10:00Z"),
+])
+green = run_cli(basic_ledger, green_github)
+green_section = section(green.stdout, "Time to restore")
+check(
+    green.returncode == 0
+    and "No red periods" in green_section
+    and "median" not in green_section.lower(),
+    "a run set with no failures says there were no red periods rather than"
+    " reporting a duration",
+    f"exit {green.returncode}, section={green_section!r}",
+)
+
+# -- criterion 11: a failing `gh` degrades the four GitHub-derived sections -
+#     and nothing else, and still exits 0.
+degraded = run_cli(basic_ledger, github_json=None, path_dir=failing_bin)
+github_sections = [
+    "Lead time for change", "Change failure rate", "Time to restore",
+    "CI wall-clock duration",
+]
+degraded_ok = all(
+    section(degraded.stdout, heading).strip().startswith("Not available:")
+    for heading in github_sections
+)
+ledger_intact = all(
+    "Not available:" not in section(degraded.stdout, heading)
+    for heading in ["Delivery frequency", "First-pass yield",
+                    "Planner tier accuracy", "Verdict distribution",
+                    "Fix rounds per task"]
+)
+check(
+    degraded.returncode == 0
+    and degraded_ok
+    and ledger_intact
+    and "2 of 3 merges in the window landed without a fix round" in degraded.stdout
+    and degraded.stdout.count("Not available:") == len(github_sections),
+    "a `gh` that fails renders exactly the four GitHub-derived sections as"
+    " `Not available: <reason>`, leaves every ledger-derived section intact,"
+    " and exits 0",
+    f"exit {degraded.returncode}, stdout={degraded.stdout!r}",
+)
+check(
+    "gh issue list" in section(degraded.stdout, "Lead time for change"),
+    "the `Not available:` line names the reason -- the gh command that failed",
+    f"section={section(degraded.stdout, 'Lead time for change')!r}",
+)
+
+# -- criterion 12: the three fatal ledger cases. ----------------------------
+fatal_cases = [
+    ("a missing ledger", case_dir / "does-not-exist.csv"),
+    ("a header-only ledger", write_ledger("header-only.csv", [])),
+    ("a wrong-header ledger",
+     write_ledger("bad-header.csv", [], header=["not", "the", "header"])),
+]
+for label, path in fatal_cases:
+    fatal = run_cli(path, basic_github)
+    check(
+        fatal.returncode != 0 and fatal.stdout == "" and fatal.stderr.strip() != "",
+        f"{label} exits non-zero with the diagnostic on stderr and nothing on"
+        " stdout",
+        f"{label}: exit {fatal.returncode}, stdout={fatal.stdout!r},"
+        f" stderr={fatal.stderr!r}",
+    )
+
+# -- criterion 13: identical inputs produce byte-identical stdout. ----------
+first = run_cli(basic_ledger, ci_github, weeks=6)
+second = run_cli(basic_ledger, ci_github, weeks=6)
+check(
+    first.returncode == 0 and first.stdout == second.stdout,
+    "two runs with identical --ledger, --github-json, --weeks and --now"
+    " produce byte-identical stdout",
+    f"a={first.stdout!r}\nb={second.stdout!r}",
+)
+
+# -- criterion 14: --json emits the combined model, both halves present. ----
+combined = run_cli(basic_ledger, ci_github, extra=["--json"])
+try:
+    model = json.loads(combined.stdout)
+except json.JSONDecodeError:
+    model = {}
+check(
+    combined.returncode == 0
+    and set(model.keys()) == {"ledger", "github"}
+    and model.get("github", {}).get("available") is True
+    and "coverage" in model.get("ledger", {}),
+    "--json emits one combined model carrying the ledger half and the GitHub"
+    " half",
+    f"exit {combined.returncode}, keys={list(model.keys())},"
+    f" stdout={combined.stdout[:400]!r}",
+)
+
+# -- criterion 15: GitHub state that cannot be parsed degrades, never ------
+#     aborts.
+malformed = case_dir / "malformed.json"
+malformed.write_text('{"issues": []}', encoding="utf-8")
+unparseable = run_cli(basic_ledger, malformed, path_dir=empty_bin)
+check(
+    unparseable.returncode == 0
+    and unparseable.stdout.count("Not available:") == len(github_sections)
+    and "pull_requests" in unparseable.stdout,
+    "GitHub state missing a required key degrades every GitHub-derived"
+    " section with a reason naming the key, and still exits 0",
+    f"exit {unparseable.returncode}, stdout={unparseable.stdout!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -4899,6 +5345,7 @@ run_part "Part 15: session-record writers (#297)" part15
 run_part "Part 16: smoke stage verdicts and job shape (#312)" part16
 run_part "Part 17: red-gate.py scope and merge-base verdict (#327)" part17
 run_part "Part 18: pipeline_metrics.py ledger validation and figures (#339)" part18
+run_part "Part 19: pipeline report rendering and GitHub figures (#340)" part19
 
 echo
 if [ "$failures" -eq 0 ]; then
