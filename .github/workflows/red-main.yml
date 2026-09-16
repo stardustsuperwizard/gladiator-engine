@@ -253,6 +253,7 @@ jobs:
 
               if [ "$status" -ne 0 ]; then
                 sleep 1
+                status=0
                 gh issue create \
                   --repo "$GITHUB_REPOSITORY" \
                   --title "$TITLE" \
@@ -282,6 +283,7 @@ jobs:
 
               if [ "$status" -ne 0 ]; then
                 sleep 1
+                status=0
                 gh issue comment "$ISSUE_NUMBER" \
                   --repo "$GITHUB_REPOSITORY" \
                   --body-file "$RUNNER_TEMP/comment.md" || status=$?
@@ -333,6 +335,7 @@ jobs:
 
               if [ "$status" -ne 0 ]; then
                 sleep 1
+                status=0
                 gh issue edit "$NUMBER" \
                   --repo "$GITHUB_REPOSITORY" \
                   --body-file "$RUNNER_TEMP/body.md" || status=$?
@@ -357,6 +360,7 @@ jobs:
 
               if [ "$status" -ne 0 ]; then
                 sleep 1
+                status=0
                 gh issue comment "$NUMBER" \
                   --repo "$GITHUB_REPOSITORY" \
                   --body-file "$RUNNER_TEMP/comment.md" || status=$?
@@ -401,6 +405,7 @@ jobs:
 
               if [ "$status" -ne 0 ]; then
                 sleep 1
+                status=0
                 gh issue comment "$NUMBER" \
                   --repo "$GITHUB_REPOSITORY" \
                   --body-file "$RUNNER_TEMP/comment.md" || status=$?
@@ -424,6 +429,7 @@ jobs:
 
               if [ "$status" -ne 0 ]; then
                 sleep 1
+                status=0
                 gh issue close "$NUMBER" \
                   --repo "$GITHUB_REPOSITORY" || status=$?
               fi
