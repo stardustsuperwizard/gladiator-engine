@@ -7123,6 +7123,7 @@ check(
 
 # -- criterion 7: Execute Action execution against stub gh with failure modes.
 # Extract the Execute Action step and test it against fail-then-succeed stub
+HEAD_SHA = "0123456789abcdef0123456789abcdef01234567"
 execute_action = part_dir / "execute-action.sh"
 execute_action.write_text(execute_action_src, encoding="utf-8")
 
@@ -7188,6 +7189,10 @@ result = subprocess.run(
         "ACTION": "open",
         "REASON": "test reason",
         "TITLE": "Test Issue",
+        # The step declares HEAD_SHA in its env:, so the stub environment
+        # carries it too -- otherwise `${HEAD_SHA:-}` is empty and the
+        # "Commit:" line the failure summary owes a triager never appears.
+        "HEAD_SHA": HEAD_SHA,
         "GITHUB_REPOSITORY": "test/repo",
         "RED_MAIN_LABEL": "red-main",
         "PATH": f"{bin_subdir}:{os.environ.get('PATH', '')}",
@@ -7254,6 +7259,10 @@ result_fail = subprocess.run(
         "ACTION": "open",
         "REASON": "test failure reason",
         "TITLE": "Test Issue",
+        # The step declares HEAD_SHA in its env:, so the stub environment
+        # carries it too -- otherwise `${HEAD_SHA:-}` is empty and the
+        # "Commit:" line the failure summary owes a triager never appears.
+        "HEAD_SHA": HEAD_SHA,
         "GITHUB_REPOSITORY": "test/repo",
         "RED_MAIN_LABEL": "red-main",
         "PATH": f"{bin_subdir_fail}:{os.environ.get('PATH', '')}",
@@ -7266,11 +7275,16 @@ attempts_fail = int(counter_file_fail.read_text().strip())
 summary_content = step_summary_fail.read_text()
 has_error = "::error::" in result_fail.stderr or "::error::" in result_fail.stdout
 has_reason_in_summary = "test failure reason" in summary_content
+has_commit_in_summary = f"Commit: {HEAD_SHA}" in summary_content
 
 check(
-    result_fail.returncode != 0 and attempts_fail == 2 and has_error and has_reason_in_summary,
-    "Execute Action with always-fail stub: exactly 2 attempts, non-zero exit, error annotation, reason in summary",
-    f"exit {result_fail.returncode}, attempts={attempts_fail}, has_error={has_error}, has_reason={has_reason_in_summary}, summary={summary_content!r}"
+    result_fail.returncode != 0
+    and attempts_fail == 2
+    and has_error
+    and has_reason_in_summary
+    and has_commit_in_summary,
+    "Execute Action with always-fail stub: exactly 2 attempts, non-zero exit, error annotation, reason and commit in summary",
+    f"exit {result_fail.returncode}, attempts={attempts_fail}, has_error={has_error}, has_reason={has_reason_in_summary}, has_commit={has_commit_in_summary}, summary={summary_content!r}"
 )
 
 sys.exit(1 if failures else 0)
