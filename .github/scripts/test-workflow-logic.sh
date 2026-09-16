@@ -230,6 +230,8 @@ class TestHarness:
 
     def run_pull_request(self, step_script, files, cwd):
         """Run a step as if it were triggered by a pull_request event."""
+        import os
+        import tempfile
         case = pathlib.Path(tempfile.mkdtemp(dir=self.part_dir))
         files_path = case / "files.txt"
         files_path.write_text("\n".join(files) + "\n", encoding="utf-8")
