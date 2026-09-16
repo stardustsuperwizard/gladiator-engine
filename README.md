@@ -33,11 +33,23 @@ full reasoning (#369).
   branch.** A ruleset here should carry `deletion` and `non_fast_forward`
   only; anything more recreates the problem that moved the ledger here.
 
+## The ruleset on this branch
+
+`Ledger Branch` (id `23556309`), active since 2026-09-16, targeting
+`refs/heads/ledger` with exactly two rules: `deletion` and
+`non_fast_forward`, and `bypass_actors: []`.
+
+Neither rule can block `run-ledger.yml`. It never deletes a branch, and it
+never force-pushes — the happy path appends and pushes, and the retry path
+fetches, rebases onto the fetched tip, and pushes, which is a fast-forward by
+construction. Neither rule is actor-scoped, so the empty bypass list applies
+to everyone including the repository owner, by design.
+
 ## If this branch is deleted
 
-`run-ledger.yml` will recreate it with a header row and no rows. That is a
-guard against a hard failure, **not a backup** — the history is gone. Deletion
-protection is a ruleset's job.
+The ruleset above is what stops that. If it somehow happens anyway,
+`run-ledger.yml` will recreate the branch with a header row and no rows. That
+is a guard against a hard failure, **not a backup** — the history is gone.
 
 ## Reading it
 
