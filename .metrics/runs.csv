@@ -21,3 +21,4 @@ timestamp,event,issue,pr,role,vendor,model_requested,model_resolved,tier_label,f
 2026-09-15T23:21:30Z,session,347,351,implementer,claude,claude-sonnet-5,claude-sonnet-5,,,,completed,339,https://github.com/stardustsuperwizard/gladiator-engine/actions/runs/35032541209
 2026-09-15T23:21:30Z,session,347,351,reviewer,claude,claude-opus-5,claude-opus-5,,,,completed,190,https://github.com/stardustsuperwizard/gladiator-engine/actions/runs/35032541209
 2026-09-16T00:44:55Z,merge,348,355,,,,,opus,0,pass,,,https://github.com/stardustsuperwizard/gladiator-engine/actions/runs/35041283757
+2026-09-16T01:04:00Z,merge,349,358,,,,,sonnet,0,pass,,,https://github.com/stardustsuperwizard/gladiator-engine/actions/runs/35042588308
