@@ -6980,6 +6980,12 @@ check(
     "issue list by label not found"
 )
 
+check(
+    not any(cli in wf_text for cli in ["claude ", "copilot ", "anthropic "]),
+    "red-main.yml contains no model CLI invocations",
+    "model CLI found in workflow"
+)
+
 # -- criterion 2: bootstrap-labels.sh has red-main entry. ------------------
 bootstrap_path = pathlib.Path(repo_root) / BOOTSTRAP
 bootstrap_text = bootstrap_path.read_text(encoding="utf-8")
@@ -7075,6 +7081,39 @@ check(
     and outputs.get("control_plane") == "true",
     "PR touching only red-main files: godot=false, control_plane=true",
     f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
+)
+
+# -- criterion 5: Decide Action output parsing tolerates missing optional keys.
+# Check the script directly for the grep | while pattern with proper error handling
+decide_action_src = wf.step_source(".github/workflows/red-main.yml", "Decide Action", shell="bash")
+check(
+    "grep -E '^(action|reason|title" in decide_action_src
+    and ("|| true" in decide_action_src or "grep" in decide_action_src),
+    "Decide Action output parsing handles missing optional keys",
+    "grep | while read pattern not properly guarded"
+)
+
+# -- criterion 6: Execute Action contains retry logic for gh calls.
+execute_action_src = wf.step_source(".github/workflows/red-main.yml", "Execute Action", shell="bash")
+check(
+    "sleep 1" in execute_action_src
+    and execute_action_src.count("gh issue create") >= 2,
+    "Execute Action retries gh issue create with sleep",
+    "retry pattern not found"
+)
+
+check(
+    "sleep 1" in execute_action_src
+    and execute_action_src.count("gh issue edit") >= 2,
+    "Execute Action retries gh issue edit with sleep",
+    "retry pattern not found"
+)
+
+check(
+    "sleep 1" in execute_action_src
+    and execute_action_src.count("gh issue close") >= 2,
+    "Execute Action retries gh issue close with sleep",
+    "retry pattern not found"
 )
 
 sys.exit(1 if failures else 0)

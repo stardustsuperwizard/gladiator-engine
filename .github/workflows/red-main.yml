@@ -41,6 +41,7 @@ jobs:
   escalate:
     name: Escalate
     runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'push' || inputs.run_id != ''
 
     env:
       GH_TOKEN: ${{ github.token }}
@@ -213,13 +214,15 @@ jobs:
             --comment-out "$RUNNER_TEMP/comment.md" \
             > "$RUNNER_TEMP/action.txt"
 
-          # Parse the action output into step outputs.
+          # Parse the action output into step outputs. Suppress errors from grep
+          # if no matches are found since optional keys may be absent.
           grep -E '^(action|reason|title|interval_seconds|first_failure_run_id)=' \
-            "$RUNNER_TEMP/action.txt" | while IFS='=' read -r key value; do
-            echo "${key}=${value}" >> "$GITHUB_OUTPUT"
+            "$RUNNER_TEMP/action.txt" || true | while IFS='=' read -r key value; do
+            [ -n "$key" ] && echo "${key}=${value}" >> "$GITHUB_OUTPUT"
           done
 
       - name: Execute Action
+        id: execute
         if: steps.check-event.outputs.proceed == 'true'
         shell: bash
         env:
@@ -230,7 +233,7 @@ jobs:
           set -euo pipefail
 
           # Retry logic: each mutating gh call retries exactly once after a
-          # short pause. On failure, emit ::error:: and exit non-zero.
+          # short pause. On failure, emit ::error:: and write to summary before exiting.
 
           case "$ACTION" in
             open)
@@ -254,11 +257,18 @@ jobs:
               fi
 
               if [ "$status" -ne 0 ]; then
-                ::error::gh issue create failed
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue create failed"
+                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue create failed"
                 exit 1
               fi
 
-              ISSUE_NUMBER=$(tail -1 "$RUNNER_TEMP/create.txt" | grep -oE '#[0-9]+' | tr -d '#')
+              ISSUE_NUMBER=$(sed -n 's|.*/issues/\([0-9]*\)|\1|p' "$RUNNER_TEMP/create.txt" | head -1)
               gh issue comment "$ISSUE_NUMBER" \
                 --repo "$GITHUB_REPOSITORY" \
                 --body-file "$RUNNER_TEMP/comment.md" \
@@ -282,6 +292,13 @@ jobs:
                 --jq '.[0].number // empty')
 
               if [ -z "$NUMBER" ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: no open red-main Issue found to update"
+                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::no open red-main Issue found to update"
                 exit 1
               fi
@@ -299,6 +316,13 @@ jobs:
               fi
 
               if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue edit failed for #$NUMBER"
+                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::gh issue edit failed for #$NUMBER"
                 exit 1
               fi
@@ -349,6 +373,13 @@ jobs:
               fi
 
               if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue close failed for #$NUMBER"
+                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::gh issue close failed for #$NUMBER"
                 exit 1
               fi
@@ -361,23 +392,32 @@ jobs:
               ;;
 
             *)
+              {
+                echo "## Red Main Escalation"
+                echo
+                echo "Error: unknown action: $ACTION"
+                [ -n "$REASON" ] && echo "Reason: $REASON"
+              } >> "$GITHUB_STEP_SUMMARY"
               echo "::error::unknown action: $ACTION"
               exit 1
               ;;
           esac
 
       - name: Summary
-        if: steps.check-event.outputs.proceed == 'true'
+        if: always() && steps.check-event.outputs.proceed == 'true'
         shell: bash
         env:
           ACTION: ${{ steps.decide.outputs.action }}
           REASON: ${{ steps.decide.outputs.reason }}
           TITLE: ${{ steps.decide.outputs.title }}
         run: |
-          {
-            echo "## Red Main Escalation"
-            echo
-            echo "Action: $ACTION"
-            [ -n "$REASON" ] && echo "Reason: $REASON"
-            [ -n "$TITLE" ] && echo "Title: $TITLE"
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Only write to summary if Execute Action didn't already (i.e., on success)
+          if [ ! -s "$GITHUB_STEP_SUMMARY" ] || ! grep -q "Red Main Escalation" "$GITHUB_STEP_SUMMARY"; then
+            {
+              echo "## Red Main Escalation"
+              echo
+              echo "Action: $ACTION"
+              [ -n "$REASON" ] && echo "Reason: $REASON"
+              [ -n "$TITLE" ] && echo "Title: $TITLE"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
