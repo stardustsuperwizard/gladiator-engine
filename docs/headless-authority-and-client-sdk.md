@@ -44,8 +44,9 @@ the architectural reason is recorded here, and it stands on its own.
 ## 0. Status: none of this is the next work
 
 Same posture as plan §5.5, for the same reason. Extraction plan §5.2's build
-order is unchanged by this document. The next work is still §11 victory
-determination and §10 step 6 (#173), and then the card system.
+order is unchanged by this document. The next work is still §11 — match
+configuration, game modes and victory determination — with §10's match-end
+branch (#173), and then the card system.
 
 This is written now because several decisions below are **free today and
 expensive later**. The clearest is constraint 8's: whether the card schema can
@@ -466,10 +467,13 @@ there is nothing safe to ship an SDK against until they exist.
 4. **A match cannot legally start or end.** Spec §4 Setup is unbuilt —
    `MatchSetup`'s own class docstring says it is spec §4's *placeholder*, not
    §4 — "no roster building against `ConstructionBudget`, no deployment rules,
-   no mulligan, no roll-off" — and `AGENTS.md` adds that feature tokens are
-   absent from `Board` as well. Spec §11 victory and §10
-   step 6 are #173. An API without `POST /matches` and a terminal state is not
-   an API.
+   no mulligan, no roll-off". Spec §11's match configuration and victory
+   determination, with §10's match-end branch, are #173. An API without
+   `POST /matches` and a terminal state is not an API.
+
+   *(Revised 2026-09-16: this item also cited feature tokens' absence from
+   `Board`. §11.4 makes them an optional module, off in the MVP, so their
+   absence no longer blocks a match from ending and is not on #173's path.)*
 5. **Ruleset identity handshake.** Guide §9.3. It is the SDK's version pin and
    the thing that turns a rules-version mismatch into a clear refusal instead
    of a silent disagreement. Third-party clients make this more important than

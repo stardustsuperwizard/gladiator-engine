@@ -378,6 +378,15 @@ additive rather than exploratory.
   earlier is constraint 8 of that document — the card schema must be able to
   load content served from outside this repository — which is cheap while the
   card system is being built and a retrofit afterwards.
+- **Objective cards and feature tokens.** **Owner decision, 2026-09-16:** both
+  are **optional modules** under spec §11.4 and are **off in the MVP**, whose
+  only VP source is the Deathmatch game mode. They are listed here because
+  they are exactly the kind of thing that feels obviously missing — §2 names
+  tokens, §4 places them, §10 scores cards — and every one of those rules is
+  now conditional on a module nothing turns on. Do not build either to
+  "unblock" victory determination; §11.4 is explicit that they are not on its
+  path.
+
 - **Server-supplied balance data.** Serving `.tres` values from the authority
   so a balance change does not require a client release (§5.5).
 - **AI opponent.** A post-MVP feature release, not MVP work — the owner's
