@@ -7291,7 +7291,7 @@ result_fail = subprocess.run(
 # With always-fail stub, should exit non-zero with exactly 2 attempts
 attempts_fail = int(counter_file_fail.read_text().strip())
 summary_content = step_summary_fail.read_text()
-has_error = "::error::" in result_fail.stderr
+has_error = "::error::" in result_fail.stderr or "::error::" in result_fail.stdout
 has_reason_in_summary = "test failure reason" in summary_content
 
 check(
