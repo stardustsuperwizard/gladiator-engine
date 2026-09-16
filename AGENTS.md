@@ -109,6 +109,14 @@ system fills; `rules/cards/` does not exist yet. Do not build ahead of §5.2's
 build order (§12), and check §5.3 before building something that feels
 obviously missing — it may be missing on purpose.
 
+**Before the card system — the card counts are already authored.** Deck size,
+starting hand, hand cap, mulligans, the discard cap and both bonus draws are
+§3.1's `CardProfile`, with MVP values in §4 (a 15-card ability deck, hand of 3,
+cap of 3). Read them from data; do not write a literal 3 into a draw routine.
+The ability deck is **core**, not one of §11.4's optional modules — only the
+scoring deck is optional. Spec §4 also settles what an empty deck does: drawing
+from one draws nothing, and decking out is not a loss condition.
+
 **Before the card system — one constraint, revised 2026-09-15.** The card
 schema must be able to load content **served from outside this repository**,
 not only from a `res://rules/cards/*.tres` path compiled into the build. A card

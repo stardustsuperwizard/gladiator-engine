@@ -98,6 +98,19 @@ ConstructionBudget {                // §3.2; validates an authored fighter
   minPerStat, maxPerStat             // 1 and 5
 }
 
+CardProfile {                       // one per match; every card-count dial
+  abilityDeckSize                    // 15 — cards in an authored ability deck
+  abilityStartingHand                // 3  — drawn in §4 step 2
+  abilityHandCap                     // 3  — §10 step 4 refills up to this
+  mulligansAllowed                   // 1  — §4 step 2
+  discardCap                         // null = no limit — §10 step 3
+  rollOffLoserBonusDraw              // 1  — §5.2's compensation
+  focusBonusDraw                     // 1  — §6's Focus/Mulligan
+  scoringDeckSize                    // scoring-deck module only (§11.4);
+  scoringStartingHand                //   3 starting, 3 cap when that
+  scoringHandCap                     //   module is on, unused when off
+}
+
 MatchProfile {                      // one per match; every dial in §11
   roundsPerMatch                     // 3; null = unbounded, see §11.1
   turnsPerPlayer                     // §5.2 — Turns each player takes per round
@@ -228,11 +241,40 @@ game.
 
 ## 4. Setup Sequence
 
+> **Revised 2026-09-16. Owner decision.** Step 2 previously drew "e.g. 5
+> ability cards". **The MVP starting hand is 3**, and every card count in this
+> document is now an authored dial rather than an example embedded in prose —
+> §3.1's `CardProfile`. §12's rule that numbers are data and rules are code
+> always covered these; they were simply never collected anywhere a tuner
+> could find them.
+>
+> **The ability deck itself is not optional.** It is core, and §11.4 does not
+> list it. Only its *numbers* move. The scoring deck is the optional one, and
+> its three counts are inert while that module is off.
+
 1. Each player picks a roster and an **Ability deck** (one-shot and attachment effects). A **Scoring deck** (objective cards — additional VP sources) is an **optional module** (§11.4) and is off in the MVP; when it is on, each player drafts one here as well.
-2. Shuffle each deck drafted. Draw starting hands (e.g. 5 ability cards, plus 3 scoring cards where that module is on). Each player may do one mulligan: set aside any cards from one or both hands, redraw replacements, shuffle the set-aside cards back in.
+2. Shuffle each deck drafted. Draw starting hands — `abilityStartingHand` cards, **3 in the MVP**, plus `scoringStartingHand` where that module is on. Each player may mulligan `mulligansAllowed` times, **once in the MVP**: set aside any cards from one or both hands, redraw replacements, shuffle the set-aside cards back in.
 3. Roll-off to decide board orientation and which player controls which territory.
 4. **Only when the objective-token module (§11.4) is on:** alternately place a set number of feature tokens face-down in empty hexes, respecting minimum spacing and a "at least one per territory" rule. Reveal them once all are placed. With the module off, this step does not happen and no tokens exist.
 5. Alternate deploying fighters into empty starting hexes in your own territory.
+
+**The MVP card numbers**, all of them `CardProfile` fields: a 15-card ability
+deck, a starting hand of 3, a hand cap of 3, one mulligan, no discard cap, one
+bonus draw for the roll-off loser (§5.2), one bonus card on Focus (§6).
+
+The deck size is the one number here that **cannot yet be tuned against
+anything**, because no ability cards exist to fill a deck with. 15 is chosen so
+that a 3-round match cannot run a player out under ordinary play: 3 at setup
+plus a refill to 3 at each of the first two End Segments — the final round's
+End Segment runs steps 1–2 only (§10) and does not refill — reaches 9 before
+Focus draws anything. Treat it as a placeholder with headroom, and reprice it
+once there is a card pool.
+
+**Drawing from an empty deck draws nothing.** Running out is not a loss
+condition and there is no reshuffle of the discard pile. This is stated so that
+a low authored `abilityDeckSize` has a defined outcome rather than an invented
+one; if decking out should ever *do* something, that is a rule to add here
+deliberately, not a behaviour to discover in a resolver.
 
 ---
 
@@ -308,7 +350,7 @@ react, and only during the Power Step.
 ### 5.2 The Combat Segment
 
 - Players alternate Turns until each has taken a set number of Turns (e.g. 4 each).
-- Turn order for round 1 is decided by roll-off; the loser gets a bonus ability-card draw as compensation.
+- Turn order for round 1 is decided by roll-off; the loser draws `rollOffLoserBonusDraw` bonus ability cards as compensation — one, in the MVP (§3.1).
 - In later rounds, ties on the roll-off favor whichever player is currently behind on VP.
 
 ### 5.3 A Turn
@@ -369,7 +411,7 @@ One per Action Step, targeting one friendly fighter:
 - **Attack** — pick a valid visible target within the fighter's Range, run the Combat Resolution algorithm (Section 7). There is no weapon to choose: an attack is fully described by the acting fighter's stats and the distance to the target.
 - **Charge** — combined Move + Attack on the same fighter in one action, only usable if the fighter has no "moved"/"charged" flag yet this round; produces a distinct "charged" flag instead of "moved."
 - **Guard** — apply a defensive flag that lowers this fighter's save target by `guardModifier` (§7.3) and prevents it being pushed, until cleared at end of round.
-- **Focus/Mulligan** — discard any number of cards from hand, draw replacements of the same type, plus one bonus card.
+- **Focus/Mulligan** — discard any number of cards from hand, draw replacements of the same type, plus `focusBonusDraw` bonus cards — one, in the MVP (§3.1).
 
 **Lockout rule:** a fighter with a "charged" flag can't Move/Attack/Guard again until all friendly fighters still on the board share that flag (a soft round-level restriction, not a permanent one).
 
@@ -713,8 +755,8 @@ be mid-Turn. No End Segment runs for that round at all — go straight to §11.)
 
 1. **Score:** *(scoring-deck module only, §11.4)* check each scoring card in hand; if its condition is met, reveal and score it, move it to a scored pile. With the module off this step is a no-op.
 2. **Equip:** play any attachment cards (capped so total attached value never exceeds current VP).
-3. **Discard:** optionally discard any hand cards.
-4. **Refill:** draw ability cards — and scoring cards, where that module is on — back up to hand-size caps.
+3. **Discard:** optionally discard any hand cards, up to `discardCap` (§3.1) — uncapped in the MVP.
+4. **Refill:** draw ability cards back up to `abilityHandCap` — 3 in the MVP — and scoring cards up to `scoringHandCap` where that module is on.
 5. Clear round-level status flags on the board.
 6. Next round begins.
 
@@ -864,6 +906,12 @@ of them on.**
   gains a tiebreaker:** *highest value of held objective tokens*, inserted
   between only-surviving-side and most-surviving-fighters — the position it
   held before this revision.
+
+**The ability deck is not a module and is not listed here.** It is core to
+§5.3's Power Step and §6's Focus/Mulligan, and a match without one is not a
+configuration this document defines. Its counts are authored (§3.1's
+`CardProfile`), which is a different thing from being optional — a dial set
+low is still a deck.
 
 A mode may **require** a module: a treasure mode without objective tokens has
 nothing to score and is a misconfiguration, not a degenerate match. Requiring
