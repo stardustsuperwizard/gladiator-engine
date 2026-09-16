@@ -8,9 +8,36 @@ The ledger serves as a queryable source of truth for run history, making it poss
 
 ## Storage
 
-The ledger is stored at `.metrics/runs.csv`, tracked by git like all version-controlled data. It is append-only — once a row is written, it is never modified or deleted. Exactly one workflow, `.github/workflows/run-ledger.yml`, writes to this file, ensuring deterministic ordering and atomicity. It remains the ledger's only writer, and the ledger stays the single source of truth, even as readers are added.
+The ledger is stored at `.metrics/runs.csv` **on the `ledger` branch**, tracked by git like all version-controlled data. It is append-only — once a row is written, it is never modified or deleted. Exactly one workflow, `.github/workflows/run-ledger.yml`, writes to this file, ensuring deterministic ordering and atomicity. It remains the ledger's only writer, and the ledger stays the single source of truth, even as readers are added.
 
-`.github/scripts/pipeline_metrics.py` and `.github/scripts/render-pipeline-report.py` are readers, not writers: the weekly `pipeline-report.yml` workflow calls them to derive delivery and agent-accuracy figures from this file and publishes the result to the pinned `pipeline-report` Issue. Neither script appends to, rewrites, or otherwise changes `.metrics/runs.csv`.
+`.github/scripts/pipeline_metrics.py` and `.github/scripts/render-pipeline-report.py` are readers, not writers: the weekly `pipeline-report.yml` workflow fetches the ledger from its branch, calls them to derive delivery and agent-accuracy figures from it, and publishes the result to the pinned `pipeline-report` Issue. Neither script appends to, rewrites, or otherwise changes the ledger.
+
+### Why a separate branch
+
+> **Revised 2026-09-16.** The ledger was previously written to `main`. This section records why it is not any more (#369).
+
+The `Main Protection` ruleset requires a pull request on `~DEFAULT_BRANCH`, so `run-ledger.yml`'s direct push to `main` is rejected. A `GITHUB_TOKEN` push cannot be exempted from it: adding a bypass actor for the GitHub Actions integration is refused with
+
+```text
+422  Actor GitHub Actions integration must be part of the ruleset
+     source or owner organization
+```
+
+and this repository is user-owned, so there is no owner organization for that integration to belong to. The alternatives were worse — a deploy key would work but raises workflow events, and `ci.yml` has no `paths-ignore` on push to `main`, so every ledger commit would trigger a full nine-job build.
+
+The ruleset's conditions name `~DEFAULT_BRANCH` and nothing else, so **any other branch is unrestricted and needs no exemption at all.**
+
+Three properties of the branch follow from that:
+
+- **It is an orphan.** It shares no history with `main` and is never merged in either direction. Merging it back would put the ledger on the protected branch again, which is the thing being undone. It also means a ledger commit can never carry a code change, and a code change can never carry a ledger commit.
+- **It is created on demand.** If the branch is missing, `run-ledger.yml` recreates it with a header row. This is a guard against a hard failure and a first-run bootstrap — **not a backup.** A recreated branch has no rows. Protecting the branch from deletion is a separate ruleset's job, and that ruleset must carry `deletion` and `non_fast_forward` only: a `pull_request` or `required_status_checks` rule on it would recreate the exact problem this move solved.
+- **Losing a row is visible.** `run-ledger.yml` still never fails the merge, so a rejected push leaves the job green. The run summary now states the loss under its own heading, names the pull request, and prints the `workflow_dispatch` replay that recovers it.
+
+### The copy of `.metrics/runs.csv` on `main`
+
+`main` still carries a `.metrics/runs.csv`, frozen at the migration point. It is **not** the ledger and is never written to again. It survives for one reason: `test-workflow-logic.sh` Part 18 makes one pass against the real committed file as a read-only fixture, checking that genuine ledger data parses. See `.metrics/README.md`, which says the same thing next to the file.
+
+Removing it, and the now-vestigial `.metrics/**` path gates in `ci.yml`, is deliberate follow-up work rather than part of the move.
 
 ## Schema
 

@@ -7684,6 +7684,222 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 26: the ledger writes to its own branch, never to main (#369).
+#
+# Runs the two shipped bash steps -- `Materialize the Ledger Branch` and
+# `Commit and Push` -- against a bare repository on disk reached over a
+# `file://` remote. No network, no credentials, no `gh`: the step builds its
+# remote from $GITHUB_SERVER_URL and $GITHUB_REPOSITORY, so pointing those at
+# a temp directory is enough to exercise the real thing rather than a copy.
+#
+# The load-bearing assertion is that `main` never appears on the origin. The
+# whole epic is that a `GITHUB_TOKEN` push cannot reach the protected default
+# branch, so a test that only checked the ledger branch was written would pass
+# just as happily on the old workflow.
+# ---------------------------------------------------------------------------
+
+part26 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+WORKFLOW = pathlib.Path(repo_root) / ".github/workflows/run-ledger.yml"
+REPORT = pathlib.Path(repo_root) / ".github/workflows/pipeline-report.yml"
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        print(f"  FAIL — {why}")
+        failures.append(why)
+
+
+def step_source(path, marker, shell="bash"):
+    text = pathlib.Path(path).read_text()
+    if f"- name: {marker}" not in text:
+        # The pre-implementation commit has no such step. Saying so beats a
+        # traceback: this part is one of the suites the red gate replays
+        # against the merge base, and that log should read as a verdict.
+        check(False, "", f"{path.name} has no step named {marker!r}")
+        raise SystemExit(1)
+    start = text.index(f"- name: {marker}")
+    tail = text[start:]
+    run_at = tail.index("run: |")
+    body = tail[run_at + len("run: |"):]
+
+    lines = body.split("\n")[1:]
+    indent = None
+    out = []
+    for line in lines:
+        if not line.strip():
+            out.append("")
+            continue
+        current = len(line) - len(line.lstrip())
+        if indent is None:
+            indent = current
+        if current < indent:
+            break
+        out.append(line[indent:])
+    return "\n".join(out)
+
+
+# Read the header out of the workflow rather than restating it, and hold it
+# against the committed ledger. A column added to `ledger_row.py` without a
+# matching change to LEDGER_HEADER would otherwise only surface the day the
+# branch had to be recreated, seeding it with a header the readers reject.
+workflow_src = WORKFLOW.read_text(encoding="utf-8")
+HEADER = ""
+for line in workflow_src.splitlines():
+    if line.strip().startswith("LEDGER_HEADER:"):
+        HEADER = line.split("LEDGER_HEADER:", 1)[1].strip()
+        break
+
+committed = (pathlib.Path(repo_root) / ".metrics/runs.csv").read_text(
+    encoding="utf-8"
+).splitlines()[0]
+
+check(HEADER != "", "run-ledger.yml defines LEDGER_HEADER",
+      "no LEDGER_HEADER in run-ledger.yml")
+check(HEADER == committed,
+      "LEDGER_HEADER matches the committed ledger's header",
+      f"LEDGER_HEADER is {HEADER!r} but the ledger's header is {committed!r}")
+
+base = pathlib.Path(tempfile.mkdtemp(prefix="part26.", dir=work_dir))
+origin = base / "origin.git"
+subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+
+ledger_dir = base / "ledger"
+runner_temp = base / "temp"
+runner_temp.mkdir()
+outputs = base / "outputs.txt"
+
+env = dict(os.environ)
+env.update({
+    "GITHUB_SERVER_URL": f"file://{base}",
+    "GITHUB_REPOSITORY": "origin.git",
+    "GH_TOKEN": "not-a-real-token",
+    "LEDGER": ".metrics/runs.csv",
+    "LEDGER_BRANCH": "ledger",
+    "LEDGER_HEADER": HEADER,
+    "LEDGER_DIR": str(ledger_dir),
+    "RUNNER_TEMP": str(runner_temp),
+    "GITHUB_OUTPUT": str(outputs),
+    "GIT_CONFIG_GLOBAL": str(base / "gitconfig"),
+    "GIT_TERMINAL_PROMPT": "0",
+})
+
+materialize = step_source(WORKFLOW, "Materialize the Ledger Branch")
+push = step_source(WORKFLOW, "Commit and Push")
+
+
+def run(src, outputs_path):
+    outputs_path.write_text("", encoding="utf-8")
+    proc = subprocess.run(
+        ["bash", "-c", src], env=env, capture_output=True, text=True
+    )
+    parsed = {}
+    for line in outputs_path.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            parsed[k] = v
+    return proc, parsed
+
+
+def git(*args, cwd):
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, env=env
+    ).stdout.strip()
+
+
+# --- Pass 1: the branch does not exist yet ---------------------------------
+proc, out = run(materialize, outputs)
+check(proc.returncode == 0, "materialize exits 0 on a missing branch",
+      f"materialize exited {proc.returncode}: {proc.stderr[-400:]}")
+check(out.get("ok") == "true", "materialize reports ok=true",
+      f"ok was {out.get('ok')!r}")
+check(out.get("created") == "true", "a missing branch reports created=true",
+      f"created was {out.get('created')!r}")
+
+ledger_file = ledger_dir / ".metrics/runs.csv"
+check(ledger_file.is_file(), "the ledger file is seeded",
+      "no ledger file was created")
+if ledger_file.is_file():
+    check(ledger_file.read_text(encoding="utf-8") == HEADER + "\n",
+          "a created branch holds exactly the header row",
+          "the seeded ledger is not exactly the header")
+
+# The Append step's job, done here so Commit and Push has something to push.
+with ledger_file.open("a", encoding="utf-8") as fh:
+    fh.write("2026-09-16T00:00:00Z,merge,1,2,,,,,,,,,,\n")
+
+env["PR"] = "2"
+env["APPENDED"] = "1"
+proc, out = run(push, outputs)
+check(proc.returncode == 0, "commit and push exits 0",
+      f"push exited {proc.returncode}: {proc.stderr[-400:]}")
+check(out.get("recorded") == "true", "a successful push reports recorded=true",
+      f"recorded was {out.get('recorded')!r}")
+
+branches = git("for-each-ref", "--format=%(refname:short)", "refs/heads",
+               cwd=origin).split()
+check("ledger" in branches, "the origin now carries the ledger branch",
+      f"origin branches were {branches}")
+check("main" not in branches,
+      "the origin carries no main branch — nothing was pushed to it",
+      f"a main branch appeared on the origin: {branches}")
+
+root = git("rev-list", "--max-parents=0", "ledger", cwd=origin)
+tip = git("rev-parse", "ledger", cwd=origin)
+check(root == tip and root != "",
+      "the ledger branch's first commit is a root commit (an orphan)",
+      "the ledger branch is not an orphan")
+
+# --- Pass 2: the branch exists and its rows survive ------------------------
+env.pop("PR", None)
+env.pop("APPENDED", None)
+proc, out = run(materialize, outputs)
+check(proc.returncode == 0, "materialize exits 0 on an existing branch",
+      f"materialize exited {proc.returncode}: {proc.stderr[-400:]}")
+check(out.get("created") == "false",
+      "an existing branch reports created=false",
+      f"created was {out.get('created')!r}")
+
+if ledger_file.is_file():
+    rows = ledger_file.read_text(encoding="utf-8").splitlines()
+    check(len(rows) == 2 and rows[0] == HEADER,
+          "re-materializing fetches the existing rows rather than reseeding",
+          f"the refetched ledger had {len(rows)} line(s)")
+
+# --- Static guarantees -----------------------------------------------------
+workflows = pathlib.Path(repo_root) / ".github/workflows"
+offenders = [
+    p.name for p in workflows.glob("*.yml")
+    if "HEAD:main" in p.read_text(encoding="utf-8")
+]
+check(not offenders, "no workflow pushes to HEAD:main",
+      f"these workflows still push to main: {offenders}")
+
+report_src = REPORT.read_text(encoding="utf-8")
+check("--ledger" in report_src,
+      "pipeline-report.yml passes --ledger to the renderer",
+      "pipeline-report.yml does not pass --ledger")
+check("git fetch --depth=1 origin \"$LEDGER_BRANCH\"" in report_src,
+      "pipeline-report.yml fetches the ledger branch",
+      "pipeline-report.yml does not fetch the ledger branch")
+
+if failures:
+    raise SystemExit(1)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -7712,6 +7928,7 @@ run_part "Part 22: release workflow shape (#223)" part22
 run_part "Part 23: red-main.py decision and rendering (#224)" part23
 run_part "Part 24: red-main.yml workflow shape and gate logic (#360)" part24
 run_part "Part 25: reviewer prompt carries no PR narrative (#363)" part25
+run_part "Part 26: the ledger writes to its own branch, never main (#369)" part26
 
 echo
 if [ "$failures" -eq 0 ]; then

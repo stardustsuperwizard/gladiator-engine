@@ -69,6 +69,29 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # The ledger lives on its own branch, not in this checkout -- see
+      # `run-ledger.yml` and #369. It is fetched rather than checked out into
+      # a second directory because only one file is wanted and the branch
+      # shares no history with `main`.
+      #
+      # Unguarded on purpose. This workflow *should* go red when the ledger
+      # cannot be read (see the header): a report rendered from a missing
+      # ledger would quietly show zero of everything, which is exactly the
+      # silent-emptiness failure this epic existed to remove.
+      - name: Fetch the Run Ledger
+        shell: bash
+        env:
+          LEDGER_BRANCH: ledger
+          LEDGER_PATH: .metrics/runs.csv
+        run: |
+          set -euo pipefail
+
+          git fetch --depth=1 origin "$LEDGER_BRANCH"
+          git show "FETCH_HEAD:$LEDGER_PATH" > "$RUNNER_TEMP/runs.csv"
+
+          echo "Fetched $(($(wc -l < "$RUNNER_TEMP/runs.csv") - 1)) ledger" \
+               "row(s) from '$LEDGER_BRANCH'."
+
       - name: Find or Create the Report Issue
         id: issue
         shell: bash
@@ -120,6 +143,7 @@ jobs:
           set -euo pipefail
 
           if ! .github/scripts/render-pipeline-report.py --weeks "$WEEKS" \
+              --ledger "$RUNNER_TEMP"/runs.csv \
               > "$RUNNER_TEMP"/pipeline-report.md \
               2> "$RUNNER_TEMP"/pipeline-report.err; then
             {
