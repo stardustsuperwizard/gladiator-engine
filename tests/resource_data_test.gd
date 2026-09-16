@@ -514,6 +514,15 @@ static func _test_round_profile_loads_correctly() -> Array[String]:
 		violations.append_array(
 			_expect(profile.rounds_per_match == 3, "rounds_per_match must be 3")
 		)
+		violations.append_array(
+			_expect(profile.game_mode == "deathmatch", 'game_mode must be "deathmatch"')
+		)
+		violations.append_array(
+			_expect(profile.victory_condition == "standard", 'victory_condition must be "standard"')
+		)
+		violations.append_array(
+			_expect(profile.optional_modules.is_empty(), "optional_modules must be empty")
+		)
 
 	return violations
 

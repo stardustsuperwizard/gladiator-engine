@@ -22,6 +22,7 @@ static func run() -> bool:
 	var violations: Array[String] = []
 
 	violations.append_array(_test_turn_order_and_round_structure())
+	violations.append_array(_test_round_profile_returns_the_authored_profile())
 	violations.append_array(_test_every_fighter_is_placed_legally())
 	violations.append_array(_test_the_roster_and_its_placements())
 	violations.append_array(_test_the_turn_sequence_starts_fresh())
@@ -71,6 +72,38 @@ static func _test_turn_order_and_round_structure() -> Array[String]:
 			(
 				"rounds_per_match must equal the authored RoundProfile's, got %d vs %d"
 				% [state.rounds_per_match, profile.rounds_per_match]
+			)
+		)
+	)
+
+	return violations
+
+
+## `MatchSetup.round_profile()` returns the authored `RoundProfile` -- compared
+## against a fresh `load()` of the authored `.tres`, never a literal.
+static func _test_round_profile_returns_the_authored_profile() -> Array[String]:
+	var violations: Array[String] = []
+	var expected: RoundProfile = load(ROUND_PROFILE_PATH)
+	var actual := MatchSetup.round_profile()
+
+	(
+		violations
+		. append_array(
+			_expect(
+				actual.rounds_per_match == expected.rounds_per_match,
+				(
+					"round_profile().rounds_per_match must equal the authored RoundProfile's, got %d vs %d"
+					% [actual.rounds_per_match, expected.rounds_per_match]
+				)
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			actual.game_mode == expected.game_mode,
+			(
+				"round_profile().game_mode must equal the authored RoundProfile's, got %s vs %s"
+				% [actual.game_mode, expected.game_mode]
 			)
 		)
 	)

@@ -16,6 +16,11 @@
 ## as a literal. The board radius, the seed and the starting hexes are this
 ## fixture's own and are named constants below.
 ##
+## **The authored `RoundProfile` is now handed out, not only read.**
+## `round_profile()` returns it the same way `combat_profile()` already returns
+## the authored `CombatProfile`, for callers that need §11's match dials
+## rather than only the two `build()` copies onto `GameState`.
+##
 ## **Static methods only, `RefCounted` base** -- the same shape `TurnSequence`,
 ## `PowerStep`, `EndSegment` and `DefaultActionStep` already use. Never
 ## instantiated.
@@ -116,6 +121,12 @@ static func templates() -> FighterTemplates:
 ## `tests/round_driver_test.gd`'s own `_combat_profile()` uses.
 static func combat_profile() -> CombatProfile:
 	return load(COMBAT_PROFILE_PATH)
+
+
+## The authored round structure and §11 match dials, loaded fresh each call --
+## the same pattern `combat_profile()` uses above.
+static func round_profile() -> RoundProfile:
+	return load(ROUND_PROFILE_PATH)
 
 
 ## A hexagonal board of `BOARD_RADIUS` rings, every hex `Board.HexType.NORMAL`
