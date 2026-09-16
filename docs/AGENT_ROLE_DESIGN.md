@@ -67,7 +67,21 @@ Not their names. Three mechanisms, in descending order of load-bearing:
    other roles' tiers should not be cheaper than what it allocates.
 3. **Context isolation.** The reviewer judges the diff against the Issue's
    acceptance criteria without having seen the implementer's reasoning about
-   why a shortcut was fine.
+   why a shortcut was fine. `.github/actions/build-review-request/action.yml`
+   is what makes that true, not an instruction to disregard what the prompt
+   already contains: its `gh pr view` call omits `body` from the fields it
+   fetches (`:68`), and the Build Prompt step's own comment states why —
+   "the pull request body is deliberately absent: it is the implementer's
+   account of its own work, and a reviewer that reads it is checking the
+   account rather than the diff" (`:205`–`207`).
+
+   > **Revised 2026-09-16.** This claim was prose-only until epic #225: the
+   > assembled prompt used to carry the pull request body, and an
+   > instruction not to weigh it was the only thing between the reviewer and
+   > the implementer's own narrative. #363 removed the field at the source
+   > instead — the same capability-removal fix mechanism 1 describes, applied
+   > here. Context isolation is now enforced by what the assembler does not
+   > fetch, not by prose a reviewing model could still be argued out of.
 
 **Job title is not one of these.** Two agents that differ only in the prose
 describing their expertise get identical tool lists, identical model tiers and
