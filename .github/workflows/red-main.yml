@@ -242,8 +242,8 @@ jobs:
                   echo
                   echo "Action: $ACTION"
                   echo "Error: gh issue create failed"
-                  [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
-                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
                 } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::gh issue create failed"
                 exit 1
@@ -270,9 +270,9 @@ jobs:
                   echo
                   echo "Action: $ACTION"
                   echo "Error: gh issue comment failed for #$ISSUE_NUMBER"
-                  [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
                   echo "Issue: #$ISSUE_NUMBER"
-                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
                 } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::gh issue comment failed for #$ISSUE_NUMBER"
                 exit 1
@@ -299,8 +299,8 @@ jobs:
                   echo
                   echo "Action: $ACTION"
                   echo "Error: no open red-main Issue found to update"
-                  [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
-                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
                 } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::no open red-main Issue found to update"
                 exit 1
@@ -325,9 +325,9 @@ jobs:
                   echo
                   echo "Action: $ACTION"
                   echo "Error: gh issue edit failed for #$NUMBER"
-                  [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
                   echo "Issue: #$NUMBER"
-                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
                 } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::gh issue edit failed for #$NUMBER"
                 exit 1
@@ -352,9 +352,9 @@ jobs:
                   echo
                   echo "Action: $ACTION"
                   echo "Error: gh issue comment failed for #$NUMBER"
-                  [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
                   echo "Issue: #$NUMBER"
-                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
                 } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::gh issue comment failed for #$NUMBER"
                 exit 1
@@ -399,9 +399,9 @@ jobs:
                   echo
                   echo "Action: $ACTION"
                   echo "Error: gh issue comment failed for #$NUMBER"
-                  [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
                   echo "Issue: #$NUMBER"
-                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
                 } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::gh issue comment failed for #$NUMBER"
                 exit 1
@@ -424,9 +424,9 @@ jobs:
                   echo
                   echo "Action: $ACTION"
                   echo "Error: gh issue close failed for #$NUMBER"
-                  [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
                   echo "Issue: #$NUMBER"
-                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
                 } >> "$GITHUB_STEP_SUMMARY"
                 echo "::error::gh issue close failed for #$NUMBER"
                 exit 1
@@ -445,7 +445,7 @@ jobs:
                 echo "## Red Main Escalation"
                 echo
                 echo "Error: unknown action: $ACTION"
-                [ -n "$REASON" ] && echo "Reason: $REASON"
+                [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
               } >> "$GITHUB_STEP_SUMMARY"
               echo "::error::unknown action: $ACTION"
               exit 1
@@ -468,9 +468,9 @@ jobs:
               echo "## Red Main Escalation"
               echo
               echo "Action: $ACTION"
-              [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
+              [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
               [ -n "$ISSUE_NUMBER" ] && echo "Issue: #$ISSUE_NUMBER"
-              [ -n "$REASON" ] && echo "Reason: $REASON"
+              [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
               [ -n "$TITLE" ] && echo "Title: $TITLE"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
