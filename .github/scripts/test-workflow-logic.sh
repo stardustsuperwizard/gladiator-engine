@@ -2656,91 +2656,29 @@ def check(condition, ok, why):
         print(f"  FAIL — {why}", file=sys.stderr)
 
 
+# Reuse wf.TestHarness for both pull_request and push testing
+harness = wf.TestHarness(part_dir)
+
+
 def run_step(env_overrides, cwd):
     """Run the extracted step exactly as the workflow does, in its own
     scratch RUNNER_TEMP and GITHUB_OUTPUT."""
-    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
-    output_file = case / "github_output"
-    output_file.write_text("", encoding="utf-8")
-
-    env = dict(os.environ)
-    env.update({"RUNNER_TEMP": str(case), "GITHUB_OUTPUT": str(output_file)})
-    env.update(env_overrides)
-
-    result = subprocess.run(
-        ["bash", str(step)],
-        capture_output=True,
-        text=True,
-        cwd=str(cwd),
-        env=env,
-    )
-    outputs = dict(
-        line.split("=", 1)
-        for line in output_file.read_text().splitlines()
-        if "=" in line
-    )
-    return result, outputs
-
-
-def git(*args, cwd):
-    subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
-    )
+    return harness.run_step(step, env_overrides, cwd)
 
 
 def make_repo():
-    repo_dir = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
-    git("init", "-q", cwd=repo_dir)
-    git("config", "user.email", "test@example.invalid", cwd=repo_dir)
-    git("config", "user.name", "Test", cwd=repo_dir)
-    return repo_dir
+    """Create a temporary git repository for testing push events."""
+    return harness.make_repo()
 
 
 def commit(repo_dir, files, message):
-    for name, content in files.items():
-        path = repo_dir / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-    git("add", "-A", cwd=repo_dir)
-    git("commit", "-q", "-m", message, cwd=repo_dir)
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_dir,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-
-
-# -- criteria 5/6: the pull_request path's embedded python program. ---------
-# A stub `gh` that ignores its arguments and prints a fixed file list to
-# stdout -- the same posture Part 8's stub `gh` uses for
-# sync-human-credentials-label.py.
-bin_dir = part_dir / "bin"
-bin_dir.mkdir()
-gh_stub = bin_dir / "gh"
-gh_stub.write_text(
-    "#!/usr/bin/env bash\nset -euo pipefail\ncat \"$GH_STUB_FILES\"\n",
-    encoding="utf-8",
-)
-gh_stub.chmod(0o755)
+    """Add files and commit to a test repository."""
+    return harness.commit(repo_dir, files, message)
 
 
 def run_pull_request(files):
-    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
-    files_path = case / "files.txt"
-    files_path.write_text("\n".join(files) + "\n", encoding="utf-8")
-    return run_step(
-        {
-            "EVENT_NAME": "pull_request",
-            "PR_NUMBER": "1",
-            "REPOSITORY": "o/r",
-            "GH_TOKEN": "stub-token",
-            "GH_STUB_FILES": str(files_path),
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        },
-        cwd=part_dir,
-    )
+    """Run step as if it were triggered by a pull_request event."""
+    return harness.run_pull_request(step, files, part_dir)
 
 
 result, outputs = run_pull_request([".metrics/runs.csv"])
