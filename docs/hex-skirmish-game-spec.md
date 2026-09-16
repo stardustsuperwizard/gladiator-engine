@@ -13,9 +13,15 @@ build order and architecture live in
 ## 1. Overview
 
 - 2 players, each controlling a small roster of fighters (3–5 is typical).
-- Played over a fixed number of rounds (e.g. 3).
+- Played over a configured number of rounds — **3 by default**, any positive
+  number, or **unbounded** (§11.1).
 - Each round = a **Combat Segment** (players alternate taking Turns) followed by an **End Segment** (scoring, hand refresh, cleanup). See §5.1 for the four layers and what each is called.
-- Players win by accumulating the most points across the game.
+- A match runs under a **game mode**, which says what awards **Victory Points
+  (VP)**, and a **victory condition**, which says when the match ends and who
+  won. Both are authored settings, not fixed rules — see §11. The MVP is
+  **Deathmatch** (each opposing fighter defeated is worth 1 VP) under
+  **Standard Victory** (play until one side is eliminated or the round limit
+  is reached; most VP wins).
 
 ---
 
@@ -84,12 +90,35 @@ CombatProfile {                     // one per game; every tuning dial in §7
   saveSurroundModifier               // ATTACKER surrounded
   guardModifier                      // defender guarded, §6
   minTarget, maxTarget               // the clamp, see §7.3
-  defeatAward                        // flat points awarded on defeat, §9 — 1
+  defeatAward                        // flat VP on defeat under Deathmatch, §9/§11.2 — 1
 }
 
 ConstructionBudget {                // §3.2; validates an authored fighter
   totalPoints                        // 15
   minPerStat, maxPerStat             // 1 and 5
+}
+
+CardProfile {                       // one per match; every card-count dial
+  abilityDeckSize                    // 15 — cards in an authored ability deck
+  abilityStartingHand                // 3  — drawn in §4 step 2
+  abilityHandCap                     // 3  — §10 step 4 refills up to this
+  mulligansAllowed                   // 1  — §4 step 2
+  discardCap                         // null = no limit — §10 step 3
+  emptyDeckRule                      // none — what drawing from an empty
+                                     //   deck does (§4)
+  rollOffLoserBonusDraw              // 1  — §5.2's compensation
+  focusBonusDraw                     // 1  — §6's Focus/Mulligan
+  scoringDeckSize                    // scoring-deck module only (§11.4);
+  scoringStartingHand                //   3 starting, 3 cap when that
+  scoringHandCap                     //   module is on, unused when off
+}
+
+MatchProfile {                      // one per match; every dial in §11
+  roundsPerMatch                     // 3; null = unbounded, see §11.1
+  turnsPerPlayer                     // §5.2 — Turns each player takes per round
+  gameMode                           // what awards VP — MVP: deathmatch (§11.2)
+  victoryCondition                   // when the match ends, who won — MVP: standard (§11.3)
+  optionalModules: [ ]               // opt-in rules (§11.4); empty in the MVP
 }
 
 Hex {
@@ -105,9 +134,11 @@ Card {
 
 GameState {
   board, fighters, round, turnOrder, turnsTaken
-  perPlayer: { hand, deck, discard, scored, score }
+  perPlayer: { hand, deck, discard, scored, score }   // `score` is VP, §11
   rngSeed, rngState      // see Section 12 — dice are part of the state
-}
+}                        // the MatchProfile is authored config, not state:
+                         // §11's checks read it alongside the state, and
+                         // nothing in play mutates it
 ```
 
 ### 3.2 The six combat stats
@@ -157,10 +188,14 @@ Two cautions for implementers:
 - **`damage` is not `damageCounter`.** The stat is what this fighter *deals*
   per Hit; the counter is what has been *dealt to* it. They are different
   numbers on the same record.
-- **The pairing table is not symmetric in practice.** Move buys objective play
-  as well as combat play — it reaches feature tokens (§10) and it feeds §11's
-  tiebreakers — while Range buys only combat. Expect Move to be the first stat
-  that needs repricing.
+- **The pairing table is not symmetric in practice, but how asymmetric depends
+  on the match.** Where the objective-token module (§11.4) is on, Move buys
+  objective play as well as combat play — it reaches feature tokens and feeds
+  §11.4's token tiebreaker — while Range buys only combat, and Move is the
+  first stat that will need repricing. Under the MVP configuration, with every
+  optional module off and Deathmatch the only VP source, that second job does
+  not exist and the two stats are closer to symmetric than this caution
+  assumes. Price Move against the modes actually being played.
 
 ### 3.3 Weapons are presentation, not mechanics
 
@@ -208,11 +243,48 @@ game.
 
 ## 4. Setup Sequence
 
-1. Each player picks a roster and two decks: a **Scoring deck** (defines win conditions/point sources) and an **Ability deck** (one-shot and attachment effects).
-2. Shuffle both decks. Draw starting hands (e.g. 3 scoring cards, 5 ability cards). Each player may do one mulligan: set aside any cards from one or both hands, redraw replacements, shuffle the set-aside cards back in.
+> **Revised 2026-09-16. Owner decision.** Step 2 previously drew "e.g. 5
+> ability cards". **The MVP starting hand is 3**, and every card count in this
+> document is now an authored dial rather than an example embedded in prose —
+> §3.1's `CardProfile`. §12's rule that numbers are data and rules are code
+> always covered these; they were simply never collected anywhere a tuner
+> could find them.
+>
+> **The ability deck itself is not optional.** It is core, and §11.4 does not
+> list it. Only its *numbers* move. The scoring deck is the optional one, and
+> its three counts are inert while that module is off.
+
+1. Each player picks a roster and an **Ability deck** (one-shot and attachment effects). A **Scoring deck** (objective cards — additional VP sources) is an **optional module** (§11.4) and is off in the MVP; when it is on, each player drafts one here as well.
+2. Shuffle each deck drafted. Draw starting hands — `abilityStartingHand` cards, **3 in the MVP**, plus `scoringStartingHand` where that module is on. Each player may mulligan `mulligansAllowed` times, **once in the MVP**: set aside any cards from one or both hands, redraw replacements, shuffle the set-aside cards back in.
 3. Roll-off to decide board orientation and which player controls which territory.
-4. Alternately place a set number of feature tokens face-down in empty hexes, respecting minimum spacing and a "at least one per territory" rule. Reveal them once all are placed.
+4. **Only when the objective-token module (§11.4) is on:** alternately place a set number of feature tokens face-down in empty hexes, respecting minimum spacing and a "at least one per territory" rule. Reveal them once all are placed. With the module off, this step does not happen and no tokens exist.
 5. Alternate deploying fighters into empty starting hexes in your own territory.
+
+**The MVP card numbers**, all of them `CardProfile` fields: a 15-card ability
+deck, a starting hand of 3, a hand cap of 3, one mulligan, no discard cap, one
+bonus draw for the roll-off loser (§5.2), one bonus card on Focus (§6).
+
+The deck size is the one number here that **cannot yet be tuned against
+anything**, because no ability cards exist to fill a deck with. 15 is chosen so
+that a 3-round match cannot run a player out under ordinary play: 3 at setup
+plus a refill to 3 at each of the first two End Segments — the final round's
+End Segment runs steps 1–2 only (§10) and does not refill — reaches 9 before
+Focus draws anything. Treat it as a placeholder with headroom, and reprice it
+once there is a card pool.
+
+**What a draw from an empty deck does is `emptyDeckRule`, and the MVP value is
+`none`:** the draw yields nothing, the deck stays empty, running out is not a
+loss condition, and there is no reshuffle. Play continues exactly as if the
+draw had not been requested.
+
+It is a dial rather than a fixed rule because a tunable `abilityDeckSize` makes
+running out reachable on purpose, and the alternatives are real: reshuffling
+the discard pile, a penalty on the drawing player, or decking out as a loss
+condition. **None of those are specified here and none are rules until they
+are** — `none` is the only value this document defines, and a match authored
+with another is asking for a rule that does not exist yet. The dial exists so
+that adding one is an authored choice rather than a behaviour discovered in a
+resolver.
 
 ---
 
@@ -259,6 +331,13 @@ game.
 > clock, disconnect, or a player declining — is left to implementations on
 > purpose; only the outcome is a rule.
 
+> **Revised 2026-09-16. Owner decision.** The number of rounds in a match is
+> no longer a property of the rules. It is an authored setting that may be any
+> positive number (3 by default) or unbounded, and it is one of several ways a
+> match can end rather than the only one. See §11.1. Nothing about the
+> structure below — what a Round, Segment, Turn or Step is, or what happens in
+> one — changes.
+
 ### 5.1 The layers
 
 Four structures nest, and this table defines each. Nothing else in this
@@ -272,15 +351,17 @@ does not own here.
 | **Turn** | two Steps, in order | exactly one player — the **active player** |
 | **Step** | *Action:* one core action (§6). *Power:* instant-speed cards and abilities | *Action:* the active player alone. *Power:* both, alternating |
 
-A **Round** is one full cycle of play, and the game is a fixed number of them
-(e.g. 3). A **Turn** belongs to one player: the active player acts, and the
-opponent may only react, and only during the Power Step.
+A **Round** is one full cycle of play. A match runs a configured number of
+them — 3 by default, any positive number, or unbounded (§11.1) — and may end
+before that limit if a victory condition is met first (§11.3). A **Turn**
+belongs to one player: the active player acts, and the opponent may only
+react, and only during the Power Step.
 
 ### 5.2 The Combat Segment
 
 - Players alternate Turns until each has taken a set number of Turns (e.g. 4 each).
-- Turn order for round 1 is decided by roll-off; the loser gets a bonus ability-card draw as compensation.
-- In later rounds, ties on the roll-off favor whichever player is currently behind on points.
+- Turn order for round 1 is decided by roll-off; the loser draws `rollOffLoserBonusDraw` bonus ability cards as compensation — one, in the MVP (§3.1).
+- In later rounds, ties on the roll-off favor whichever player is currently behind on VP.
 
 ### 5.3 A Turn
 
@@ -340,7 +421,7 @@ One per Action Step, targeting one friendly fighter:
 - **Attack** — pick a valid visible target within the fighter's Range, run the Combat Resolution algorithm (Section 7). There is no weapon to choose: an attack is fully described by the acting fighter's stats and the distance to the target.
 - **Charge** — combined Move + Attack on the same fighter in one action, only usable if the fighter has no "moved"/"charged" flag yet this round; produces a distinct "charged" flag instead of "moved."
 - **Guard** — apply a defensive flag that lowers this fighter's save target by `guardModifier` (§7.3) and prevents it being pushed, until cleared at end of round.
-- **Focus/Mulligan** — discard any number of cards from hand, draw replacements of the same type, plus one bonus card.
+- **Focus/Mulligan** — discard any number of cards from hand, draw replacements of the same type, plus `focusBonusDraw` bonus cards — one, in the MVP (§3.1).
 
 **Lockout rule:** a fighter with a "charged" flag can't Move/Attack/Guard again until all friendly fighters still on the board share that flag (a soft round-level restriction, not a permanent one).
 
@@ -640,9 +721,16 @@ number.)*
 > carrying it as an authored number invited it to drift away from the budget
 > that actually governs. §11's third tiebreaker was rewritten with it.
 
+> **Revised 2026-09-16. Owner decision.** The defeat award is no longer a rule
+> of §9. It belongs to the active **game mode** (§11.2), because what a point
+> is for is exactly what a mode decides. Under **Deathmatch**, the MVP mode,
+> the award is 1 VP and the number below is unchanged; under a mode that
+> scores something else, defeating a fighter may award nothing at all. The
+> flat 1 stays an authored dial (`defeatAward`, §3.1) rather than a literal.
+
 - Each fighter tracks a damage counter.
 - **Damaged** = counter > 0. **Vulnerable** = one more point of damage would defeat them. **Undamaged** = counter is 0.
-- **Defeated** when the counter reaches or exceeds Health: remove the fighter and its tokens from the board, discard its attachments, award **1 point** to the opponent.
+- **Defeated** when the counter reaches or exceeds Health: remove the fighter and its tokens from the board, discard its attachments, and award VP as the active game mode directs (§11.2). Under **Deathmatch** that is **1 VP** to the side opposing the defeated fighter's controller — regardless of what caused the defeat, so a fighter killed by a hazard or by its own side still pays the opponent.
 - Most per-round status flags (moved, charged, guarded, hazard-triggered) clear at end of round.
 - An "enhanced" state (better stats) can be defined to trigger on a fighter meeting a condition (e.g. successfully attacking from an enemy-held zone), and reverts on a separate condition if you want that nuance.
 
@@ -650,27 +738,194 @@ number.)*
 
 ## 10. The End Segment
 
-1. **Score:** check each scoring card in hand; if its condition is met, reveal and score it, move it to a scored pile.
-2. **Equip:** play any attachment cards (capped so total attached value never exceeds current points).
-3. **Discard:** optionally discard any hand cards.
-4. **Refill:** draw scoring/ability cards back up to hand-size caps.
-5. Clear round-level status flags on the board.
-6. Next round begins — or, on the final round, run only steps 1–2, then go to victory determination.
+> **Revised 2026-09-16. Owner decision.** Step 6 previously read "Next round
+> begins — or, on the final round, run only steps 1–2, then go to victory
+> determination," which assumed the round limit is the only way a match ends.
+> It is not: under §11.3 a match can end the moment one side is eliminated,
+> mid-Segment, with no End Segment for that round at all. The question the old
+> step 6 asked — "is this the last round" — is now §11.3's match-end question,
+> and it is asked **before the sequence runs** rather than at step 6.
+>
+> That move also repairs an old contradiction. "On the final round, run only
+> steps 1–2" sat *at step 6*, by which point steps 3, 4 and 5 had already run.
+> Read literally it was unreachable; read charitably it was a branch at the top
+> of the sequence wearing a step-6 costume. It is now written where it acts,
+> which is the whole of what a final round's End Segment is.
+>
+> Steps 1 and 4's scoring half are conditional now as well — the scoring deck
+> is an optional module (§11.4) and is off in the MVP.
 
-**Surge-type scoring cards** (optional variant): instead of waiting for the End Segment, these score immediately the instant their condition is met, if held in hand; draw a replacement right away.
+**First, ask §11.3's match-end question.** If the match ends this round, this
+End Segment is **steps 1–2 only**, followed immediately by victory
+determination (§11) — steps 3–6 do not run. Otherwise run all six steps in
+order.
+
+(A match ended by elimination ends the instant that condition is met, which may
+be mid-Turn. No End Segment runs for that round at all — go straight to §11.)
+
+1. **Score:** *(scoring-deck module only, §11.4)* check each scoring card in hand; if its condition is met, reveal and score it, move it to a scored pile. With the module off this step is a no-op.
+2. **Equip:** play any attachment cards (capped so total attached value never exceeds current VP).
+3. **Discard:** optionally discard any hand cards, up to `discardCap` (§3.1) — uncapped in the MVP.
+4. **Refill:** draw ability cards back up to `abilityHandCap` — 3 in the MVP — and scoring cards up to `scoringHandCap` where that module is on.
+5. Clear round-level status flags on the board.
+6. Next round begins.
+
+**Surge-type scoring cards** (optional variant within the scoring-deck module): instead of waiting for the End Segment, these score immediately the instant their condition is met, if held in hand; draw a replacement right away.
 
 ---
 
-## 11. Victory Determination
+## 11. Match Configuration and Victory
 
-1. Highest total score wins outright.
-2. Tiebreakers, in order: only-surviving-player wins → highest value of held objective tokens wins → **most surviving fighters** wins → draw.
+> **Revised 2026-09-16. Owner decision.** This section previously read, in
+> full:
+>
+> > 1. Highest total score wins outright.
+> > 2. Tiebreakers, in order: only-surviving-player wins → highest value of
+> >    held objective tokens wins → **most surviving fighters** wins → draw.
+>
+> That is a single hard-coded mode wearing the name of a general rule: a fixed
+> round count, scoring cards as the real point source, and objective tokens
+> load-bearing in the middle of the tiebreakers. The game is meant to support
+> more than one way to play — "hold the most treasure after 3 rounds" is the
+> worked example — and the old text had nowhere to put a second one.
+>
+> The rules now split into four dials an authored match sets: **match length**
+> (§11.1), a **game mode** saying what awards VP (§11.2), a **victory
+> condition** saying when the match ends and who won (§11.3), and **optional
+> modules** carrying everything not present in every match (§11.4).
+>
+> **Three things behave differently, so this is a rules change and not a
+> reorganization.** A match can now end *before* its last round, when one side
+> is eliminated. Match length can be unbounded. And the objective-token
+> tiebreaker is gone from the default ordering, because the module that would
+> supply the tokens is off by default — it returns, in its old position, when
+> that module is on.
+>
+> **"Points" and "score" are now "Victory Points (VP)" throughout the
+> document.** One name, because with modes in the picture "points" was already
+> doing double duty against §3.2's construction points, which are a budget and
+> not a score.
+>
+> The third tiebreaker's own 2026-09-08 revision is preserved below, since the
+> reasoning still governs the rule it produced.
 
-*(Third tiebreaker revised 2026-09-08: it was "highest combined point-value of
-surviving fighters," which `pointValue`'s removal in §3.2 left with nothing to
-sum. A count is what that measure becomes once every fighter is built from the
-same budget — it was already asking "who has more left," and with equal
-fighters the sum and the count order the same way.)*
+A match is configured before it starts, and the configuration is data, not
+code (§12). The four dials are independent: any length, under any mode, under
+any victory condition, with any set of modules.
+
+**The MVP configuration**, which is what the current build targets:
+3 rounds, **Deathmatch**, **Standard Victory**, no optional modules.
+
+### 11.1 Match length
+
+`roundsPerMatch` (§3.1's `MatchProfile`) is one of:
+
+- **A positive integer** — the round limit. **3 is the default.** The limit is
+  reached when that round's Combat Segment is complete; §10 then runs its
+  final-round form.
+- **Null** — **unbounded.** There is no round limit and no final round. The
+  match runs until its victory condition is met some other way.
+
+An implementation whose type system has no nullable integer may encode
+unbounded as **0**, provided no other rule reads 0 as a length — "no limit"
+and "a limit of none" have to stay the same answer.
+
+An unbounded match under a condition that only elimination can satisfy may in
+principle never end. That is accepted rather than guarded against: unbounded is
+opt-in, and a rule that ends a stalled match is a timing rule, which this
+document deliberately leaves to implementations (§5's default-action note).
+
+### 11.2 Game modes — what awards VP
+
+A game mode answers one question: **what is a VP awarded for?** Exactly one
+mode is active per match, and **nothing outside the active mode awards VP**. A
+rule that grants VP belongs to a mode, not to the general rules — that is the
+constraint that keeps a second mode from having to fight the first one.
+
+- **Deathmatch** *(MVP)*. Defeating an opposing fighter awards **1 VP** to the
+  side opposing the defeated fighter's controller (§9). The award does not
+  depend on what caused the defeat: a fighter lost to a hazard or to its own
+  side still pays the opponent. Nothing else awards VP. The flat 1 is
+  §3.1's `defeatAward` dial, not a literal.
+
+Future modes are **not specified here** and are not rules until they are. The
+shape the dial exists to allow, named only so the split above has a visible
+purpose: a treasure mode scoring held objective tokens at each End Segment,
+where defeating a fighter is worth nothing by itself.
+
+### 11.3 Victory conditions — when the match ends, and who won
+
+A victory condition answers two questions: **when does the match end**, and
+**given that it has ended, who won?** Exactly one is active per match.
+
+- **Standard Victory** *(MVP)*.
+
+  **The match ends at the first of these to hold:**
+  1. **Elimination** — a side has no fighters remaining on the board.
+  2. **The round limit** — §11.1's limit is reached. In an unbounded match this
+     never holds and elimination is the only ending.
+
+  **The winner is the side with the most VP.** Tiebreakers, in order:
+
+  1. **Only-surviving-side wins** — one side has fighters on the board and the
+     other does not.
+  2. **Most surviving fighters wins** — count the fighters each side still has
+     on the board.
+  3. **Draw.**
+
+  *(Tiebreaker 2 revised 2026-09-08, when it was third: it was "highest
+  combined point-value of surviving fighters," which `pointValue`'s removal in
+  §3.2 left with nothing to sum. A count is what that measure becomes once
+  every fighter is built from the same budget — it was already asking "who has
+  more left," and with equal fighters the sum and the count order the same
+  way.)*
+
+  Both sides being eliminated simultaneously is legal and is not special-cased:
+  tiebreaker 1 does not apply (neither side is the only survivor), tiebreaker 2
+  is 0 against 0, and the result is a draw unless VP already separated them.
+
+**When the condition is evaluated.** The end condition is a **derived check
+over the match state**, not a flag the rules set. It is asked after every
+resolved action and at every Segment boundary, and the first evaluation at
+which it holds ends the match — no further Turns are taken. Elimination is
+therefore immediate: a side's last fighter being removed ends the match inside
+that Turn, and §10's End Segment does not run for that round. The round limit
+is reached only at a Segment boundary by construction, and takes §10's
+final-round form.
+
+Reading it as derived rather than stored is deliberate and matches §12: the
+same state must always produce the same answer, whoever asks and whenever.
+
+### 11.4 Optional modules
+
+A module is a body of rules that is **off unless a match turns it on**. Its
+rules elsewhere in this document are conditional on it, and with it off they do
+not apply — no stub, no empty deck, no zero-valued token. **The MVP turns none
+of them on.**
+
+- **Scoring deck** (objective cards). Covers §4 step 1's scoring-deck draft,
+  §10 step 1's Score and step 4's scoring-card refill, §10's Surge variant, and
+  §3.1's `Card.deckType: scoring`. With it off, no scoring deck is drafted,
+  drawn or scored, and §10 step 1 is a no-op. **VP then comes from the game
+  mode alone**, which under Deathmatch is what makes the MVP a pure
+  eliminate-more-than-you-lose game.
+
+- **Objective/feature tokens.** Covers §2's tokens and "holding", §4 step 4's
+  face-down placement and reveal, and §3.1's `Hex.featureToken`. With it off no
+  tokens are placed and nothing is ever held. **With it on, Standard Victory
+  gains a tiebreaker:** *highest value of held objective tokens*, inserted
+  between only-surviving-side and most-surviving-fighters — the position it
+  held before this revision.
+
+**The ability deck is not a module and is not listed here.** It is core to
+§5.3's Power Step and §6's Focus/Mulligan, and a match without one is not a
+configuration this document defines. Its counts are authored (§3.1's
+`CardProfile`), which is a different thing from being optional — a dial set
+low is still a deck.
+
+A mode may **require** a module: a treasure mode without objective tokens has
+nothing to score and is a misconfiguration, not a degenerate match. Requiring
+is the mode's business to declare; the module does not know its consumers.
 
 ---
 

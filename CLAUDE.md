@@ -91,9 +91,18 @@ Attack, Pass). The Combat Segment turn sequencer (epic #181) and hotseat UI
 > merged. Epic #181 (turn sequencer) and epic #203 (hotseat UI) are merged.
 > §10 step 5 (round-level flag clearing) is implemented in `EndSegment`.
 
-**The next work**: §11 (victory determination) and §10 step 6's final-round branch
-(both via #173), and the card system (unblocking Focus/Mulligan and §10 steps
-1–4). **One constraint on the card system**: the card schema has to be able to
+> **Revised 2026-09-16.** §11 was rewritten as an owner decision: victory is no
+> longer two hard-coded sentences but four authored dials — match length (any
+> number, or unbounded), game mode (what awards VP), victory condition (when
+> the match ends and who won), and optional modules. The MVP is 3 rounds,
+> **Deathmatch** (1 VP per opposing fighter defeated), **Standard Victory**
+> (ends on elimination or the round limit, most VP wins), no modules. Objective
+> cards and feature tokens are both optional modules and are **off**. Read §11
+> before any victory work.
+
+**The next work**: §11 in full — the match configuration, Deathmatch scoring and
+Standard Victory — plus §10's match-end branch (all via #173), and the card
+system (unblocking Focus/Mulligan and §10's card steps). **One constraint on the card system**: the card schema has to be able to
 load content served from outside this repository, not only compiled-in
 `res://` paths. `AGENTS.md` carries the full version under *Before the card
 system*. Everything in §5.3 is explicitly
