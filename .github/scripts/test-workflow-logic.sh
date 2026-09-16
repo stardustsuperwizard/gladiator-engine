@@ -251,6 +251,7 @@ class TestHarness:
     def make_repo(self):
         """Create a temporary git repository for testing push events."""
         import subprocess
+        import tempfile
         repo_dir = pathlib.Path(tempfile.mkdtemp(dir=self.part_dir))
         subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo_dir, check=True)
