@@ -180,6 +180,71 @@ def step_source(path, marker, shell="python"):
             return src
 
     raise LookupError(f"no {shell} step under {marker!r} in {path}")
+
+
+# Shared harness functions for Part 13 and Part 24 to avoid duplication
+class TestHarness:
+    """Shared test harness for extracting and running workflow steps."""
+
+    def __init__(self, part_dir):
+        import os
+        import subprocess
+        self.part_dir = pathlib.Path(part_dir)
+        self.bin_dir = self.part_dir / "bin"
+        self.bin_dir.mkdir(exist_ok=True)
+        self.gh_stub = self.bin_dir / "gh"
+        # Create a simple gh stub that outputs file contents
+        self.gh_stub.write_text(
+            "#!/usr/bin/env bash\nset -euo pipefail\ncat \"$GH_STUB_FILES\"\n",
+            encoding="utf-8",
+        )
+        self.gh_stub.chmod(0o755)
+
+    def run_step(self, step_script, env_overrides, cwd):
+        """Run an extracted workflow step in its own scratch environment."""
+        import os
+        import subprocess
+        import tempfile
+
+        case = pathlib.Path(tempfile.mkdtemp(dir=self.part_dir))
+        output_file = case / "github_output"
+        output_file.write_text("", encoding="utf-8")
+
+        env = dict(os.environ)
+        env.update({"RUNNER_TEMP": str(case), "GITHUB_OUTPUT": str(output_file)})
+        env.update(env_overrides)
+
+        result = subprocess.run(
+            ["bash", str(step_script)],
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            env=env,
+        )
+        outputs = dict(
+            line.split("=", 1)
+            for line in output_file.read_text().splitlines()
+            if "=" in line
+        )
+        return result, outputs
+
+    def run_pull_request(self, step_script, files, cwd):
+        """Run a step as if it were triggered by a pull_request event."""
+        case = pathlib.Path(tempfile.mkdtemp(dir=self.part_dir))
+        files_path = case / "files.txt"
+        files_path.write_text("\n".join(files) + "\n", encoding="utf-8")
+        return self.run_step(
+            step_script,
+            {
+                "EVENT_NAME": "pull_request",
+                "PR_NUMBER": "1",
+                "REPOSITORY": "o/r",
+                "GH_TOKEN": "stub-token",
+                "GH_STUB_FILES": str(files_path),
+                "PATH": f"{self.bin_dir}:{os.environ['PATH']}",
+            },
+            cwd=case,
+        )
 EXTRACTOR
 
 # ---------------------------------------------------------------------------
@@ -7119,6 +7184,82 @@ check(
     comment_failures >= 2 and ("$GITHUB_STEP_SUMMARY" in execute_action_src),
     "Execute Action writes failure reasons to GITHUB_STEP_SUMMARY",
     f"comment failures={comment_failures}, summary writes found"
+)
+
+# -- criterion 7: Execute Action execution against stub gh with failure modes.
+# Extract the Execute Action step and test it against fail-then-succeed stub
+execute_action = part_dir / "execute-action.sh"
+execute_action.write_text(execute_action_src, encoding="utf-8")
+
+# fail-then-succeed stub: exits non-zero first time, then succeeds
+# Uses a counter file to track attempts
+def create_fail_then_succeed_stub(stub_path, counter_file):
+    stub_path.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+counter_file="{counter_file}"
+mkdir -p "$(dirname "$counter_file")"
+if [ ! -f "$counter_file" ]; then
+    echo "0" > "$counter_file"
+fi
+attempt=$(<"$counter_file")
+echo $((attempt + 1)) > "$counter_file"
+# On the first gh call in each action, print the issue URL; on comment/close/edit, succeed silently
+if [[ "$1" == "issue" && "$2" == "create" ]]; then
+    echo "https://github.com/test/repo/issues/123"
+    exit 0
+fi
+if [ $attempt -lt 1 ]; then
+    exit 42
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub_path.chmod(0o755)
+
+# Test: Execute Action with fail-then-succeed stub
+case_dir = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+counter_file = case_dir / "attempts"
+bin_subdir = case_dir / "bin"
+bin_subdir.mkdir()
+
+gh_stub_fail = bin_subdir / "gh"
+create_fail_then_succeed_stub(gh_stub_fail, counter_file)
+
+# Create mock input files for Execute Action
+body_file = case_dir / "body.md"
+body_file.write_text("Issue body\n", encoding="utf-8")
+comment_file = case_dir / "comment.md"
+comment_file.write_text("Comment body\n", encoding="utf-8")
+step_summary = case_dir / "step_summary"
+step_summary.write_text("", encoding="utf-8")
+
+result = subprocess.run(
+    ["bash", str(execute_action)],
+    capture_output=True,
+    text=True,
+    cwd=str(case_dir),
+    env={
+        "RUNNER_TEMP": str(case_dir),
+        "GITHUB_STEP_SUMMARY": str(step_summary),
+        "ACTION": "open",
+        "REASON": "test reason",
+        "TITLE": "Test Issue",
+        "GITHUB_REPOSITORY": "test/repo",
+        "RED_MAIN_LABEL": "red-main",
+        "PATH": f"{bin_subdir}:{os.environ.get('PATH', '')}",
+        "GH_TOKEN": "test-token",
+    },
+)
+
+# With fail-then-succeed stub, should eventually exit 0 and have retried
+# The counter should show multiple attempts
+attempts = int(counter_file.read_text().strip())
+check(
+    result.returncode == 0 and attempts >= 1,
+    "Execute Action with fail-then-succeed stub: retries, exits 0",
+    f"exit {result.returncode}, attempts={attempts}, stderr={result.stderr!r}"
 )
 
 sys.exit(1 if failures else 0)
