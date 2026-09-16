@@ -463,5 +463,6 @@ jobs:
               [ -n "$ISSUE_NUMBER" ] && echo "Issue: #$ISSUE_NUMBER"
               [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
               [ -n "$TITLE" ] && echo "Title: $TITLE"
+              true
             } >> "$GITHUB_STEP_SUMMARY"
           fi
