@@ -7224,10 +7224,11 @@ result = subprocess.run(
     },
 )
 
-# With fail-then-succeed stub, should eventually exit 0 and have retried exactly twice
+# With fail-then-succeed stub, should eventually exit 0 and have retried exactly once
+# Execute Action for 'open' makes: 1st gh issue create (fails) + retry (succeeds) + gh issue comment = 3 total
 attempts = int(counter_file.read_text().strip())
 check(
-    result.returncode == 0 and attempts == 2,
+    result.returncode == 0 and attempts == 3,
     "Execute Action with fail-then-succeed stub: retries exactly once, exits 0",
     f"exit {result.returncode}, attempts={attempts}, stderr={result.stderr!r}"
 )
