@@ -7168,13 +7168,15 @@ if [ ! -f "$counter_file" ]; then
 fi
 attempt=$(<"$counter_file")
 echo $((attempt + 1)) > "$counter_file"
+
 # First gh call (any operation): fail with exit 42
-# Second gh call: succeed
-if [ $attempt -lt 1 ]; then
+# Second gh call onwards: succeed
+if [ "$attempt" = "0" ]; then
     # First attempt always fails
     exit 42
 fi
-# Second attempt onwards: succeed
+
+# Second attempt onwards: succeed and print URL for create operations
 if [[ "$1" == "issue" && "$2" == "create" ]]; then
     echo "https://github.com/test/repo/issues/123"
 fi
@@ -7222,12 +7224,11 @@ result = subprocess.run(
     },
 )
 
-# With fail-then-succeed stub, should eventually exit 0 and have retried
-# The counter should show multiple attempts
+# With fail-then-succeed stub, should eventually exit 0 and have retried exactly twice
 attempts = int(counter_file.read_text().strip())
 check(
-    result.returncode == 0 and attempts >= 1,
-    "Execute Action with fail-then-succeed stub: retries, exits 0",
+    result.returncode == 0 and attempts == 2,
+    "Execute Action with fail-then-succeed stub: retries exactly once, exits 0",
     f"exit {result.returncode}, attempts={attempts}, stderr={result.stderr!r}"
 )
 
