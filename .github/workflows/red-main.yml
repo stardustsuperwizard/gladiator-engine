@@ -1,0 +1,474 @@
+name: Red Main
+
+# Escalates a failing default branch when ci.yml concludes on main.
+# Triggered by ci.yml's completion, runs the red/green decision, and operates
+# on the single `red-main` Issue accordingly -- opening, updating, or closing it
+# with a push notification. Spends no AI credits and uses `GITHUB_TOKEN` only.
+#
+# Never merges, never approves, never fixes: it only reports and tracks state.
+# Patterned on `pipeline-report.yml` for the credential posture and
+# `agent-03-rollup.yml` for the "no `continue-on-error`" rule.
+
+on:
+  # Triggered by ci.yml on main when a push completes.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+  # Manual re-run. A `run_id` input lets a human escalate a specific run
+  # after-the-fact, for testing or recovery. `type: string`, never `type:
+  # number` -- a number input reaches the shell as a float (test-workflow-logic.sh
+  # Part 9 exists because that broke a live dispatch path).
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID to escalate (required for manual dispatch)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # Only one escalation at a time: a cancelled one is a lost escalation, and
+  # two racing escalations would race on the one-open-Issue invariant.
+  group: red-main
+  cancel-in-progress: false
+
+jobs:
+  escalate:
+    name: Escalate
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'push' || github.event_name == 'workflow_dispatch'
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RED_MAIN_LABEL: red-main
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Ensure the label exists before querying, using the same guard
+      # pipeline-report.yml uses. A label that does not exist is created;
+      # one that does is left standing.
+      - name: Ensure Red-Main Label Exists
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXISTING=$(gh label list --repo "$GITHUB_REPOSITORY" \
+            --limit 200 --json name --jq '.[].name')
+
+          if ! grep -qx "$RED_MAIN_LABEL" <<<"$EXISTING"; then
+            gh label create "$RED_MAIN_LABEL" \
+              --repo "$GITHUB_REPOSITORY" \
+              --color "B23F00" \
+              --description "main is red: escalation Issue from ci.yml" \
+              --force
+          fi
+
+      # Resolve which run to escalate: either the workflow_dispatch input,
+      # or the latest workflow_run trigger (github.event.workflow_run.id).
+      - name: Resolve Run ID
+        id: run-id
+        shell: bash
+        env:
+          DISPATCH_RUN_ID: ${{ inputs.run_id }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$DISPATCH_RUN_ID" ]; then
+            echo "run_id=$DISPATCH_RUN_ID" >> "$GITHUB_OUTPUT"
+          elif [ -n "$WORKFLOW_RUN_ID" ]; then
+            echo "run_id=$WORKFLOW_RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::no run ID available (neither dispatch input nor workflow_run trigger)"
+            exit 1
+          fi
+
+      - name: Fetch Run
+        id: fetch-run
+        shell: bash
+        env:
+          RUN_ID: ${{ steps.run-id.outputs.run_id }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            > "$RUNNER_TEMP/run.json"
+
+          # Extract and output the head SHA for use in Summary step
+          head_sha=$(jq -r '.head_sha' "$RUNNER_TEMP/run.json")
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Run Jobs
+        shell: bash
+        env:
+          RUN_ID: ${{ steps.run-id.outputs.run_id }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
+            > "$RUNNER_TEMP/jobs.json"
+
+      - name: Fetch Head Commit
+        shell: bash
+        env:
+          RUN_ID: ${{ steps.run-id.outputs.run_id }}
+        run: |
+          set -euo pipefail
+
+          # The run's head commit, assembled from two endpoints:
+          # one for the commit metadata, one for its associated pull requests.
+          # Shaped to match red-main.py's `--commit-json` contract: `message`,
+          # `changed_files`, and `pull_requests`.
+
+          run_json="$RUNNER_TEMP/run.json"
+          head_sha=$(jq -r '.head_sha' "$run_json")
+
+          if [ -z "$head_sha" ] || [ "$head_sha" = "null" ]; then
+            echo "::error::run has no head_sha"
+            exit 1
+          fi
+
+          # Get commit metadata (message and changed files).
+          commit_raw=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha" \
+            --jq '{message: .commit.message, changed_files: [.files[].filename]}')
+
+          # Get associated pull requests for this commit.
+          prs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head_sha/pulls" \
+            --jq '[.[] | {number, url}]' 2>/dev/null || echo '[]')
+
+          # Assemble final commit JSON with message, changed_files, and pull_requests.
+          jq --argjson prs "$prs" \
+            '.pull_requests = $prs' <<<"$commit_raw" \
+            > "$RUNNER_TEMP/commit.json"
+
+      - name: Fetch Open Red-Main Issue
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Find the open issue with the red-main label.
+          NUMBER=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --label "$RED_MAIN_LABEL" \
+            --limit 1 \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -n "$NUMBER" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/issues/$NUMBER" \
+              > "$RUNNER_TEMP/issue.json"
+          else
+            echo '{}' > "$RUNNER_TEMP/issue.json"
+          fi
+
+      - name: Decide Action
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          .github/scripts/red-main.py \
+            --run-json "$RUNNER_TEMP/run.json" \
+            --jobs-json "$RUNNER_TEMP/jobs.json" \
+            --commit-json "$RUNNER_TEMP/commit.json" \
+            --issue-json "$RUNNER_TEMP/issue.json" \
+            --body-out "$RUNNER_TEMP/body.md" \
+            --comment-out "$RUNNER_TEMP/comment.md" \
+            > "$RUNNER_TEMP/action.txt"
+
+          # Parse the action output into step outputs. Suppress errors from grep
+          # if no matches are found since optional keys may be absent.
+          (grep -E '^(action|reason|title|interval_seconds|first_failure_run_id)=' \
+            "$RUNNER_TEMP/action.txt" || true) | while IFS='=' read -r key value; do
+            [ -n "$key" ] && echo "${key}=${value}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Execute Action
+        id: execute
+        shell: bash
+        env:
+          ACTION: ${{ steps.decide.outputs.action }}
+          REASON: ${{ steps.decide.outputs.reason }}
+          TITLE: ${{ steps.decide.outputs.title }}
+          HEAD_SHA: ${{ steps.fetch-run.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # Retry logic: each mutating gh call retries exactly once after a
+          # short pause. On failure, emit ::error:: and write to summary before exiting.
+
+          case "$ACTION" in
+            open)
+              echo "Opening red-main Issue..."
+              status=0
+              gh issue create \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "$TITLE" \
+                --label "$RED_MAIN_LABEL" \
+                --body-file "$RUNNER_TEMP/body.md" \
+                > "$RUNNER_TEMP/create.txt" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                status=0
+                gh issue create \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --title "$TITLE" \
+                  --label "$RED_MAIN_LABEL" \
+                  --body-file "$RUNNER_TEMP/body.md" \
+                  > "$RUNNER_TEMP/create.txt" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue create failed"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue create failed"
+                exit 1
+              fi
+
+              ISSUE_NUMBER=$(sed -n 's|.*/issues/\([0-9]*\)|\1|p' "$RUNNER_TEMP/create.txt" | head -1)
+
+              status=0
+              gh issue comment "$ISSUE_NUMBER" \
+                --repo "$GITHUB_REPOSITORY" \
+                --body-file "$RUNNER_TEMP/comment.md" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                status=0
+                gh issue comment "$ISSUE_NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --body-file "$RUNNER_TEMP/comment.md" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue comment failed for #$ISSUE_NUMBER"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  echo "Issue: #$ISSUE_NUMBER"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue comment failed for #$ISSUE_NUMBER"
+                exit 1
+              fi
+
+              echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+              echo "Opened #$ISSUE_NUMBER"
+              ;;
+
+            update)
+              echo "Updating red-main Issue..."
+              # Find the open issue number
+              NUMBER=$(gh issue list \
+                --repo "$GITHUB_REPOSITORY" \
+                --state open \
+                --label "$RED_MAIN_LABEL" \
+                --limit 1 \
+                --json number \
+                --jq '.[0].number // empty')
+
+              if [ -z "$NUMBER" ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: no open red-main Issue found to update"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::no open red-main Issue found to update"
+                exit 1
+              fi
+
+              status=0
+              gh issue edit "$NUMBER" \
+                --repo "$GITHUB_REPOSITORY" \
+                --body-file "$RUNNER_TEMP/body.md" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                status=0
+                gh issue edit "$NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --body-file "$RUNNER_TEMP/body.md" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue edit failed for #$NUMBER"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  echo "Issue: #$NUMBER"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue edit failed for #$NUMBER"
+                exit 1
+              fi
+
+              status=0
+              gh issue comment "$NUMBER" \
+                --repo "$GITHUB_REPOSITORY" \
+                --body-file "$RUNNER_TEMP/comment.md" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                status=0
+                gh issue comment "$NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --body-file "$RUNNER_TEMP/comment.md" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue comment failed for #$NUMBER"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  echo "Issue: #$NUMBER"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue comment failed for #$NUMBER"
+                exit 1
+              fi
+
+              echo "issue_number=$NUMBER" >> "$GITHUB_OUTPUT"
+              echo "Updated #$NUMBER"
+              ;;
+
+            close)
+              echo "Closing red-main Issue..."
+              # Find the open issue number
+              NUMBER=$(gh issue list \
+                --repo "$GITHUB_REPOSITORY" \
+                --state open \
+                --label "$RED_MAIN_LABEL" \
+                --limit 1 \
+                --json number \
+                --jq '.[0].number // empty')
+
+              if [ -z "$NUMBER" ]; then
+                echo "::warning::no open red-main Issue found to close"
+                exit 0
+              fi
+
+              status=0
+              gh issue comment "$NUMBER" \
+                --repo "$GITHUB_REPOSITORY" \
+                --body-file "$RUNNER_TEMP/comment.md" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                status=0
+                gh issue comment "$NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --body-file "$RUNNER_TEMP/comment.md" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue comment failed for #$NUMBER"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  echo "Issue: #$NUMBER"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue comment failed for #$NUMBER"
+                exit 1
+              fi
+
+              status=0
+              gh issue close "$NUMBER" \
+                --repo "$GITHUB_REPOSITORY" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                status=0
+                gh issue close "$NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue close failed for #$NUMBER"
+                  [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+                  echo "Issue: #$NUMBER"
+                  [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue close failed for #$NUMBER"
+                exit 1
+              fi
+
+              echo "issue_number=$NUMBER" >> "$GITHUB_OUTPUT"
+              echo "Closed #$NUMBER"
+              ;;
+
+            none)
+              echo "No action needed: $REASON"
+              ;;
+
+            *)
+              {
+                echo "## Red Main Escalation"
+                echo
+                echo "Error: unknown action: $ACTION"
+                [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::unknown action: $ACTION"
+              exit 1
+              ;;
+          esac
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          ACTION: ${{ steps.decide.outputs.action }}
+          REASON: ${{ steps.decide.outputs.reason }}
+          TITLE: ${{ steps.decide.outputs.title }}
+          HEAD_SHA: ${{ steps.fetch-run.outputs.head_sha }}
+          ISSUE_NUMBER: ${{ steps.execute.outputs.issue_number }}
+        run: |
+          # Only write to summary if Execute Action didn't already (i.e., on success)
+          if [ ! -s "$GITHUB_STEP_SUMMARY" ] || ! grep -q "Red Main Escalation" "$GITHUB_STEP_SUMMARY"; then
+            {
+              echo "## Red Main Escalation"
+              echo
+              echo "Action: $ACTION"
+              [ -n "${HEAD_SHA:-}" ] && echo "Commit: ${HEAD_SHA:-}"
+              [ -n "$ISSUE_NUMBER" ] && echo "Issue: #$ISSUE_NUMBER"
+              [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
+              [ -n "$TITLE" ] && echo "Title: $TITLE"
+              # Load-bearing. Every line above is an AND-list that returns 1
+              # when its test fails, and the last command's status is the
+              # step's. `red-main.py` prints `title=` on open/update only, so
+              # without this terminator the step fails on every `none` and
+              # `close` -- that is, on every ordinary green push to main.
+              # part24 covers all three actions; keep new lines above it.
+              true
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

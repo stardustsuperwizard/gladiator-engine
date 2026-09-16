@@ -291,6 +291,11 @@ jobs:
               # The pipeline report's own workflow. Control plane, covered
               # by CONTROL_PLANE_ALLOW below, and does not load the project.
               ".github/workflows/pipeline-report.yml",
+              # The red-main escalation workflow and decision script. Control
+              # plane, covered by CONTROL_PLANE_ALLOW below, and does not
+              # load the project.
+              ".github/workflows/red-main.yml",
+              ".github/scripts/red-main.py",
               # The pure ledger-derived figures the report renders. Reads
               # `.metrics/runs.csv`; never touches the Godot project.
               ".github/scripts/pipeline_metrics.py",

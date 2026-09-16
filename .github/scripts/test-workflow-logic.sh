@@ -180,6 +180,103 @@ def step_source(path, marker, shell="python"):
             return src
 
     raise LookupError(f"no {shell} step under {marker!r} in {path}")
+
+
+# Shared harness functions for Part 13 and Part 24 to avoid duplication
+class TestHarness:
+    """Shared test harness for extracting and running workflow steps."""
+
+    def __init__(self, part_dir):
+        import os
+        import subprocess
+        self.part_dir = pathlib.Path(part_dir)
+        self.bin_dir = self.part_dir / "bin"
+        self.bin_dir.mkdir(exist_ok=True)
+        self.gh_stub = self.bin_dir / "gh"
+        # Create a simple gh stub that outputs file contents
+        self.gh_stub.write_text(
+            "#!/usr/bin/env bash\nset -euo pipefail\ncat \"$GH_STUB_FILES\"\n",
+            encoding="utf-8",
+        )
+        self.gh_stub.chmod(0o755)
+
+    def run_step(self, step_script, env_overrides, cwd):
+        """Run an extracted workflow step in its own scratch environment."""
+        import os
+        import subprocess
+        import tempfile
+
+        case = pathlib.Path(tempfile.mkdtemp(dir=self.part_dir))
+        output_file = case / "github_output"
+        output_file.write_text("", encoding="utf-8")
+
+        env = dict(os.environ)
+        env.update({"RUNNER_TEMP": str(case), "GITHUB_OUTPUT": str(output_file)})
+        env.update(env_overrides)
+
+        result = subprocess.run(
+            ["bash", str(step_script)],
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            env=env,
+        )
+        outputs = dict(
+            line.split("=", 1)
+            for line in output_file.read_text().splitlines()
+            if "=" in line
+        )
+        return result, outputs
+
+    def run_pull_request(self, step_script, files, cwd):
+        """Run a step as if it were triggered by a pull_request event."""
+        import os
+        import tempfile
+        case = pathlib.Path(tempfile.mkdtemp(dir=self.part_dir))
+        files_path = case / "files.txt"
+        files_path.write_text("\n".join(files) + "\n", encoding="utf-8")
+        return self.run_step(
+            step_script,
+            {
+                "EVENT_NAME": "pull_request",
+                "PR_NUMBER": "1",
+                "REPOSITORY": "o/r",
+                "GH_TOKEN": "stub-token",
+                "GH_STUB_FILES": str(files_path),
+                "PATH": f"{self.bin_dir}:{os.environ['PATH']}",
+            },
+            cwd=cwd,
+        )
+
+    def make_repo(self):
+        """Create a temporary git repository for testing push events."""
+        import subprocess
+        import tempfile
+        import pathlib
+        repo_dir = pathlib.Path(tempfile.mkdtemp(dir=self.part_dir))
+        subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_dir, check=True)
+        return repo_dir
+
+    def commit(self, repo_dir, files, message):
+        """Add files and commit to a test repository."""
+        import subprocess
+        import pathlib
+        for name, content in files.items():
+            path = pathlib.Path(repo_dir) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo_dir, check=True)
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
 EXTRACTOR
 
 # ---------------------------------------------------------------------------
@@ -2562,91 +2659,29 @@ def check(condition, ok, why):
         print(f"  FAIL — {why}", file=sys.stderr)
 
 
+# Reuse wf.TestHarness for both pull_request and push testing
+harness = wf.TestHarness(part_dir)
+
+
 def run_step(env_overrides, cwd):
     """Run the extracted step exactly as the workflow does, in its own
     scratch RUNNER_TEMP and GITHUB_OUTPUT."""
-    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
-    output_file = case / "github_output"
-    output_file.write_text("", encoding="utf-8")
-
-    env = dict(os.environ)
-    env.update({"RUNNER_TEMP": str(case), "GITHUB_OUTPUT": str(output_file)})
-    env.update(env_overrides)
-
-    result = subprocess.run(
-        ["bash", str(step)],
-        capture_output=True,
-        text=True,
-        cwd=str(cwd),
-        env=env,
-    )
-    outputs = dict(
-        line.split("=", 1)
-        for line in output_file.read_text().splitlines()
-        if "=" in line
-    )
-    return result, outputs
-
-
-def git(*args, cwd):
-    subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
-    )
+    return harness.run_step(step, env_overrides, cwd)
 
 
 def make_repo():
-    repo_dir = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
-    git("init", "-q", cwd=repo_dir)
-    git("config", "user.email", "test@example.invalid", cwd=repo_dir)
-    git("config", "user.name", "Test", cwd=repo_dir)
-    return repo_dir
+    """Create a temporary git repository for testing push events."""
+    return harness.make_repo()
 
 
 def commit(repo_dir, files, message):
-    for name, content in files.items():
-        path = repo_dir / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-    git("add", "-A", cwd=repo_dir)
-    git("commit", "-q", "-m", message, cwd=repo_dir)
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_dir,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-
-
-# -- criteria 5/6: the pull_request path's embedded python program. ---------
-# A stub `gh` that ignores its arguments and prints a fixed file list to
-# stdout -- the same posture Part 8's stub `gh` uses for
-# sync-human-credentials-label.py.
-bin_dir = part_dir / "bin"
-bin_dir.mkdir()
-gh_stub = bin_dir / "gh"
-gh_stub.write_text(
-    "#!/usr/bin/env bash\nset -euo pipefail\ncat \"$GH_STUB_FILES\"\n",
-    encoding="utf-8",
-)
-gh_stub.chmod(0o755)
+    """Add files and commit to a test repository."""
+    return harness.commit(repo_dir, files, message)
 
 
 def run_pull_request(files):
-    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
-    files_path = case / "files.txt"
-    files_path.write_text("\n".join(files) + "\n", encoding="utf-8")
-    return run_step(
-        {
-            "EVENT_NAME": "pull_request",
-            "PR_NUMBER": "1",
-            "REPOSITORY": "o/r",
-            "GH_TOKEN": "stub-token",
-            "GH_STUB_FILES": str(files_path),
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        },
-        cwd=part_dir,
-    )
+    """Run step as if it were triggered by a pull_request event."""
+    return harness.run_pull_request(step, files, part_dir)
 
 
 result, outputs = run_pull_request([".metrics/runs.csv"])
@@ -6871,6 +6906,447 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+part24 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1])
+import wf
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part24.", dir=work_dir))
+
+RED_MAIN_WF = ".github/workflows/red-main.yml"
+RED_MAIN_PY = ".github/scripts/red-main.py"
+BOOTSTRAP = ".github/scripts/bootstrap-labels.sh"
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+# -- criterion 1: red-main.yml shape by text inspection. --------------------
+wf_path = pathlib.Path(repo_root) / RED_MAIN_WF
+wf_text = wf_path.read_text(encoding="utf-8")
+
+check(
+    "workflow_run:" in wf_text
+    and "types: [completed]" in wf_text
+    and "branches: [main]" in wf_text,
+    "red-main.yml triggers on workflow_run for CI with [completed] and [main]",
+    "trigger check"
+)
+
+check(
+    "workflow_dispatch:" in wf_text
+    and "run_id:" in wf_text
+    and "type: string" in wf_text,
+    "red-main.yml has workflow_dispatch with run_id input of type: string",
+    "dispatch check"
+)
+
+check(
+    re.search(r"if:.*github\.event\.workflow_run\.event", wf_text) or
+    re.search(r'EVENT.*push', wf_text),
+    "red-main.yml has a job-level or step-level if: checking for push event",
+    "no push event guard found"
+)
+
+# Extract permissions block and verify it has exactly contents and issues keys
+perms_match = re.search(r'permissions:\s*\n((?:\s{2}\S+:.*\n)*)', wf_text)
+perms_keys = set(re.findall(r'(\S+):', perms_match.group(1))) if perms_match else set()
+check(
+    "permissions:" in wf_text
+    and "contents: read" in wf_text
+    and "issues: write" in wf_text
+    and perms_keys == {"contents", "issues"},
+    "red-main.yml has exactly contents: read and issues: write permissions (no others)",
+    f"permissions keys: {perms_keys}, expected: {{'contents', 'issues'}}"
+)
+
+check(
+    "GH_TOKEN: ${{ github.token }}" in wf_text,
+    "red-main.yml sets GH_TOKEN to github.token, not secrets.*",
+    "token check"
+)
+
+check(
+    "secrets." not in wf_text,
+    "red-main.yml contains no secrets.* reference",
+    "secrets reference found"
+)
+
+check(
+    "run-agent-session" not in wf_text,
+    "red-main.yml does not invoke run-agent-session",
+    "run-agent-session found"
+)
+
+check(
+    "claude" not in wf_text and "copilot" not in wf_text,
+    "red-main.yml does not invoke model CLI (claude/copilot)",
+    "model CLI invocation found"
+)
+
+check(
+    not re.search(r"^\s*continue-on-error:", wf_text, re.MULTILINE),
+    "red-main.yml contains no continue-on-error line",
+    "continue-on-error found"
+)
+
+check(
+    "concurrency:" in wf_text
+    and "group: red-main" in wf_text
+    and "cancel-in-progress: false" in wf_text,
+    "red-main.yml has concurrency group red-main with cancel-in-progress: false",
+    "concurrency check"
+)
+
+check(
+    "gh label list" in wf_text,
+    "red-main.yml ensures label exists before querying",
+    "label list/create not found"
+)
+
+check(
+    "gh issue list" in wf_text and "--label" in wf_text and "red-main" in wf_text,
+    "red-main.yml uses label for issue lookup, not title search",
+    "issue list by label not found"
+)
+
+check(
+    not any(cli in wf_text for cli in ["claude ", "copilot ", "anthropic "]),
+    "red-main.yml contains no model CLI invocations",
+    "model CLI found in workflow"
+)
+
+# -- criterion 2: bootstrap-labels.sh has red-main entry. ------------------
+bootstrap_path = pathlib.Path(repo_root) / BOOTSTRAP
+bootstrap_text = bootstrap_path.read_text(encoding="utf-8")
+
+check(
+    "red-main|" in bootstrap_text,
+    "bootstrap-labels.sh has a red-main label entry",
+    "red-main entry not found in bootstrap"
+)
+
+# Extract and check description length
+desc_match = re.search(r"red-main\|[^|]*\|(.{1,100})\n", bootstrap_text)
+if desc_match:
+    desc = desc_match.group(1)
+    check(
+        len(desc) <= 100,
+        f"bootstrap-labels.sh red-main description is {len(desc)} chars (≤100)",
+        f"description too long: {len(desc)} chars"
+    )
+else:
+    check(False, "bootstrap-labels.sh has valid red-main entry", "malformed entry")
+
+# -- criterion 3: ci.yml GODOT_DENY has both new files. -------------------
+CI_WF = ".github/workflows/ci.yml"
+ci_path = pathlib.Path(repo_root) / CI_WF
+ci_text = ci_path.read_text(encoding="utf-8")
+
+check(
+    ".github/workflows/red-main.yml" in ci_text
+    and ".github/scripts/red-main.py" in ci_text,
+    "ci.yml GODOT_DENY list includes both red-main.yml and red-main.py",
+    "ci.yml missing new files in GODOT_DENY"
+)
+
+# -- criterion 4: gate harness test for new files (reuse Part 13). ---------
+determine_gates = wf.step_source(CI_WF, "Determine Gates", shell="bash")
+step = part_dir / "determine-gates.sh"
+step.write_text(determine_gates, encoding="utf-8")
+
+# Reuse TestHarness from shared module instead of duplicating Part 13's harness
+harness = wf.TestHarness(part_dir)
+
+# Test: PR touching only red-main files should gate correctly
+result, outputs = harness.run_pull_request(step, [".github/workflows/red-main.yml", ".github/scripts/red-main.py"], cwd=part_dir)
+check(
+    result.returncode == 0
+    and outputs.get("godot") == "false"
+    and outputs.get("control_plane") == "true",
+    "PR touching only red-main files: godot=false, control_plane=true",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
+)
+
+# -- criterion 5: Decide Action parses output with proper grep | while wrapping.
+decide_action_src = wf.step_source(".github/workflows/red-main.yml", "Decide Action", shell="bash")
+check(
+    "(grep -E" in decide_action_src and "|| true) | while" in decide_action_src,
+    "Decide Action wraps grep with parentheses before pipe to handle empty results",
+    "grep pattern not wrapped in parentheses"
+)
+
+# -- criterion 6: Execute Action has proper retry logic and summary writes.
+execute_action_src = wf.step_source(".github/workflows/red-main.yml", "Execute Action", shell="bash")
+
+# Check for retry logic: each mutation should have sleep and two gh calls
+check(
+    execute_action_src.count("gh issue create") >= 2 and "sleep 1" in execute_action_src,
+    "Execute Action retries gh issue create with sleep",
+    "retry pattern not found"
+)
+
+check(
+    execute_action_src.count("gh issue edit") >= 2 and "sleep 1" in execute_action_src,
+    "Execute Action retries gh issue edit with sleep",
+    "retry pattern not found"
+)
+
+check(
+    execute_action_src.count("gh issue close") >= 2 and "sleep 1" in execute_action_src,
+    "Execute Action retries gh issue close with sleep",
+    "retry pattern not found"
+)
+
+# Check that all gh mutation failures write to step summary
+comment_failures = execute_action_src.count("gh issue comment failed")
+check(
+    comment_failures >= 2 and ("$GITHUB_STEP_SUMMARY" in execute_action_src),
+    "Execute Action writes failure reasons to GITHUB_STEP_SUMMARY",
+    f"comment failures={comment_failures}, summary writes found"
+)
+
+# -- criterion 7: Execute Action execution against stub gh with failure modes.
+# Extract the Execute Action step and test it against fail-then-succeed stub
+HEAD_SHA = "0123456789abcdef0123456789abcdef01234567"
+execute_action = part_dir / "execute-action.sh"
+execute_action.write_text(execute_action_src, encoding="utf-8")
+
+# fail-then-succeed stub: exits non-zero first time, then succeeds
+# Uses a counter file to track attempts
+def create_fail_then_succeed_stub(stub_path, counter_file):
+    stub_path.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+counter_file="{counter_file}"
+mkdir -p "$(dirname "$counter_file")"
+if [ ! -f "$counter_file" ]; then
+    echo "0" > "$counter_file"
+fi
+read attempt < "$counter_file" || attempt=0
+echo $((attempt + 1)) > "$counter_file"
+
+# First gh call (any operation): fail with exit 42
+# Second gh call onwards: succeed
+if [ "$attempt" -eq 0 ]; then
+    # First attempt always fails
+    exit 42
+fi
+
+# Second attempt onwards: succeed and print URL for create operations
+if [[ "$1" == "issue" && "$2" == "create" ]]; then
+    echo "https://github.com/test/repo/issues/123"
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub_path.chmod(0o755)
+
+# Test: Execute Action with fail-then-succeed stub
+case_dir = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+counter_file = case_dir / "attempts"
+bin_subdir = case_dir / "bin"
+bin_subdir.mkdir()
+
+gh_stub_fail = bin_subdir / "gh"
+create_fail_then_succeed_stub(gh_stub_fail, counter_file)
+
+# Create mock input files for Execute Action
+body_file = case_dir / "body.md"
+body_file.write_text("Issue body\n", encoding="utf-8")
+comment_file = case_dir / "comment.md"
+comment_file.write_text("Comment body\n", encoding="utf-8")
+step_summary = case_dir / "step_summary"
+step_summary.write_text("", encoding="utf-8")
+github_output = case_dir / "github_output"
+github_output.write_text("", encoding="utf-8")
+
+result = subprocess.run(
+    ["bash", str(execute_action)],
+    capture_output=True,
+    text=True,
+    cwd=str(case_dir),
+    env={
+        "RUNNER_TEMP": str(case_dir),
+        "GITHUB_STEP_SUMMARY": str(step_summary),
+        "GITHUB_OUTPUT": str(github_output),
+        "ACTION": "open",
+        "REASON": "test reason",
+        "TITLE": "Test Issue",
+        # The step declares HEAD_SHA in its env:, so the stub environment
+        # carries it too -- otherwise `${HEAD_SHA:-}` is empty and the
+        # "Commit:" line the failure summary owes a triager never appears.
+        "HEAD_SHA": HEAD_SHA,
+        "GITHUB_REPOSITORY": "test/repo",
+        "RED_MAIN_LABEL": "red-main",
+        "PATH": f"{bin_subdir}:{os.environ.get('PATH', '')}",
+        "GH_TOKEN": "test-token",
+    },
+)
+
+# With fail-then-succeed stub, should eventually exit 0 and have retried exactly once
+# Execute Action for 'open' makes: 1st gh issue create (fails) + retry (succeeds) + gh issue comment = 3 total
+attempts = int(counter_file.read_text().strip())
+check(
+    result.returncode == 0 and attempts == 3,
+    "Execute Action with fail-then-succeed stub: retries exactly once, exits 0",
+    f"exit {result.returncode}, attempts={attempts}, stderr={result.stderr!r}"
+)
+
+# Test: Execute Action with always-failing stub
+# Verify exactly 2 attempts, non-zero exit, error annotation, and reason in summary
+def create_always_fail_stub(stub_path, counter_file):
+    stub_path.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+counter_file="{counter_file}"
+mkdir -p "$(dirname "$counter_file")"
+if [ ! -f "$counter_file" ]; then
+    echo "0" > "$counter_file"
+fi
+read attempt < "$counter_file" || attempt=0
+echo $((attempt + 1)) > "$counter_file"
+# Always fail, regardless of operation
+exit 42
+""",
+        encoding="utf-8",
+    )
+    stub_path.chmod(0o755)
+
+case_dir_fail = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+counter_file_fail = case_dir_fail / "attempts"
+bin_subdir_fail = case_dir_fail / "bin"
+bin_subdir_fail.mkdir()
+
+gh_stub_fail_always = bin_subdir_fail / "gh"
+create_always_fail_stub(gh_stub_fail_always, counter_file_fail)
+
+# Create mock input files for Execute Action
+body_file_fail = case_dir_fail / "body.md"
+body_file_fail.write_text("Issue body\n", encoding="utf-8")
+comment_file_fail = case_dir_fail / "comment.md"
+comment_file_fail.write_text("Comment body\n", encoding="utf-8")
+step_summary_fail = case_dir_fail / "step_summary"
+step_summary_fail.write_text("", encoding="utf-8")
+github_output_fail = case_dir_fail / "github_output"
+github_output_fail.write_text("", encoding="utf-8")
+
+result_fail = subprocess.run(
+    ["bash", str(execute_action)],
+    capture_output=True,
+    text=True,
+    cwd=str(case_dir_fail),
+    env={
+        "RUNNER_TEMP": str(case_dir_fail),
+        "GITHUB_STEP_SUMMARY": str(step_summary_fail),
+        "GITHUB_OUTPUT": str(github_output_fail),
+        "ACTION": "open",
+        "REASON": "test failure reason",
+        "TITLE": "Test Issue",
+        # The step declares HEAD_SHA in its env:, so the stub environment
+        # carries it too -- otherwise `${HEAD_SHA:-}` is empty and the
+        # "Commit:" line the failure summary owes a triager never appears.
+        "HEAD_SHA": HEAD_SHA,
+        "GITHUB_REPOSITORY": "test/repo",
+        "RED_MAIN_LABEL": "red-main",
+        "PATH": f"{bin_subdir_fail}:{os.environ.get('PATH', '')}",
+        "GH_TOKEN": "test-token",
+    },
+)
+
+# With always-fail stub, should exit non-zero with exactly 2 attempts
+attempts_fail = int(counter_file_fail.read_text().strip())
+summary_content = step_summary_fail.read_text()
+has_error = "::error::" in result_fail.stderr or "::error::" in result_fail.stdout
+has_reason_in_summary = "test failure reason" in summary_content
+has_commit_in_summary = f"Commit: {HEAD_SHA}" in summary_content
+
+check(
+    result_fail.returncode != 0
+    and attempts_fail == 2
+    and has_error
+    and has_reason_in_summary
+    and has_commit_in_summary,
+    "Execute Action with always-fail stub: exactly 2 attempts, non-zero exit, error annotation, reason and commit in summary",
+    f"exit {result_fail.returncode}, attempts={attempts_fail}, has_error={has_error}, has_reason={has_reason_in_summary}, has_commit={has_commit_in_summary}, summary={summary_content!r}"
+)
+
+# -- criterion 7 (cont.): the Summary step exits 0 for every action.
+# `shell: bash` runs `bash --noprofile --norc -e -o pipefail`, and a step's
+# exit status is its last command's. red-main.py prints `title=` on open and
+# update only, so a trailing `[ -n "$TITLE" ] && echo ...` returns 1 and fails
+# the step on every `none` and `close` -- that is, on every ordinary green push
+# to main, in the workflow whose whole job is to report a red one.
+summary_src = wf.step_source(".github/workflows/red-main.yml", "Summary", shell="bash")
+summary_step = part_dir / "summary.sh"
+summary_step.write_text(summary_src, encoding="utf-8")
+
+
+def run_summary(env_overrides):
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    summary_file = case / "step_summary"
+    summary_file.write_text("", encoding="utf-8")
+
+    env = dict(os.environ)
+    env.update({"GITHUB_STEP_SUMMARY": str(summary_file), "HEAD_SHA": HEAD_SHA})
+    env.update(env_overrides)
+
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", str(summary_step)],
+        capture_output=True,
+        text=True,
+        cwd=str(case),
+        env=env,
+    )
+    return result, summary_file.read_text()
+
+
+for summary_action, summary_extra in (
+    ("none", {"REASON": "already-green"}),
+    ("close", {"REASON": "state-recovered", "ISSUE_NUMBER": "7"}),
+):
+    summary_env = {"ACTION": summary_action, "TITLE": "", "ISSUE_NUMBER": "", "REASON": ""}
+    summary_env.update(summary_extra)
+    result_summary, summary_text = run_summary(summary_env)
+    check(
+        result_summary.returncode == 0
+        and f"Action: {summary_action}" in summary_text
+        and f"Commit: {HEAD_SHA}" in summary_text,
+        f"Summary step with action={summary_action} and no title: exits 0, reports the action and commit",
+        f"exit {result_summary.returncode}, stderr={result_summary.stderr!r}, summary={summary_text!r}",
+    )
+
+result_summary, summary_text = run_summary(
+    {"ACTION": "open", "TITLE": "main is red", "ISSUE_NUMBER": "8", "REASON": "new-failure"}
+)
+check(
+    result_summary.returncode == 0
+    and "Title: main is red" in summary_text
+    and "Issue: #8" in summary_text,
+    "Summary step with action=open: exits 0 and reports the title and Issue",
+    f"exit {result_summary.returncode}, summary={summary_text!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -6897,6 +7373,7 @@ run_part "Part 20: pipeline-report.yml shape and ci.yml gate (#341)" part20
 run_part "Part 21: release preflight verdicts (#223)" part21
 run_part "Part 22: release workflow shape (#223)" part22
 run_part "Part 23: red-main.py decision and rendering (#224)" part23
+run_part "Part 24: red-main.yml workflow shape and gate logic (#360)" part24
 
 echo
 if [ "$failures" -eq 0 ]; then
