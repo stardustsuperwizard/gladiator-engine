@@ -41,7 +41,7 @@ jobs:
   escalate:
     name: Escalate
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.event == 'push' || inputs.run_id != ''
+    if: github.event.workflow_run.event == 'push' || github.event_name == 'workflow_dispatch'
 
     env:
       GH_TOKEN: ${{ github.token }}
@@ -216,8 +216,8 @@ jobs:
 
           # Parse the action output into step outputs. Suppress errors from grep
           # if no matches are found since optional keys may be absent.
-          grep -E '^(action|reason|title|interval_seconds|first_failure_run_id)=' \
-            "$RUNNER_TEMP/action.txt" || true | while IFS='=' read -r key value; do
+          (grep -E '^(action|reason|title|interval_seconds|first_failure_run_id)=' \
+            "$RUNNER_TEMP/action.txt" || true) | while IFS='=' read -r key value; do
             [ -n "$key" ] && echo "${key}=${value}" >> "$GITHUB_OUTPUT"
           done
 
@@ -269,13 +269,30 @@ jobs:
               fi
 
               ISSUE_NUMBER=$(sed -n 's|.*/issues/\([0-9]*\)|\1|p' "$RUNNER_TEMP/create.txt" | head -1)
+
+              status=0
               gh issue comment "$ISSUE_NUMBER" \
                 --repo "$GITHUB_REPOSITORY" \
-                --body-file "$RUNNER_TEMP/comment.md" \
-                || { sleep 1; gh issue comment "$ISSUE_NUMBER" \
-                      --repo "$GITHUB_REPOSITORY" \
-                      --body-file "$RUNNER_TEMP/comment.md"; } \
-                || { echo "::error::gh issue comment failed for #$ISSUE_NUMBER"; exit 1; }
+                --body-file "$RUNNER_TEMP/comment.md" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                gh issue comment "$ISSUE_NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --body-file "$RUNNER_TEMP/comment.md" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue comment failed for #$ISSUE_NUMBER"
+                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue comment failed for #$ISSUE_NUMBER"
+                exit 1
+              fi
 
               echo "Opened #$ISSUE_NUMBER"
               ;;
@@ -327,13 +344,29 @@ jobs:
                 exit 1
               fi
 
+              status=0
               gh issue comment "$NUMBER" \
                 --repo "$GITHUB_REPOSITORY" \
-                --body-file "$RUNNER_TEMP/comment.md" \
-                || { sleep 1; gh issue comment "$NUMBER" \
-                      --repo "$GITHUB_REPOSITORY" \
-                      --body-file "$RUNNER_TEMP/comment.md"; } \
-                || { echo "::error::gh issue comment failed for #$NUMBER"; exit 1; }
+                --body-file "$RUNNER_TEMP/comment.md" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                gh issue comment "$NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --body-file "$RUNNER_TEMP/comment.md" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue comment failed for #$NUMBER"
+                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue comment failed for #$NUMBER"
+                exit 1
+              fi
 
               echo "Updated #$NUMBER"
               ;;
@@ -354,13 +387,29 @@ jobs:
                 exit 0
               fi
 
+              status=0
               gh issue comment "$NUMBER" \
                 --repo "$GITHUB_REPOSITORY" \
-                --body-file "$RUNNER_TEMP/comment.md" \
-                || { sleep 1; gh issue comment "$NUMBER" \
-                      --repo "$GITHUB_REPOSITORY" \
-                      --body-file "$RUNNER_TEMP/comment.md"; } \
-                || { echo "::error::gh issue comment failed for #$NUMBER"; exit 1; }
+                --body-file "$RUNNER_TEMP/comment.md" || status=$?
+
+              if [ "$status" -ne 0 ]; then
+                sleep 1
+                gh issue comment "$NUMBER" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --body-file "$RUNNER_TEMP/comment.md" || status=$?
+              fi
+
+              if [ "$status" -ne 0 ]; then
+                {
+                  echo "## Red Main Escalation"
+                  echo
+                  echo "Action: $ACTION"
+                  echo "Error: gh issue comment failed for #$NUMBER"
+                  [ -n "$REASON" ] && echo "Reason: $REASON"
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::gh issue comment failed for #$NUMBER"
+                exit 1
+              fi
 
               status=0
               gh issue close "$NUMBER" \

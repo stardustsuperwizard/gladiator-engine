@@ -7083,37 +7083,42 @@ check(
     f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
 )
 
-# -- criterion 5: Decide Action output parsing tolerates missing optional keys.
-# Check the script directly for the grep | while pattern with proper error handling
+# -- criterion 5: Decide Action parses output with proper grep | while wrapping.
 decide_action_src = wf.step_source(".github/workflows/red-main.yml", "Decide Action", shell="bash")
 check(
-    "grep -E '^(action|reason|title" in decide_action_src
-    and ("|| true" in decide_action_src or "grep" in decide_action_src),
-    "Decide Action output parsing handles missing optional keys",
-    "grep | while read pattern not properly guarded"
+    "(grep -E" in decide_action_src and "|| true) | while" in decide_action_src,
+    "Decide Action wraps grep with parentheses before pipe to handle empty results",
+    "grep pattern not wrapped in parentheses"
 )
 
-# -- criterion 6: Execute Action contains retry logic for gh calls.
+# -- criterion 6: Execute Action has proper retry logic and summary writes.
 execute_action_src = wf.step_source(".github/workflows/red-main.yml", "Execute Action", shell="bash")
+
+# Check for retry logic: each mutation should have sleep and two gh calls
 check(
-    "sleep 1" in execute_action_src
-    and execute_action_src.count("gh issue create") >= 2,
+    execute_action_src.count("gh issue create") >= 2 and "sleep 1" in execute_action_src,
     "Execute Action retries gh issue create with sleep",
     "retry pattern not found"
 )
 
 check(
-    "sleep 1" in execute_action_src
-    and execute_action_src.count("gh issue edit") >= 2,
+    execute_action_src.count("gh issue edit") >= 2 and "sleep 1" in execute_action_src,
     "Execute Action retries gh issue edit with sleep",
     "retry pattern not found"
 )
 
 check(
-    "sleep 1" in execute_action_src
-    and execute_action_src.count("gh issue close") >= 2,
+    execute_action_src.count("gh issue close") >= 2 and "sleep 1" in execute_action_src,
     "Execute Action retries gh issue close with sleep",
     "retry pattern not found"
+)
+
+# Check that all gh mutation failures write to step summary
+comment_failures = execute_action_src.count("gh issue comment failed")
+check(
+    comment_failures >= 2 and ("$GITHUB_STEP_SUMMARY" in execute_action_src),
+    "Execute Action writes failure reasons to GITHUB_STEP_SUMMARY",
+    f"comment failures={comment_failures}, summary writes found"
 )
 
 sys.exit(1 if failures else 0)
