@@ -65,7 +65,7 @@ runs:
 
         gh pr view "$PR_NUMBER" \
           --repo "$GITHUB_REPOSITORY" \
-          --json number,title,body,url,headRefName,isDraft,files \
+          --json number,title,url,headRefName,isDraft,files \
           > "$RUNNER_TEMP"/pr.json
 
         gh pr diff "$PR_NUMBER" \
@@ -126,11 +126,15 @@ runs:
           --json number,title,body,url \
           > "$RUNNER_TEMP"/task.json
 
+        # No `body` key: the reviewer reads the contract, the diff and the
+        # static analysis, never the implementer's own narrative. `isDraft`
+        # is null rather than absent so the prompt has a draft-state key to
+        # render in both modes.
         jq -n \
           --arg title "$PR_TITLE" \
           --arg branch "$PR_BRANCH" \
           '{number: null, title: $title, headRefName: $branch,
-            body: "(not yet opened -- reviewed before the pull request exists)"}' \
+            isDraft: null}' \
           > "$RUNNER_TEMP"/pr.json
 
     - name: Build Prompt
@@ -198,12 +202,17 @@ runs:
                 " AMBIGUITY if intent cannot be determined."
             )
 
+        # Metadata only. The pull request body is deliberately absent: it is
+        # the implementer's account of its own work, and a reviewer that
+        # reads it is checking the account rather than the diff.
+        draft = pr.get("isDraft")
+
         sections.append(
             "# PULL REQUEST\n\n"
             f"Number: {('#' + str(pr['number'])) if pr.get('number') else '(not yet opened)'}\n"
             f"Title: {pr['title']}\n"
-            f"Branch: {pr['headRefName']}\n\n"
-            f"{pr.get('body') or ''}"
+            f"Branch: {pr['headRefName']}\n"
+            f"Draft: {'(not yet opened)' if draft is None else ('true' if draft else 'false')}"
         )
 
         changed = "\n".join(
@@ -274,10 +283,10 @@ runs:
           this layer" is a claim about the whole diff, not one line of it:
           check it by reading every relevant method the diff touches or
           adds (e.g. grep for `_process`/`_physics_process` when a
-          no-per-frame-poll constraint is in play), not by skimming the
-          lines the PR description points at. A PR's own new documentation
-          asserting a constraint holds is not evidence that it holds --
-          verify the claim against the code directly.
+          no-per-frame-poll constraint is in play).
+          A PR's own new documentation asserting a constraint holds is not
+          evidence that it holds -- verify the claim against the code
+          directly.
 
         Your first line MUST be exactly one of:
 

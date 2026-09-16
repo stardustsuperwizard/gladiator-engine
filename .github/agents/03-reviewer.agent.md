@@ -34,8 +34,8 @@ Review the completed implementation against:
 2. The Issue's Architecture Constraints, checked with the same rigor as
    acceptance criteria — read the methods a constraint governs (e.g. grep
    for `_process`/`_physics_process` when a no-per-frame-poll constraint
-   applies) rather than trusting the PR's own description or newly-added
-   documentation to confirm it holds.
+   applies) rather than trusting newly-added documentation to confirm it
+   holds.
 3. Repository architecture and conventions.
 4. Test and validation results.
 5. The final integrated diff.

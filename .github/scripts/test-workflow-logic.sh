@@ -7347,6 +7347,329 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 25: the reviewer prompt carries no implementer narrative (#363).
+#
+# `build-review-request` assembles the one file a review session reads. What
+# it puts in that file decides what the reviewer can be persuaded by, and the
+# pull request body is the implementer's own account of its own work --
+# "refactored X, all tests pass" -- written by the model whose diff is under
+# review. A reviewer given that account grades the account. The prompt's HARD
+# RULES used to carry prose telling it not to, which is a mitigation rather
+# than a fix: the reliable way to stop a session trusting a narrative is not
+# to hand it one.
+#
+# So the `# PULL REQUEST` section is four metadata lines and nothing else,
+# and every other section is untouched -- the task contract, the changed-file
+# list, the static analysis and the diff are what a verdict is now made of.
+# Each of those is a way this can regress quietly: a body creeping back under
+# a different heading, an extra line of "context" in the metadata block, a
+# dropped section, a lost truncation warning, or `body` restored to the
+# `gh pr view --json` field list, which is one word in a YAML file and would
+# reach the prompt the moment anything read `pr["body"]` again.
+#
+# The failure path is checked too. The role definition is a section of the
+# prompt, not a nicety: assembly must fail loudly when it is missing rather
+# than start a session against a prompt with a hole in it.
+#
+# The shipped step is extracted and run, in both input shapes, with `cwd` at
+# the repository root so it reads the real role file. python3 only -- no
+# network, no credentials, no `gh` -- and every byte written under the
+# harness's own work_dir, which is Part 5's rule applied to a test.
+# ---------------------------------------------------------------------------
+
+part25 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1])
+import wf
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part25.", dir=work_dir))
+
+ACTION = ".github/actions/build-review-request/action.yml"
+ROLE = ".github/agents/03-reviewer.agent.md"
+
+action_text = (pathlib.Path(repo_root) / ACTION).read_text(encoding="utf-8")
+role_text = (pathlib.Path(repo_root) / ROLE).read_text(encoding="utf-8")
+
+step = part_dir / "build_prompt.py"
+step_src = wf.step_source(ACTION, "Build Prompt")
+step.write_text(step_src, encoding="utf-8")
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+# A sentinel no other fixture string contains, so "the body is absent" is a
+# claim about this exact text rather than about a word that happens to recur.
+PR_BODY = "IMPLEMENTER-NARRATIVE-SENTINEL: everything works, I checked."
+TASK_BODY = "TASK-BODY-SENTINEL: the authoritative acceptance criteria."
+LINT_REPORT = "LINT-REPORT-SENTINEL: rules/foo.gd:3: Error: unused variable"
+DIFF = "diff --git a/rules/foo.gd b/rules/foo.gd\n+DIFF-SENTINEL\n"
+
+PR_MODE = {
+    "number": 4242,
+    "title": "[363] Drop the pull request body from the reviewer prompt",
+    "url": "https://example.invalid/pull/4242",
+    "headRefName": "claude/execute-task-363",
+    "isDraft": False,
+    "body": PR_BODY,
+    "files": [
+        {"path": "rules/foo.gd", "additions": 12, "deletions": 3},
+        {"path": "tests/foo_test.gd", "additions": 40, "deletions": 0},
+    ],
+}
+
+# What the shipped `Resolve Diff Context` jq writes. Asserted against the
+# action's own jq program below, so the fixture cannot drift from it.
+DIFF_MODE = {
+    "number": None,
+    "title": "[363] Drop the pull request body from the reviewer prompt",
+    "headRefName": "claude/execute-task-363",
+    "isDraft": None,
+}
+
+TASK = {
+    "number": 363,
+    "title": "Drop the pull request body from the assembled reviewer prompt",
+    "url": "https://example.invalid/issues/363",
+    "body": TASK_BODY,
+}
+
+
+def run(name, pr, task=TASK, diff=DIFF, lint=LINT_REPORT, max_chars=150000,
+        cwd=repo_root):
+    """Run the shipped Build Prompt step in its own scratch directory."""
+
+    case = pathlib.Path(tempfile.mkdtemp(prefix=f"{name}.", dir=part_dir))
+
+    (case / "pr.json").write_text(json.dumps(pr), encoding="utf-8")
+    (case / "task.json").write_text(json.dumps(task), encoding="utf-8")
+    (case / "review-diff.txt").write_text(diff, encoding="utf-8")
+
+    env = dict(os.environ)
+    env.update({"RUNNER_TEMP": str(case), "MAX_DIFF_CHARS": str(max_chars)})
+
+    if lint is None:
+        env["LINT_REPORT_FILE"] = ""
+    else:
+        report = case / "lint-report.txt"
+        report.write_text(lint, encoding="utf-8")
+        env["LINT_REPORT_FILE"] = str(report)
+
+    result = subprocess.run(
+        [sys.executable, str(step)],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=env,
+    )
+
+    built = case / "reviewer-prompt.txt"
+    prompt = built.read_text(encoding="utf-8") if built.is_file() else ""
+
+    return result, prompt, case
+
+
+def section(prompt, heading):
+    """One `# HEADING` section's body, up to the `\n\n---\n\n` join."""
+
+    marker = f"# {heading}\n\n"
+    if marker not in prompt:
+        return None
+    return prompt.split(marker, 1)[1].split("\n\n---\n\n", 1)[0]
+
+
+# -- 1: pr mode. The body is fetched nowhere and rendered nowhere. -----------
+result, prompt, case = run("pr-mode", PR_MODE)
+check(
+    result.returncode == 0 and prompt,
+    "pr mode: the step exits 0 and writes reviewer-prompt.txt",
+    f"pr mode failed; exit {result.returncode}, stderr={result.stderr.strip()!r}",
+)
+check(
+    PR_BODY not in prompt,
+    "pr mode: a pr.json still carrying a body puts none of it in the prompt",
+    "the pull request body reached the assembled prompt",
+)
+check(
+    section(prompt, "PULL REQUEST") is not None
+    and section(prompt, "PULL REQUEST").splitlines() == [
+        "Number: #4242",
+        f"Title: {PR_MODE['title']}",
+        "Branch: claude/execute-task-363",
+        "Draft: false",
+    ],
+    "pr mode: # PULL REQUEST is exactly Number/Title/Branch/Draft",
+    "the # PULL REQUEST section is not exactly the four metadata lines:"
+    f" {section(prompt, 'PULL REQUEST')!r}",
+)
+
+# -- 2: every other section still arrives, in pr mode. ----------------------
+task_section = section(prompt, "IMPLEMENTATION TASK (AUTHORITATIVE WORK CONTRACT)")
+check(
+    task_section is not None
+    and "Number: #363" in task_section
+    and TASK["title"] in task_section
+    and TASK_BODY in task_section,
+    "pr mode: the task Issue number, title and body are in the prompt",
+    f"the task contract is missing or incomplete: {task_section!r}",
+)
+check(
+    section(prompt, "FILES CHANGED") is not None
+    and section(prompt, "FILES CHANGED").splitlines() == [
+        "- rules/foo.gd (+12/-3)",
+        "- tests/foo_test.gd (+40/-0)",
+    ],
+    "pr mode: one `- <path> (+a/-d)` line per changed file",
+    f"# FILES CHANGED is wrong: {section(prompt, 'FILES CHANGED')!r}",
+)
+check(
+    LINT_REPORT in (section(prompt, "STATIC ANALYSIS (gdformat / gdlint)") or ""),
+    "pr mode: the lint report text is under # STATIC ANALYSIS",
+    "the static analysis report did not reach the prompt",
+)
+diff_section = section(prompt, "FINAL INTEGRATED DIFF") or ""
+check(
+    "```diff\n" in diff_section and "DIFF-SENTINEL" in diff_section,
+    "pr mode: the diff is inside the fenced # FINAL INTEGRATED DIFF block",
+    f"the diff is missing from the prompt: {diff_section[:200]!r}",
+)
+check(
+    "# REVIEWER ROLE DEFINITION" in prompt
+    and "# REPOSITORY FILE: AGENTS.md" in prompt
+    and "# REPOSITORY FILE: .github/copilot-instructions.md" in prompt,
+    "pr mode: the role definition and both repository files are still sections",
+    "a section other than # PULL REQUEST went missing",
+)
+
+# -- 3: a draft pull request renders as one. --------------------------------
+draft_pr = dict(PR_MODE, isDraft=True)
+_, draft_prompt, _ = run("pr-draft", draft_pr)
+check(
+    "Draft: true" in (section(draft_prompt, "PULL REQUEST") or ""),
+    "pr mode: isDraft=true renders `Draft: true`",
+    "a draft pull request did not render as draft",
+)
+
+# -- 4: diff mode, where no pull request exists yet. ------------------------
+result, diff_prompt, _ = run("diff-mode", DIFF_MODE)
+check(
+    result.returncode == 0 and diff_prompt,
+    "diff mode: the step exits 0 and writes reviewer-prompt.txt",
+    f"diff mode failed; exit {result.returncode}, stderr={result.stderr.strip()!r}",
+)
+check(
+    section(diff_prompt, "PULL REQUEST") is not None
+    and section(diff_prompt, "PULL REQUEST").splitlines() == [
+        "Number: (not yet opened)",
+        f"Title: {DIFF_MODE['title']}",
+        "Branch: claude/execute-task-363",
+        "Draft: (not yet opened)",
+    ],
+    "diff mode: # PULL REQUEST renders (not yet opened) for Number and Draft",
+    "the diff-mode # PULL REQUEST section is wrong:"
+    f" {section(diff_prompt, 'PULL REQUEST')!r}",
+)
+check(
+    "reviewed before the pull request exists" not in diff_prompt
+    and "reviewed before the pull request exists" not in action_text,
+    "diff mode: the old placeholder body string is gone from action and prompt",
+    "`reviewed before the pull request exists` is still in the action or prompt",
+)
+check(
+    TASK_BODY in (section(diff_prompt, "IMPLEMENTATION TASK (AUTHORITATIVE WORK CONTRACT)") or "")
+    and "- rules/foo.gd (+12/-3)" not in diff_prompt
+    and LINT_REPORT in (section(diff_prompt, "STATIC ANALYSIS (gdformat / gdlint)") or "")
+    and "DIFF-SENTINEL" in (section(diff_prompt, "FINAL INTEGRATED DIFF") or ""),
+    "diff mode: the task contract, lint report and diff all still arrive",
+    "diff mode lost a section other than # PULL REQUEST",
+)
+
+# -- 5: truncation still announces itself. ----------------------------------
+long_diff = "x" * 500 + "\nDIFF-SENTINEL\n"
+result, truncated_prompt, _ = run("truncated", PR_MODE, diff=long_diff, max_chars=100)
+check(
+    result.returncode == 0
+    and "The diff was truncated" in truncated_prompt
+    and "truncated=True" in result.stdout,
+    "a diff longer than max-diff-chars truncates and warns",
+    f"no truncation warning; exit {result.returncode},"
+    f" stdout={result.stdout.strip()!r}",
+)
+
+# -- 6: the source itself never reaches for a body. -------------------------
+pr_view_fields = re.findall(r"gh pr view.*?--json\s+(\S+)", action_text, re.S)
+check(
+    pr_view_fields and all("body" not in f.split(",") for f in pr_view_fields),
+    "the action's `gh pr view --json` field list does not include `body`",
+    f"`body` is back in a gh pr view field list: {pr_view_fields}",
+)
+check(
+    'pr.get("body")' not in step_src
+    and "pr['body']" not in step_src
+    and 'pr["body"]' not in step_src,
+    "the Build Prompt step reads no `body` key off pr.json",
+    "the Build Prompt step reads pr.json's body again",
+)
+check(
+    re.search(r"jq -n.*?isDraft:\s*null", action_text, re.S) is not None
+    and re.search(r"jq -n.*?\bbody:", action_text, re.S) is None,
+    "the synthetic diff-mode pr.json carries isDraft and no body",
+    "the diff-mode jq program no longer matches this part's fixture",
+)
+
+# -- 7: the prose that guarded against the narrative is gone, the prose ------
+#       about newly-added documentation is not.
+check(
+    "the lines the PR description points at" not in prompt,
+    "the prompt no longer tells the reviewer not to skim the PR description",
+    "the PR-description clause is back in the prompt's HARD RULES",
+)
+check(
+    "A PR's own new documentation" in prompt,
+    "the prompt still warns that a PR's own new documentation is not evidence",
+    "the newly-added-documentation warning was lost from the prompt",
+)
+check(
+    "the PR's own description" not in role_text
+    and "newly-added documentation" in role_text,
+    "03-reviewer.agent.md drops the PR description and keeps the docs warning",
+    "03-reviewer.agent.md still cites the PR's own description, or lost the"
+    " newly-added-documentation warning",
+)
+
+# -- 8: the failure path. A missing role definition stops assembly. ---------
+no_role = pathlib.Path(tempfile.mkdtemp(prefix="no-role.", dir=part_dir))
+result, missing_prompt, missing_case = run("missing-role", PR_MODE, cwd=no_role)
+check(
+    result.returncode != 0
+    and "Missing .github/agents/03-reviewer.agent.md" in result.stderr
+    and not (missing_case / "reviewer-prompt.txt").exists(),
+    "a missing role definition fails assembly and writes no prompt file",
+    f"expected a hard failure with no prompt written; exit"
+    f" {result.returncode}, stderr={result.stderr.strip()[-200:]!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -7374,6 +7697,7 @@ run_part "Part 21: release preflight verdicts (#223)" part21
 run_part "Part 22: release workflow shape (#223)" part22
 run_part "Part 23: red-main.py decision and rendering (#224)" part23
 run_part "Part 24: red-main.yml workflow shape and gate logic (#360)" part24
+run_part "Part 25: reviewer prompt carries no PR narrative (#363)" part25
 
 echo
 if [ "$failures" -eq 0 ]; then
