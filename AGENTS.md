@@ -74,8 +74,8 @@ turn resolution (Combat Segment, Turn, Action/Power Steps, auto-Guard default).
 charts, the engagement bonus, damage, defeat and push-back. §8's flanking and
 surrounding. §9's damage and defeat. §6's five core actions (all but
 Focus/Mulligan). §10's End Segment: only step 5's round-level flag clearing in
-`EndSegment` (steps 1–4 are card-system-blocked; step 6's final-round branch is
-unbuilt, #173).
+`EndSegment` (steps 1–2 are card-system-blocked and steps 3–4 partly so; the
+match-end branch — formerly "the final-round branch" — is unbuilt, #173).
 
 **Built as core mechanics:** Epic #181's turn sequencer — `TurnSequence`
 (rules/state/turn_sequence.gd, determining which Turn is next) and
@@ -88,10 +88,22 @@ lets two players sit down at `main.tscn`, draft fighters and settings with
 `MatchSetup`, and play the match through `HotseatMatch`, which routes actions
 through `ActionOptions` and renders the board with `BoardView`.
 
-**Not built, and the next work:** §11 (victory determination) and §10 step 6's
-final-round branch (both via #173, which also addresses the match ending with no
-one deciding who won), and the card system, which unblocks Focus/Mulligan and
-steps 1–4 of §10. `PlayerState`
+**Not built, and the next work:** §11 in its entirety — the `MatchProfile`
+dials (length, game mode, victory condition, optional modules), Deathmatch
+scoring, and Standard Victory — together with §10's match-end branch. All of it
+is #173, which also addresses the match ending with no one deciding who won.
+Then the card system, which unblocks Focus/Mulligan and §10's card steps.
+
+> **§11 was rewritten 2026-09-16 (owner decision) and #173 grew with it.** It
+> was two sentences of hard-coded victory rules; it is now four configurable
+> dials, because the game is meant to support more than one mode. Read §11
+> before touching victory work — reasoning from the old two-sentence version
+> will produce a match that cannot end early on elimination, cannot run
+> unbounded, and hard-codes a tiebreaker on objective tokens that the MVP does
+> not have. The MVP configuration is 3 rounds, Deathmatch, Standard Victory,
+> no optional modules.
+
+`PlayerState`
 carries empty `hand`, `deck`, `discard` and `scored` arrays that the card
 system fills; `rules/cards/` does not exist yet. Do not build ahead of §5.2's
 build order (§12), and check §5.3 before building something that feels
@@ -128,11 +140,18 @@ that the parts above it have something to run on.
 
 Only the mulligan there is card-blocked. §5.2's roll-off is not — turn order is
 today the order `MatchSetup` happened to add its players in, and neither the
-loser's compensating ability draw nor the later-round behind-on-points
-tiebreak exists. Feature tokens are absent from `Board` as well (`board.gd`
-puts them out of scope), which leaves §11's second tiebreaker nothing to count
-and §2's "holding" nothing to hold. A match therefore cannot legally start any
-more than it can legally end.
+loser's compensating ability draw nor the later-round behind-on-VP tiebreak
+exists. A match therefore cannot legally start any more than it can legally
+end.
+
+> **Revised 2026-09-16.** This paragraph previously ended by calling feature
+> tokens' absence from `Board` a gap: it "leaves §11's second tiebreaker
+> nothing to count and §2's 'holding' nothing to hold." That is no longer a
+> gap. §11.4 makes objective tokens an **optional module, off in the MVP**, so
+> `board.gd` putting them out of scope is now the correct state of the code
+> rather than a shortfall against the spec, and the tiebreaker that counted
+> them exists only when the module is on. Do not build feature tokens to
+> "unblock" victory determination — they are not on its path.
 
 **Known rough edges from the UI work:** #214 (the selected fighter is not
 cleared when passing to the next Turn, leaving the board display confused) and
