@@ -90,15 +90,6 @@ jobs:
             exit 1
           fi
 
-      # workflow_run triggers on any event. Only escalate if the triggering
-      # run's event was `push`, so a pull_request or workflow_dispatch CI run
-      # never opens a red-main Issue.
-      - name: Check Trigger Event
-        id: check-event
-        shell: bash
-        run: |
-          echo "proceed=true" >> "$GITHUB_OUTPUT"
-
       - name: Fetch Run
         id: fetch-run
         shell: bash
