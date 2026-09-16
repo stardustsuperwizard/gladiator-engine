@@ -1365,6 +1365,43 @@ the PR's `closingIssuesReferences` back to the Implementation Task, loads that
 contract plus the plan file, and reviews the diff against it criterion by
 criterion.
 
+`.github/actions/build-review-request/action.yml` assembles what that session
+actually reads: the reviewer role definition, `AGENTS.md` and
+`.github/copilot-instructions.md`, the Implementation Task contract, the
+parent epic named as context only, pull request metadata — number, title,
+branch, draft state, and nothing else from the pull request — the changed
+files list, a static analysis section when a lint report is supplied, and the
+final integrated diff. The pull request body is deliberately absent from all
+of it: the `gh pr view` call that builds `pr.json` never asks for `body`
+(`:68`), and the step that assembles the prompt says why — "the pull request
+body is deliberately absent: it is the implementer's account of its own work,
+and a reviewer that reads it is checking the account rather than the diff"
+(`:205`–`207`). The reviewer is judged against, and judges against, the
+Implementation Task contract and the diff — never the implementer's own
+account of what it did.
+
+That omission also decides where **Discovered Out-of-Scope Work** goes. The
+implementer writes that section into the pull request body, but the reviewer
+never sees it — not as an oversight, as the same exclusion. It is not lost:
+`agent-06-triage.yml` reads it directly from the merged pull request's own
+body (`agent-06-triage.yml:379`), and reads the reviewer's own **Deferred
+Findings** separately, from the verdict comment (`agent-06-triage.yml:382`).
+Triage's two inputs — the implementer's self-report and the reviewer's
+independent judgment — are gathered after the merge and never cross before
+that; the reviewer contributes only what it found on its own.
+
+This is a deliberate asymmetry, not an inconsistency to reconcile: the local
+`/reviewer` surface (`.claude/agents/reviewer.md`) fetches the pull request
+itself rather than receiving an assembled prompt, so it still has the
+capability the cloud path removed, and its instructions still guard against
+using it — reading validation results "from the PR body's Validation
+Performed section" when needed (`.claude/agents/reviewer.md:110`–`111`) while
+warning not to trust "the PR's own description ... to confirm it holds" for
+an architecture constraint (`:106`–`107`). The cloud reviewer has no body to
+be tempted by; the local one does, and keeps the warning because removing the
+tempting capability there would also remove a session's ability to gather its
+own context in the first place.
+
 The first line is machine-readable:
 
 | Verdict | PR label | Means | Next action |
@@ -2453,7 +2490,7 @@ are custom agents and MCP servers.
 | `.github/scripts/red-main.py` | Red/green decision engine and Issue body/comment renderer: reads already-fetched GitHub JSON only (no network), decides whether to open/update/close/skip, and prints the action and rendered text; every decision and rendered string originates here, never duplicated in YAML |
 | `.github/scripts/pipeline_metrics.py` | The ledger-derived half of the pipeline report: delivery frequency, first-pass yield, planner tier accuracy, verdict distribution and fix rounds, computed from `.metrics/runs.csv` alone |
 | `.github/scripts/render-pipeline-report.py` | Joins `pipeline_metrics.py`'s figures with GitHub-derived ones (lead time for change, change failure rate, time to restore, CI duration) into the markdown `pipeline-report.yml` publishes; computes no metric of its own |
-| `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt |
+| `.github/actions/build-review-request` | Shared by `agent-04-review.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the reviewer prompt; the prompt excludes the pull request body — see *Step 3 — Review* |
 | `.github/actions/build-fix-request` | Shared by `agent-05-fix.yml` and `agent-02-implement.yml`'s pre-PR pass: builds the fixer prompt |
 | `.github/actions/run-agent-session` | The one place a vendor difference lives. Runs one agent session -- Copilot CLI, or Claude Code on either credential, chosen by its `vendor` input -- walking a model preference list and classifying how the session ended into a shared outcome schema. Not yet shared by the planner, which still carries its own copy of the loop |
 | `.github/actions/extract-review-verdict` | Turns a review session's text into a machine-readable `VERDICT` |
