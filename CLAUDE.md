@@ -100,6 +100,13 @@ Attack, Pass). The Combat Segment turn sequencer (epic #181) and hotseat UI
 > cards and feature tokens are both optional modules and are **off**. Read §11
 > before any victory work.
 
+> **Revised 2026-09-16, later the same day.** Two epics filed after the note
+> above will revise **§5.2** (#377 — a player's Turns per round become one per
+> champion, each acting once, rather than the authored `turnsPerPlayer`) and
+> **§5.3** (#374 — a Turn becomes Pre-Action → Action → Post-Action). Neither
+> section is settled; read both epics before building against either. `AGENTS.md`
+> carries what each one changes and why the code is not the thing at fault.
+
 **The next work**: §11 in full — the match configuration, Deathmatch scoring and
 Standard Victory — plus §10's match-end branch (all via #173), and the card
 system (unblocking Focus/Mulligan and §10's card steps). **One constraint on the card system**: the card schema has to be able to

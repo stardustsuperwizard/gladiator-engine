@@ -103,6 +103,36 @@ Then the card system, which unblocks Focus/Mulligan and §10's card steps.
 > not have. The MVP configuration is 3 rounds, Deathmatch, Standard Victory,
 > no optional modules.
 
+> **§5.2 and §5.3 are not settled. Two open epics will revise them, and neither
+> had been filed when the sections above were last written.** Read both before
+> building anything that reasons about how many Turns a round has, which
+> champion may act, or what a Turn is made of.
+>
+> - **#377 — Turns per round.** §5.2 currently says players alternate "until
+>   each has taken a set number of Turns (e.g. 4 each)", and §3.1 models
+>   `turnsPerPlayer` as an authored dial. The intended rule is **one Turn per
+>   champion on the board, and each champion acts exactly once per round.** The
+>   code is not diverging from the spec here — `resources/round/round_profile.tres`
+>   authors `turns_per_player = 4` and `GameState.combat_segment_complete()`
+>   ends the Segment at `turns_taken >= turns_per_player * _turn_order.size()`,
+>   which is exactly what the document asks for. The misunderstanding reached
+>   the spec first and the code second, so that epic revises §5.2 as its first
+>   sub-task and the resolver follows. There is no activation concept anywhere
+>   yet: `StatusFlags` carries only `MOVED`, `GUARDED` and `CHARGED`.
+> - **#374 — a pre-action Power Step.** §5.3 currently makes a Turn an Action
+>   Step followed by a Power Step. That epic would make it **Pre-Action →
+>   Action → Post-Action**, so cards can be played before the action rather
+>   than only after it.
+>
+> Both bear on `turnsPerPlayer`, which §11's 2026-09-16 rewrite had just framed
+> as an authored `MatchProfile` dial — #377 asks whether it survives at all.
+> #173's planning should expect that reconciliation rather than be surprised by
+> it.
+>
+> The same uncertainty is why **#352** (which Step a stat-modifying card may be
+> played in) is sequenced after #374: answering it against today's two-Step Turn
+> risks answering it twice.
+
 `PlayerState`
 carries empty `hand`, `deck`, `discard` and `scored` arrays that the card
 system fills; `rules/cards/` does not exist yet. Do not build ahead of §5.2's
