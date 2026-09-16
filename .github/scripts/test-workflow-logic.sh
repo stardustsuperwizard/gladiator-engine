@@ -6995,13 +6995,16 @@ check(
     "no push event guard found"
 )
 
+# Extract permissions block and verify it has exactly contents and issues keys
+perms_match = re.search(r'permissions:\s*\n((?:^\s+[a-z-]+:\s+\w+\s*\n?)*)', wf_text, re.MULTILINE)
+perms_keys = set(re.findall(r'^\s+([a-z-]+):', perms_match.group(1), re.MULTILINE)) if perms_match else set()
 check(
     "permissions:" in wf_text
     and "contents: read" in wf_text
     and "issues: write" in wf_text
-    and not re.search(r"^\s+(pull-requests|checks|actions|statuses|deployments|packages|code-scanning|security-events|dependabot-alerts|dependabot-updates):", wf_text, re.MULTILINE),
+    and perms_keys == {"contents", "issues"},
     "red-main.yml has exactly contents: read and issues: write permissions (no others)",
-    "permissions check found extra permissions"
+    f"permissions keys: {perms_keys}, expected: {{'contents', 'issues'}}"
 )
 
 check(
