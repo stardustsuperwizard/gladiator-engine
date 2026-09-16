@@ -148,11 +148,36 @@ has no legal place to put the +1.
 
 Four things whoever builds this has to get right:
 
-- **Add a modifier layer; do not copy the stats onto `Fighter`.** Effective
-  stat = the template's base plus the fighter's own modifiers. That keeps
-  retuning a `.tres` moving every fighter's base, which is the property the
-  read-through exists to protect, while letting a card diverge the effective
-  value.
+- **Store the modifier's *source* on the fighter, not a flattened number.**
+  Owner decision, 2026-09-16: the fighter carries the cards attached to it, so
+  the record says what modified what and when. Effective stat = the template's
+  base plus the fighter's own modifier entries. That keeps retuning a `.tres`
+  moving every fighter's base, which is the property the read-through exists to
+  protect, while letting a card diverge the effective value.
+
+  Copying the stats onto `Fighter` at construction (`_health = template.health`,
+  then mutate) was considered and rejected for one reason: it is lossy. A
+  fighter at 6 cannot say whether it is a 6-health fighter or a 5-health
+  fighter holding a `+1`, and **attachments come off** -- §9 discards them on
+  defeat, §10 step 2 caps total attached value, and a duration-limited buff
+  expires. Un-applying one requires knowing what it contributed, so a flattened
+  copy needs a list of attachments anyway, and then the same fact lives in two
+  places that can disagree.
+
+- **Modifier entries carry a source and a lifetime, and attachments are only
+  one source.** A `subtype: instant` card buffing a stat for one Turn is not an
+  attachment, and §9's "enhanced" state is a stat change triggered by a board
+  condition rather than by a card at all. If the only expressible modifier is
+  "a card is attached", those need a second mechanism immediately. One list of
+  entries, each naming where it came from and when it ends, covers all three.
+
+  Two cautions for whoever builds it. Modifiers that *add* are order
+  independent and may be summed; a modifier that *sets* a stat is not, and
+  mixing the two needs a stated precedence rule before the first such card
+  exists. And attachments are per-fighter mutable state, so they serialize by
+  **card id**, the way `to_dict()` already writes `template_id` "purely so a
+  game-side caller can decide which template to pass back in" -- never by
+  copying the card's contents into the fighter's payload.
 - **`is_vulnerable()` and `is_defeated()` read `_template.health` directly.**
   They must read the effective value instead, or a `+1 Health` card changes a
   number nobody consults and the card does nothing — which is the entire point
@@ -161,7 +186,11 @@ Four things whoever builds this has to get right:
   the mutable half only and deliberately omits stats; `from_dict()` takes the
   template as an argument. A modifier that is not in the serialized form does
   not survive save/load and never reaches a client (§3.4,
-  `docs/headless-authority-and-client-sdk.md`).
+  `docs/headless-authority-and-client-sdk.md`). Storing base-plus-modifiers
+  does not force a client to reassemble them: the effective value can be
+  computed here and *projected* outward for a client that only needs to draw
+  the number. Storage and projection are separate questions, and only storage
+  needs to keep the provenance.
 - **The rule the card breaks is still the rule.** Breaking a baseline rule is a
   card doing its job; a resolver quietly disagreeing with the spec is a bug.
   The difference has to stay visible in the code, not become a general licence
