@@ -38,6 +38,7 @@ dependency arrow: **the game depends on `rules/`, never the reverse.**
 | `cards/` | Scoring and ability decks, hands, draw/discard — **not built yet** | §4, §10 |
 | `state/` | `GameState`, `TurnAction`, `TurnResult`, serialization, RNG, `RoundProfile` — the authored round structure §5 reads | §3, §5 |
 | `actions/` | One `TurnAction` subclass per player command | §6 |
+| `match/` | Match configuration dials, game modes, victory conditions | §11 |
 | `tests/` | Contract and regression suites | — |
 
 ## Why `TurnAction` lives here, not in the game
