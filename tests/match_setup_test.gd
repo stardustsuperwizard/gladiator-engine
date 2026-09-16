@@ -86,12 +86,15 @@ static func _test_round_profile_returns_the_authored_profile() -> Array[String]:
 	var expected: RoundProfile = load(ROUND_PROFILE_PATH)
 	var actual := MatchSetup.round_profile()
 
-	violations.append_array(
-		_expect(
-			actual.rounds_per_match == expected.rounds_per_match,
-			(
-				"round_profile().rounds_per_match must equal the authored RoundProfile's, got %d vs %d"
-				% [actual.rounds_per_match, expected.rounds_per_match]
+	(
+		violations
+		. append_array(
+			_expect(
+				actual.rounds_per_match == expected.rounds_per_match,
+				(
+					"round_profile().rounds_per_match must equal the authored RoundProfile's, got %d vs %d"
+					% [actual.rounds_per_match, expected.rounds_per_match]
+				)
 			)
 		)
 	)
