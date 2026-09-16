@@ -6505,6 +6505,372 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# Part 23: red-main.py's decision and rendering (#224).
+#
+# The escalation workflow (T2, not yet built) fetches JSON and hands it to
+# this script; the script owns every decision and every rendered byte.
+# Covered end-to-end with fixture GitHub JSON and no network, no `gh`, and no
+# Issue ever created -- Part 21's shape, for the same reason: this is a
+# standalone decision script read via `subprocess`, not a step embedded in a
+# workflow file.
+# ---------------------------------------------------------------------------
+
+part23 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+script = pathlib.Path(repo_root) / ".github" / "scripts" / "red-main.py"
+case_dir = pathlib.Path(tempfile.mkdtemp(prefix="rm-case.", dir=work_dir))
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+RUN_URL = "https://github.com/o/r/actions/runs/{id}"
+
+RUN1 = {
+    "id": 111, "conclusion": "failure", "event": "push", "head_branch": "main",
+    "head_sha": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "html_url": RUN_URL.format(id=111),
+    "run_started_at": "2026-09-14T10:00:00Z",
+    "updated_at": "2026-09-14T10:05:00Z",
+}
+RUN2 = {
+    **RUN1, "id": 222, "html_url": RUN_URL.format(id=222),
+    "run_started_at": "2026-09-14T11:00:00Z", "updated_at": "2026-09-14T11:05:00Z",
+}
+RUN3_GREEN = {
+    **RUN1, "id": 333, "conclusion": "success", "html_url": RUN_URL.format(id=333),
+    "run_started_at": "2026-09-14T12:00:00Z", "updated_at": "2026-09-14T12:05:00Z",
+}
+
+JOBS_RED = {"jobs": [
+    {"name": "Godot Export", "conclusion": "success", "id": 1,
+     "started_at": "2026-09-14T10:00:00Z", "steps": []},
+    {"name": "Godot Smoke Run", "conclusion": "failure", "id": 2,
+     "started_at": "2026-09-14T10:00:10Z", "steps": [
+         {"name": "Setup", "number": 1, "conclusion": "success"},
+         {"name": "Run smoke", "number": 2, "conclusion": "failure"},
+     ]},
+]}
+JOBS_GREEN = {"jobs": [
+    {"name": "Godot Export", "conclusion": "success", "id": 1,
+     "started_at": "2026-09-14T12:00:00Z", "steps": []},
+]}
+JOBS_NO_RED_JOB = {"jobs": [
+    {"name": "Godot Export", "conclusion": "success", "id": 1,
+     "started_at": "2026-09-14T10:00:00Z", "steps": []},
+]}
+JOBS_RED_JOB_NO_RED_STEP = {"jobs": [
+    {"name": "Godot Export", "conclusion": "failure", "id": 1,
+     "started_at": "2026-09-14T10:00:00Z", "steps": [
+         {"name": "Setup", "number": 1, "conclusion": "success"},
+     ]},
+]}
+
+COMMIT_DIRECT = {
+    "message": "Fix the thing\n\nmore detail",
+    "changed_files": ["rules/actions/move_action.gd"],
+    "pull_requests": [],
+}
+COMMIT_PR = {**COMMIT_DIRECT, "pull_requests": [{"number": 7}]}
+COMMIT_LEDGER_SUBJECT = {
+    "message": "chore(ledger): record run 111",
+    "changed_files": ["docs/x.md"],
+    "pull_requests": [],
+}
+COMMIT_METRICS_PATHS = {
+    "message": "update metrics",
+    "changed_files": [".metrics/runs.csv", ".metrics/other.csv"],
+    "pull_requests": [],
+}
+
+ISSUE_NONE = None
+
+
+def write(name, data, n=[0]):
+    n[0] += 1
+    path = case_dir / f"{name}-{n[0]}.json"
+    if isinstance(data, str):
+        path.write_text(data, encoding="utf-8")
+    else:
+        path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def run(*, run_=RUN1, jobs=JOBS_RED, commit=COMMIT_DIRECT, issue=ISSUE_NONE,
+        body_out=None, comment_out=None):
+    if body_out is None:
+        body_out = pathlib.Path(tempfile.mktemp(prefix="body-", suffix=".md", dir=case_dir))
+    if comment_out is None:
+        comment_out = pathlib.Path(tempfile.mktemp(prefix="comment-", suffix=".md", dir=case_dir))
+    args = [
+        sys.executable, str(script),
+        "--run-json", str(write("run", run_)),
+        "--jobs-json", str(write("jobs", jobs)),
+        "--commit-json", str(write("commit", commit)),
+        "--issue-json", str(write("issue", issue)),
+        "--body-out", str(body_out),
+        "--comment-out", str(comment_out),
+    ]
+    result = subprocess.run(args, capture_output=True, text=True)
+    return result, body_out, comment_out
+
+
+def kv(result):
+    return dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+
+
+# -- criterion: standard-library only, no subprocess/urllib/requests/gh. ----
+source = script.read_text(encoding="utf-8")
+forbidden = re.search(
+    r"^\s*(?:import|from)\s+(subprocess|urllib\.request|http|socket|requests)\b"
+    r"|\b(?:subprocess|socket)\.\w+\("
+    r"|\bgh\s+(?:issue|api|run)\b",
+    source, re.MULTILINE,
+)
+check(
+    script.stat().st_mode & 0o111 != 0
+    and source.startswith("#!/usr/bin/env python3\n")
+    and forbidden is None,
+    "red-main.py is executable, starts with the python3 shebang, and its"
+    " source names no subprocess/urllib/requests/http/socket/gh",
+    f"executable={script.stat().st_mode & 0o111 != 0}, forbidden={forbidden}",
+)
+
+# -- criterion: red, no open Issue -- action=open. ---------------------------
+result, body1_path, comment1_path = run(run_=RUN1, jobs=JOBS_RED, commit=COMMIT_DIRECT, issue=ISSUE_NONE)
+out = kv(result)
+body1 = body1_path.read_text(encoding="utf-8")
+comment1 = comment1_path.read_text(encoding="utf-8")
+marker1 = json.loads(re.search(r"<!--\s*red-main-state\s+(\{.*?\})\s*-->", body1, re.DOTALL).group(1))
+check(
+    result.returncode == 0
+    and out.get("action") == "open"
+    and "a1b2c3d" in body1
+    and "Fix the thing" in body1
+    and "Godot Smoke Run" in body1
+    and "Run smoke" in body1
+    and RUN1["html_url"] in body1
+    and "direct-push" in body1
+    and "2026-09-14T10:00:00Z" in body1
+    and marker1["failures"] == 1
+    and marker1["first_failure_run_id"] == 111
+    and RUN1["html_url"] in comment1,
+    "a red run on main from push with no open Issue opens, naming the short"
+    " SHA, subject, failing job, first failing step, run URL, provenance and"
+    " first-red timestamp, with failures=1",
+    f"exit {result.returncode}, out={out}, body={body1!r}, marker={marker1!r}",
+)
+
+# -- criterion: red, open Issue -- action=update, marker preserved. ---------
+issue1 = {"number": 42, "body": body1}
+result, body2_path, comment2_path = run(run_=RUN2, jobs=JOBS_RED, commit=COMMIT_DIRECT, issue=issue1)
+out = kv(result)
+body2 = body2_path.read_text(encoding="utf-8")
+marker2 = json.loads(re.search(r"<!--\s*red-main-state\s+(\{.*?\})\s*-->", body2, re.DOTALL).group(1))
+check(
+    result.returncode == 0
+    and out.get("action") == "update"
+    and "reason" not in out
+    and marker2["first_failure_run_id"] == marker1["first_failure_run_id"]
+    and marker2["first_failure_at"] == marker1["first_failure_at"]
+    and marker2["failures"] == 2,
+    "a second red run against the open Issue updates, preserving"
+    " first_failure_run_id/first_failure_at while failures reads 2",
+    f"exit {result.returncode}, out={out}, marker2={marker2!r}",
+)
+
+# -- criterion: green, open Issue -- action=close with interval and links. --
+issue2 = {"number": 42, "body": body2}
+result, body3_path, comment3_path = run(run_=RUN3_GREEN, jobs=JOBS_GREEN, commit=COMMIT_DIRECT, issue=issue2)
+out = kv(result)
+comment3 = comment3_path.read_text(encoding="utf-8")
+expected_interval = 7500  # 2026-09-14T12:05:00Z - 2026-09-14T10:00:00Z
+check(
+    result.returncode == 0
+    and out.get("action") == "close"
+    and out.get("interval_seconds") == str(expected_interval)
+    and out.get("first_failure_run_id") == "111"
+    and str(expected_interval) in comment3
+    and RUN1["html_url"] in comment3
+    and RUN3_GREEN["html_url"] in comment3,
+    "a green run with the open Issue closes with the correct interval and a"
+    " comment linking both the first failing run and the restoring run",
+    f"exit {result.returncode}, out={out}, comment={comment3!r}",
+)
+
+# -- criterion: green, no open Issue -- already-green. -----------------------
+result, _, _ = run(run_=RUN3_GREEN, jobs=JOBS_GREEN, commit=COMMIT_DIRECT, issue=ISSUE_NONE)
+out = kv(result)
+check(
+    result.returncode == 0 and out.get("action") == "none" and out.get("reason") == "already-green",
+    "a green run with no open Issue prints action=none reason=already-green",
+    f"exit {result.returncode}, out={out}",
+)
+
+# -- criterion: cancelled/skipped -- inconclusive. ---------------------------
+for conclusion in ("cancelled", "skipped"):
+    result, _, _ = run(run_={**RUN1, "conclusion": conclusion}, issue=ISSUE_NONE)
+    out = kv(result)
+    check(
+        result.returncode == 0 and out.get("action") == "none" and out.get("reason") == "inconclusive",
+        f"a {conclusion} run prints action=none reason=inconclusive",
+        f"exit {result.returncode}, out={out}",
+    )
+
+# -- criterion: not main / not push -- not-main-push. ------------------------
+for override in ({"head_branch": "other"}, {"event": "pull_request"}):
+    result, _, _ = run(run_={**RUN1, **override}, issue=ISSUE_NONE)
+    out = kv(result)
+    check(
+        result.returncode == 0 and out.get("action") == "none" and out.get("reason") == "not-main-push",
+        f"a run with {override} prints action=none reason=not-main-push",
+        f"exit {result.returncode}, out={out}",
+    )
+
+# -- criterion: already-recorded is a no-op, writing no body or comment. -----
+recorded_body_path = pathlib.Path(tempfile.mktemp(prefix="body-", suffix=".md", dir=case_dir))
+recorded_comment_path = pathlib.Path(tempfile.mktemp(prefix="comment-", suffix=".md", dir=case_dir))
+result, _, _ = run(
+    run_=RUN2, jobs=JOBS_RED, commit=COMMIT_DIRECT, issue=issue2,
+    body_out=recorded_body_path, comment_out=recorded_comment_path,
+)
+out = kv(result)
+check(
+    result.returncode == 0
+    and out.get("action") == "none"
+    and out.get("reason") == "already-recorded"
+    and not recorded_body_path.exists()
+    and not recorded_comment_path.exists(),
+    "re-running an already-recorded run id prints action=none"
+    " reason=already-recorded and writes no body or comment file",
+    f"exit {result.returncode}, out={out}, body_exists={recorded_body_path.exists()},"
+    f" comment_exists={recorded_comment_path.exists()}",
+)
+
+# -- criterion: provenance classification, all four ways. --------------------
+result, body_pr, _ = run(run_=RUN1, jobs=JOBS_RED, commit=COMMIT_PR, issue=ISSUE_NONE)
+check(
+    result.returncode == 0 and "pull-request" in body_pr.read_text(encoding="utf-8"),
+    "a commit with an associated pull request renders provenance pull-request",
+    body_pr.read_text(encoding="utf-8"),
+)
+
+result, body_ledger, _ = run(run_=RUN1, jobs=JOBS_RED, commit=COMMIT_LEDGER_SUBJECT, issue=ISSUE_NONE)
+check(
+    result.returncode == 0 and "bookkeeping" in body_ledger.read_text(encoding="utf-8"),
+    "a chore(ledger): subject with no pull request renders provenance bookkeeping",
+    body_ledger.read_text(encoding="utf-8"),
+)
+
+result, body_metrics, _ = run(run_=RUN1, jobs=JOBS_RED, commit=COMMIT_METRICS_PATHS, issue=ISSUE_NONE)
+check(
+    result.returncode == 0 and "bookkeeping" in body_metrics.read_text(encoding="utf-8"),
+    "changed paths entirely under .metrics/ render provenance bookkeeping",
+    body_metrics.read_text(encoding="utf-8"),
+)
+
+result, body_direct, _ = run(run_=RUN1, jobs=JOBS_RED, commit=COMMIT_DIRECT, issue=ISSUE_NONE)
+check(
+    result.returncode == 0 and "direct-push" in body_direct.read_text(encoding="utf-8"),
+    "a commit touching rules/ with no pull request and no bookkeeping shape"
+    " renders provenance direct-push",
+    body_direct.read_text(encoding="utf-8"),
+)
+
+# -- criterion: unknown job/step fallback. -----------------------------------
+result, body_no_job, _ = run(run_=RUN1, jobs=JOBS_NO_RED_JOB, commit=COMMIT_DIRECT, issue=ISSUE_NONE)
+check(
+    result.returncode == 0
+    and "Failing job:** unknown" in body_no_job.read_text(encoding="utf-8")
+    and "First failing step:** unknown" in body_no_job.read_text(encoding="utf-8"),
+    "no red job in --jobs-json renders both the job and the step as unknown",
+    body_no_job.read_text(encoding="utf-8"),
+)
+
+result, body_no_step, _ = run(run_=RUN1, jobs=JOBS_RED_JOB_NO_RED_STEP, commit=COMMIT_DIRECT, issue=ISSUE_NONE)
+check(
+    result.returncode == 0
+    and "Failing job:** Godot Export" in body_no_step.read_text(encoding="utf-8")
+    and "First failing step:** unknown" in body_no_step.read_text(encoding="utf-8"),
+    "a red job with no red step renders the step as unknown",
+    body_no_step.read_text(encoding="utf-8"),
+)
+
+# -- criterion: a missing or unparseable marker recovers rather than raises. -
+for bad_body in ("no marker here at all", "<!-- red-main-state {not json} -->"):
+    issue_bad = {"number": 42, "body": bad_body}
+    result, _, _ = run(run_=RUN1, jobs=JOBS_RED, commit=COMMIT_DIRECT, issue=issue_bad)
+    out = kv(result)
+    check(
+        result.returncode == 0
+        and out.get("action") == "update"
+        and out.get("reason") == "state-recovered"
+        and "Traceback" not in result.stderr,
+        f"an open Issue body {bad_body!r} recovers as action=update"
+        " reason=state-recovered with no traceback",
+        f"exit {result.returncode}, out={out}, stderr={result.stderr!r}",
+    )
+
+# -- criterion: a missing or non-JSON --*-json file is fatal, names the -----
+#    file on stderr, and prints no key=value line on stdout.
+missing = case_dir / "does-not-exist.json"
+args = [
+    sys.executable, str(script),
+    "--run-json", str(missing),
+    "--jobs-json", str(write("jobs", JOBS_RED)),
+    "--commit-json", str(write("commit", COMMIT_DIRECT)),
+    "--issue-json", str(write("issue", ISSUE_NONE)),
+]
+result = subprocess.run(args, capture_output=True, text=True)
+check(
+    result.returncode != 0
+    and result.stdout.strip() == ""
+    and str(missing) in result.stderr,
+    "a missing --run-json is fatal, names the file on stderr, and prints no"
+    " key=value line on stdout",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+not_json = write("not-json", "not actually json {{{")
+args = [
+    sys.executable, str(script),
+    "--run-json", str(not_json),
+    "--jobs-json", str(write("jobs", JOBS_RED)),
+    "--commit-json", str(write("commit", COMMIT_DIRECT)),
+    "--issue-json", str(write("issue", ISSUE_NONE)),
+]
+result = subprocess.run(args, capture_output=True, text=True)
+check(
+    result.returncode != 0
+    and result.stdout.strip() == ""
+    and str(not_json) in result.stderr,
+    "a non-JSON --run-json is fatal, names the file on stderr, and prints no"
+    " key=value line on stdout",
+    f"exit {result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}",
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -6530,6 +6896,7 @@ run_part "Part 19: pipeline report rendering and GitHub figures (#340)" part19
 run_part "Part 20: pipeline-report.yml shape and ci.yml gate (#341)" part20
 run_part "Part 21: release preflight verdicts (#223)" part21
 run_part "Part 22: release workflow shape (#223)" part22
+run_part "Part 23: red-main.py decision and rendering (#224)" part23
 
 echo
 if [ "$failures" -eq 0 ]; then
