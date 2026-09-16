@@ -7636,19 +7636,33 @@ check(
 
 # -- 7: the prose that guarded against the narrative is gone, the prose ------
 #       about newly-added documentation is not.
+#
+# Both live inside a hard-wrapped paragraph, so asserting them against the
+# raw text asserts a line break rather than a sentence. The guarded-against
+# clause used to be split as "not by skimming the" / "lines the PR
+# description points at", which made the old `not in prompt` check true for
+# free: restoring the paragraph verbatim left this part green, and the
+# regression it exists to catch would have walked straight back in. The
+# retained warning was brittle the other way, going red on a re-wrap that
+# changed no words. Collapse every run of whitespace to one space first and
+# both claims are about the prose, wherever the lines happen to break.
+flat_prompt = " ".join(prompt.split())
+flat_role = " ".join(role_text.split())
+
 check(
-    "the lines the PR description points at" not in prompt,
+    "not by skimming the lines the PR description points at" not in flat_prompt,
     "the prompt no longer tells the reviewer not to skim the PR description",
     "the PR-description clause is back in the prompt's HARD RULES",
 )
 check(
-    "A PR's own new documentation" in prompt,
+    "A PR's own new documentation asserting a constraint holds is not"
+    " evidence that it holds" in flat_prompt,
     "the prompt still warns that a PR's own new documentation is not evidence",
     "the newly-added-documentation warning was lost from the prompt",
 )
 check(
-    "the PR's own description" not in role_text
-    and "newly-added documentation" in role_text,
+    "the PR's own description" not in flat_role
+    and "newly-added documentation" in flat_role,
     "03-reviewer.agent.md drops the PR description and keeps the docs warning",
     "03-reviewer.agent.md still cites the PR's own description, or lost the"
     " newly-added-documentation warning",
