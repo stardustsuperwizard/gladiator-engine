@@ -1,13 +1,19 @@
 name: Run Ledger
 
-# The only writer of `.metrics/runs.csv`.
+# The only writer of `.metrics/runs.csv`, which lives on the `ledger` branch
+# and not on `main`.
 #
-# One merge to `main` becomes one commit appending one `event=merge` row for
-# the merged pull request plus one `event=session` row per session-record
-# comment on it. Nothing else in the control plane appends to that file, and
-# nothing here reads a model's prose: every field is derived by
-# `.github/scripts/ledger_row.py` from GitHub's own JSON. See
-# `docs/RUN_LEDGER.md` for the schema and the vocabularies.
+# One merge to `main` becomes one commit on the `ledger` branch appending one
+# `event=merge` row for the merged pull request plus one `event=session` row
+# per session-record comment on it. Nothing else in the control plane appends
+# to that file, and nothing here reads a model's prose: every field is derived
+# by `.github/scripts/ledger_row.py` from GitHub's own JSON. See
+# `docs/RUN_LEDGER.md` for the schema, the vocabularies, and why the branch.
+#
+# This workflow writes nothing to `main`. It is triggered by a push to `main`
+# and it checks `main` out to run the row builder, but every write goes to a
+# separate checkout of the `ledger` branch under $RUNNER_TEMP -- see
+# `Materialize the Ledger Branch` for the ruleset that makes that necessary.
 #
 # Three properties this workflow is built around, in the order they matter:
 #
@@ -25,18 +31,19 @@ name: Run Ledger
 #      whose rows are already present is a no-op, byte for byte.
 #
 # Spends no AI credits. `GITHUB_TOKEN` only -- no PAT, no deploy key, no app
-# credential. That is both what the epic requires and what keeps the ledger
-# commit from triggering another run: a `GITHUB_TOKEN` push raises no workflow
-# events, and `paths-ignore` below closes the same loop a second time.
+# credential. That is what #219 requires, and it is also why the ledger branch
+# needs no ruleset exemption: a deploy key could be given one, but a deploy-key
+# push raises workflow events, and `ci.yml` has no `paths-ignore` on push to
+# `main`, so every ledger commit would trigger a full nine-job build.
 
 on:
   # `push` on `main`, not `pull_request`: a pull request event can run from a
-  # feature branch's own context, and this workflow writes to `main`.
+  # feature branch's own context, and this workflow reads `main`'s merges.
   #
-  # `paths-ignore` keeps the ledger's own commit from being a merge worth
-  # recording. It is belt and braces -- a `GITHUB_TOKEN` push does not trigger
-  # workflows at all -- but the day someone changes the credential, this is
-  # what stops the loop.
+  # `branches: [main]` already excludes the `ledger` branch, so a ledger commit
+  # cannot trigger this workflow however it was pushed. `paths-ignore` is kept
+  # as a second latch for the same loop: it costs nothing, and it stays correct
+  # if the ledger ever lands on a branch this trigger does watch.
   push:
     branches:
       - main
@@ -73,23 +80,39 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
 
-      # The one path in the checkout this workflow may write. Everything else
-      # it produces -- fetched JSON, computed rows, diagnostics -- goes under
+      # The ledger's path *within the ledger branch's own checkout*, which
+      # lives under $RUNNER_TEMP. This workflow writes nothing in the `main`
+      # checkout at all any more -- see `Materialize the Ledger Branch` for
+      # why the ledger moved off `main`. Everything else it produces --
+      # fetched JSON, computed rows, diagnostics -- also goes under
       # $RUNNER_TEMP (test-workflow-logic.sh Part 5).
       LEDGER: .metrics/runs.csv
+
+      # The branch the ledger lives on. Deliberately not `main`: the
+      # `Main Protection` ruleset requires a pull request there and a
+      # `GITHUB_TOKEN` push cannot be exempted from it. See #369.
+      LEDGER_BRANCH: ledger
+
+      # Written when the branch is created, and never again. Kept here rather
+      # than in the branch-creation step so that the one place naming the
+      # schema is the same place `ledger_row.py` is pointed at; a column added
+      # there without a change here is caught by test-workflow-logic.sh.
+      LEDGER_HEADER: timestamp,event,issue,pr,role,vendor,model_requested,model_resolved,tier_label,fix_round,verdict,outcome,duration_seconds,run_url
 
       # The merge row's `run_url`. A session row carries its own, out of the
       # session record; this is the run that appended it.
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
-      # Full history: the rejected-push path below rebases, and `git pull
-      # --rebase` on a depth-1 clone has nothing to rebase onto.
+      # Shallow is enough. This checkout exists only to run
+      # `.github/scripts/ledger_row.py`; nothing here reads `main`'s history,
+      # and nothing here writes to it. The rebase that used to need full
+      # history now happens in the ledger branch's own checkout, which fetches
+      # what it needs itself.
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0
 
       # Which pull request did this commit arrive by? Answered by GitHub's
       # associated-pull-requests endpoint rather than by reading the commit
@@ -247,10 +270,107 @@ jobs:
       # The surviving lines are appended byte for byte as the builder printed
       # them. Re-encoding them through a writer here would be a second
       # opinion on quoting, and the file would disagree with itself.
+
+      # The ledger lives on its own branch, and this is where that branch
+      # becomes a working tree under $RUNNER_TEMP.
+      #
+      # WHY NOT `main`. The `Main Protection` ruleset requires a pull request
+      # on `~DEFAULT_BRANCH`, so a direct push is rejected. A `GITHUB_TOKEN`
+      # push cannot be exempted from it either: adding a bypass actor for the
+      # GitHub Actions integration is refused with
+      #
+      #   422  Actor GitHub Actions integration must be part of the ruleset
+      #        source or owner organization
+      #
+      # and this repository is user-owned, so there is no owner organization
+      # for it to belong to. The ruleset's conditions name `~DEFAULT_BRANCH`
+      # and nothing else, so any other branch is unrestricted and needs no
+      # exemption at all. See #369.
+      #
+      # WHY AN ORPHAN. The branch shares no history with `main` and is never
+      # merged in either direction. Merging it back would put the ledger on
+      # the protected branch again, which is the thing being undone; keeping
+      # it disjoint also means a ledger commit can never carry a code change
+      # and a code change can never carry a ledger commit.
+      #
+      # WHY HERE AND NOT IN ITS OWN WORKFLOW. This job's `concurrency: ledger`
+      # group with `cancel-in-progress: false` serialises every ledger run.
+      # A "create the branch" workflow would sit outside that group, so it
+      # could race an append. As a step it is inside the same lock, and the
+      # branch name is named once.
+      #
+      # WHAT RECREATION DOES AND DOES NOT DO. If the branch is missing this
+      # restores the header and nothing else -- the rows are gone. That is a
+      # guard against a hard failure and a first-run bootstrap, not a backup.
+      # Deletion is what a ruleset on this branch is for.
+      - name: Materialize the Ledger Branch
+        id: branch
+        if: steps.build.outputs.ok == 'true'
+        shell: bash
+        env:
+          LEDGER_DIR: ${{ runner.temp }}/ledger
+        run: |
+          set -uo pipefail
+
+          give_up() {
+            echo "::warning::$1 The ledger is unchanged."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          rm -rf "$LEDGER_DIR"
+          mkdir -p "$LEDGER_DIR"
+          cd "$LEDGER_DIR" || give_up "Cannot enter $LEDGER_DIR."
+
+          git init -q || give_up "Cannot initialise $LEDGER_DIR."
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Authenticate the way actions/checkout does, so the token is in a
+          # header rather than baked into a remote URL that shows up in every
+          # error message this step could print.
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git config http.extraheader "AUTHORIZATION: basic $AUTH"
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+
+          # Not shallow. The retry path in `Commit and Push` rebases, and a
+          # depth-1 fetch has nothing to rebase onto -- the same reason the
+          # `main` checkout used to ask for full history. The ledger branch
+          # holds one small CSV, so there is nothing to save by truncating it.
+          if git fetch -q origin "$LEDGER_BRANCH" 2> "$RUNNER_TEMP"/fetch.err; then
+            git checkout -q -B "$LEDGER_BRANCH" FETCH_HEAD \
+              || give_up "Cannot check out '$LEDGER_BRANCH'."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Branch '$LEDGER_BRANCH' does not exist" \
+                 "($(tr '\n' ' ' < "$RUNNER_TEMP"/fetch.err))." \
+                 "Creating it with a header and no rows. If it existed" \
+                 "before, its rows are not recovered by this."
+            # `git init` leaves HEAD on an unborn branch, so -b here gives a
+            # branch whose first commit is a root commit: an orphan, with no
+            # --orphan needed and no history from `main` to discard.
+            git checkout -q -b "$LEDGER_BRANCH" \
+              || give_up "Cannot create '$LEDGER_BRANCH'."
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          mkdir -p "$(dirname "$LEDGER")" || give_up "Cannot create the ledger directory."
+
+          if [ ! -f "$LEDGER" ]; then
+            printf '%s\n' "$LEDGER_HEADER" > "$LEDGER" \
+              || give_up "Cannot write the ledger header."
+            echo "Seeded $LEDGER with its header row."
+          fi
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
       - name: Append to the Ledger
         id: append
-        if: steps.build.outputs.ok == 'true'
+        if: steps.build.outputs.ok == 'true' && steps.branch.outputs.ok == 'true'
         shell: python
+        env:
+          LEDGER_DIR: ${{ runner.temp }}/ledger
         run: |
           import csv
           import os
@@ -258,7 +378,11 @@ jobs:
 
           # Scratch lives in $RUNNER_TEMP, never the working tree.
           SCRATCH = pathlib.Path(os.environ["RUNNER_TEMP"])
-          LEDGER = pathlib.Path(os.environ["LEDGER"])
+
+          # `LEDGER` is relative to the ledger branch's checkout, not to the
+          # `main` checkout this step is running in. Resolving it against
+          # $LEDGER_DIR is what keeps this workflow from writing to `main`.
+          LEDGER = pathlib.Path(os.environ["LEDGER_DIR"]) / os.environ["LEDGER"]
 
           EVENT = 1
           PR = 3
@@ -339,71 +463,84 @@ jobs:
 
           output("appended", str(len(keep)))
 
-      # One commit per merge, whatever it appended. The push is retried
-      # exactly once, after a rebase, because the only thing that can reject
-      # it is another commit landing on `main` between the checkout and the
-      # push -- and a rebase of an append onto a newer append is exactly the
-      # merge git does well. A second rejection means something else is going
-      # on; it warns and stops rather than looping.
+      # One commit per merge, whatever it appended, on the ledger branch. The
+      # push is retried exactly once, after a rebase, because the only thing
+      # that should reject it is another ledger run landing between this one's
+      # fetch and its push -- and a rebase of an append onto a newer append is
+      # exactly the merge git does well. A second rejection means something
+      # else is going on; it warns and stops rather than looping.
+      #
+      # Every exit path sets `recorded`, because a run that loses rows still
+      # leaves this job green on purpose (property 1 in the header) and the
+      # Summary step is what makes that visible rather than buried.
       - name: Commit and Push
+        id: push
         if: steps.append.outputs.appended != '' && steps.append.outputs.appended != '0'
         shell: bash
         env:
           PR: ${{ steps.pr.outputs.number }}
           APPENDED: ${{ steps.append.outputs.appended }}
+          LEDGER_DIR: ${{ runner.temp }}/ledger
         run: |
           set -uo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          lost() {
+            echo "::warning::$1"
+            echo "recorded=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          # Identity and credentials were set on this repository when it was
+          # materialised; this step only has to get into it.
+          cd "$LEDGER_DIR" || lost "Cannot enter $LEDGER_DIR. Rows for pull request #$PR are not recorded."
 
           if ! git add -- "$LEDGER"; then
-            echo "::warning::Could not stage $LEDGER. The ledger is unchanged."
-            exit 0
+            lost "Could not stage $LEDGER. Rows for pull request #$PR are not recorded."
           fi
 
           if git diff --cached --quiet -- "$LEDGER"; then
-            echo "::warning::$APPENDED row(s) were appended but $LEDGER has no" \
-                 "staged change. Nothing is committed."
-            exit 0
+            lost "$APPENDED row(s) were appended but $LEDGER has no staged change. Rows for pull request #$PR are not recorded."
           fi
 
-          if ! git commit -m "chore(ledger): record merge of pull request #$PR"; then
-            echo "::warning::Could not commit the ledger rows for pull request" \
-                 "#$PR. The ledger is unchanged on main."
-            exit 0
+          if ! git commit -q -m "chore(ledger): record merge of pull request #$PR"; then
+            lost "Could not commit the ledger rows for pull request #$PR."
           fi
 
-          if git push origin HEAD:main; then
-            echo "Recorded $APPENDED row(s) for pull request #$PR."
+          if git push -q origin "HEAD:refs/heads/$LEDGER_BRANCH"; then
+            echo "Recorded $APPENDED row(s) for pull request #$PR on '$LEDGER_BRANCH'."
+            echo "recorded=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "::warning::Pushing the ledger commit for pull request #$PR was" \
-               "rejected. Rebasing onto main and retrying once."
+               "rejected. Rebasing onto '$LEDGER_BRANCH' and retrying once."
 
-          if ! git pull --rebase origin main; then
+          if ! git fetch -q origin "$LEDGER_BRANCH"; then
+            lost "Could not re-fetch '$LEDGER_BRANCH' to rebase onto. Rows for pull request #$PR are not recorded."
+          fi
+
+          if ! git rebase FETCH_HEAD; then
             # A conflict leaves a rebase in progress. The runner is thrown
             # away either way, but an abandoned rebase makes every `git`
             # command after it report on the rebase rather than on the
             # repository, which is a confusing thing to leave in a log.
             git rebase --abort || true
-
-            echo "::warning::Could not rebase the ledger commit for pull" \
-                 "request #$PR onto main. The rows are not recorded; replay" \
-                 "this workflow to record them."
-            exit 0
+            lost "Could not rebase the ledger commit for pull request #$PR onto '$LEDGER_BRANCH'. Rows are not recorded."
           fi
 
-          if ! git push origin HEAD:main; then
-            echo "::warning::The ledger commit for pull request #$PR was" \
-                 "rejected twice. The rows are not recorded; replay this" \
-                 "workflow to record them."
-            exit 0
+          if ! git push -q origin "HEAD:refs/heads/$LEDGER_BRANCH"; then
+            lost "The ledger commit for pull request #$PR was rejected twice. Rows are not recorded."
           fi
 
           echo "Recorded $APPENDED row(s) for pull request #$PR after a rebase."
+          echo "recorded=true" >> "$GITHUB_OUTPUT"
 
+      # This job stays green even when it loses rows, so the summary is the
+      # only place the loss is stated plainly. A run that appended rows but
+      # could not push them says so under its own heading, names the pull
+      # request, and gives the exact replay that recovers it -- the thing
+      # that was missing when a rejected push was one `::warning::` among the
+      # log's ordinary chatter.
       - name: Summary
         if: always()
         shell: bash
@@ -411,14 +548,43 @@ jobs:
           PR: ${{ steps.pr.outputs.number }}
           APPENDED: ${{ steps.append.outputs.appended }}
           SHA: ${{ inputs.sha || github.sha }}
+          BRANCH_OK: ${{ steps.branch.outputs.ok }}
+          CREATED: ${{ steps.branch.outputs.created }}
+          RECORDED: ${{ steps.push.outputs.recorded }}
         run: |
           {
             echo "## Run Ledger"
             echo
             if [ -z "$PR" ]; then
               echo "No merged pull request for \`$SHA\`. Nothing recorded."
+            elif [ "$BRANCH_OK" = "false" ]; then
+              echo "### :rotating_light: Rows not recorded"
+              echo
+              echo "Branch \`$LEDGER_BRANCH\` could not be prepared, so pull" \
+                   "request #$PR's rows were never written. Replay:"
+              echo
+              echo '```'
+              echo "gh workflow run run-ledger.yml -f sha=$SHA"
+              echo '```'
+            elif [ -n "$APPENDED" ] && [ "$APPENDED" != "0" ] \
+                 && [ "$RECORDED" != "true" ]; then
+              echo "### :rotating_light: Rows not recorded"
+              echo
+              echo "Pull request #$PR: $APPENDED row(s) were built but could" \
+                   "not be pushed to \`$LEDGER_BRANCH\`. The ledger is" \
+                   "missing them. Replay:"
+              echo
+              echo '```'
+              echo "gh workflow run run-ledger.yml -f sha=$SHA"
+              echo '```'
             else
               echo "Pull request #$PR: ${APPENDED:-0} row(s) appended to" \
-                   "\`$LEDGER\`."
+                   "\`$LEDGER\` on branch \`$LEDGER_BRANCH\`."
+              if [ "$CREATED" = "true" ]; then
+                echo
+                echo ":warning: Branch \`$LEDGER_BRANCH\` did not exist and was" \
+                     "created with a header only. Any rows it held before are" \
+                     "not recovered by this."
+              fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
