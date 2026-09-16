@@ -7166,12 +7166,12 @@ mkdir -p "$(dirname "$counter_file")"
 if [ ! -f "$counter_file" ]; then
     echo "0" > "$counter_file"
 fi
-attempt=$(<"$counter_file")
+read attempt < "$counter_file" || attempt=0
 echo $((attempt + 1)) > "$counter_file"
 
 # First gh call (any operation): fail with exit 42
 # Second gh call onwards: succeed
-if [ "$attempt" = "0" ]; then
+if [ "$attempt" -eq 0 ]; then
     # First attempt always fails
     exit 42
 fi
@@ -7243,7 +7243,7 @@ mkdir -p "$(dirname "$counter_file")"
 if [ ! -f "$counter_file" ]; then
     echo "0" > "$counter_file"
 fi
-attempt=$(<"$counter_file")
+read attempt < "$counter_file" || attempt=0
 echo $((attempt + 1)) > "$counter_file"
 # Always fail, regardless of operation
 exit 42
