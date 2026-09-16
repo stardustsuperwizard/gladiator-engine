@@ -7200,6 +7200,8 @@ comment_file = case_dir / "comment.md"
 comment_file.write_text("Comment body\n", encoding="utf-8")
 step_summary = case_dir / "step_summary"
 step_summary.write_text("", encoding="utf-8")
+github_output = case_dir / "github_output"
+github_output.write_text("", encoding="utf-8")
 
 result = subprocess.run(
     ["bash", str(execute_action)],
@@ -7209,6 +7211,7 @@ result = subprocess.run(
     env={
         "RUNNER_TEMP": str(case_dir),
         "GITHUB_STEP_SUMMARY": str(step_summary),
+        "GITHUB_OUTPUT": str(github_output),
         "ACTION": "open",
         "REASON": "test reason",
         "TITLE": "Test Issue",
@@ -7263,6 +7266,8 @@ comment_file_fail = case_dir_fail / "comment.md"
 comment_file_fail.write_text("Comment body\n", encoding="utf-8")
 step_summary_fail = case_dir_fail / "step_summary"
 step_summary_fail.write_text("", encoding="utf-8")
+github_output_fail = case_dir_fail / "github_output"
+github_output_fail.write_text("", encoding="utf-8")
 
 result_fail = subprocess.run(
     ["bash", str(execute_action)],
@@ -7272,6 +7277,7 @@ result_fail = subprocess.run(
     env={
         "RUNNER_TEMP": str(case_dir_fail),
         "GITHUB_STEP_SUMMARY": str(step_summary_fail),
+        "GITHUB_OUTPUT": str(github_output_fail),
         "ACTION": "open",
         "REASON": "test failure reason",
         "TITLE": "Test Issue",
