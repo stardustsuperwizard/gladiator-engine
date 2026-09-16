@@ -23,8 +23,8 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: "Run ID to escalate (defaults to latest ci.yml run on main)"
-        required: false
+        description: "Run ID to escalate (required for manual dispatch)"
+        required: true
         type: string
 
 permissions:
@@ -131,6 +131,10 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
             > "$RUNNER_TEMP/run.json"
 
+          # Extract and output the head SHA for use in Summary step
+          head_sha=$(jq -r '.head_sha' "$RUNNER_TEMP/run.json")
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+
       - name: Fetch Run Jobs
         if: steps.check-event.outputs.proceed == 'true'
         shell: bash
@@ -229,6 +233,7 @@ jobs:
           ACTION: ${{ steps.decide.outputs.action }}
           REASON: ${{ steps.decide.outputs.reason }}
           TITLE: ${{ steps.decide.outputs.title }}
+          HEAD_SHA: ${{ steps.fetch-run.outputs.head_sha }}
         run: |
           set -euo pipefail
 
@@ -294,6 +299,7 @@ jobs:
                 exit 1
               fi
 
+              echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
               echo "Opened #$ISSUE_NUMBER"
               ;;
 
@@ -368,6 +374,7 @@ jobs:
                 exit 1
               fi
 
+              echo "issue_number=$NUMBER" >> "$GITHUB_OUTPUT"
               echo "Updated #$NUMBER"
               ;;
 
@@ -433,6 +440,7 @@ jobs:
                 exit 1
               fi
 
+              echo "issue_number=$NUMBER" >> "$GITHUB_OUTPUT"
               echo "Closed #$NUMBER"
               ;;
 
@@ -459,6 +467,8 @@ jobs:
           ACTION: ${{ steps.decide.outputs.action }}
           REASON: ${{ steps.decide.outputs.reason }}
           TITLE: ${{ steps.decide.outputs.title }}
+          HEAD_SHA: ${{ steps.fetch-run.outputs.head_sha }}
+          ISSUE_NUMBER: ${{ steps.execute.outputs.issue_number }}
         run: |
           # Only write to summary if Execute Action didn't already (i.e., on success)
           if [ ! -s "$GITHUB_STEP_SUMMARY" ] || ! grep -q "Red Main Escalation" "$GITHUB_STEP_SUMMARY"; then
@@ -466,6 +476,8 @@ jobs:
               echo "## Red Main Escalation"
               echo
               echo "Action: $ACTION"
+              [ -n "$HEAD_SHA" ] && echo "Commit: $HEAD_SHA"
+              [ -n "$ISSUE_NUMBER" ] && echo "Issue: #$ISSUE_NUMBER"
               [ -n "$REASON" ] && echo "Reason: $REASON"
               [ -n "$TITLE" ] && echo "Title: $TITLE"
             } >> "$GITHUB_STEP_SUMMARY"

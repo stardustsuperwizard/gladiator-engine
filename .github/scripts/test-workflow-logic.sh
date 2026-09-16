@@ -6996,9 +6996,10 @@ check(
 check(
     "permissions:" in wf_text
     and "contents: read" in wf_text
-    and "issues: write" in wf_text,
-    "red-main.yml has exactly contents: read and issues: write permissions",
-    "permissions check"
+    and "issues: write" in wf_text
+    and not re.search(r"^\s+(pull-requests|checks|actions|statuses|deployments|packages|code-scanning|security-events|dependabot-alerts|dependabot-updates):", wf_text, re.MULTILINE),
+    "red-main.yml has exactly contents: read and issues: write permissions (no others)",
+    "permissions check found extra permissions"
 )
 
 check(
@@ -7017,6 +7018,12 @@ check(
     "run-agent-session" not in wf_text,
     "red-main.yml does not invoke run-agent-session",
     "run-agent-session found"
+)
+
+check(
+    "claude" not in wf_text and "copilot" not in wf_text,
+    "red-main.yml does not invoke model CLI (claude/copilot)",
+    "model CLI invocation found"
 )
 
 check(
@@ -7090,56 +7097,11 @@ determine_gates = wf.step_source(CI_WF, "Determine Gates", shell="bash")
 step = part_dir / "determine-gates.sh"
 step.write_text(determine_gates, encoding="utf-8")
 
-def run_step(env_overrides, cwd):
-    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
-    output_file = case / "github_output"
-    output_file.write_text("", encoding="utf-8")
-
-    env = dict(os.environ)
-    env.update({"RUNNER_TEMP": str(case), "GITHUB_OUTPUT": str(output_file)})
-    env.update(env_overrides)
-
-    result = subprocess.run(
-        ["bash", str(step)],
-        capture_output=True,
-        text=True,
-        cwd=str(cwd),
-        env=env,
-    )
-    outputs = dict(
-        line.split("=", 1)
-        for line in output_file.read_text().splitlines()
-        if "=" in line
-    )
-    return result, outputs
-
-bin_dir = part_dir / "bin"
-bin_dir.mkdir()
-gh_stub = bin_dir / "gh"
-gh_stub.write_text(
-    "#!/usr/bin/env bash\nset -euo pipefail\ncat \"$GH_STUB_FILES\"\n",
-    encoding="utf-8",
-)
-gh_stub.chmod(0o755)
-
-def run_pull_request(files):
-    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
-    files_path = case / "files.txt"
-    files_path.write_text("\n".join(files) + "\n", encoding="utf-8")
-    return run_step(
-        {
-            "EVENT_NAME": "pull_request",
-            "PR_NUMBER": "1",
-            "REPOSITORY": "o/r",
-            "GH_TOKEN": "stub-token",
-            "GH_STUB_FILES": str(files_path),
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        },
-        cwd=part_dir,
-    )
+# Reuse TestHarness from shared module instead of duplicating Part 13's harness
+harness = wf.TestHarness(part_dir)
 
 # Test: PR touching only red-main files should gate correctly
-result, outputs = run_pull_request([".github/workflows/red-main.yml", ".github/scripts/red-main.py"])
+result, outputs = harness.run_pull_request(step, [".github/workflows/red-main.yml", ".github/scripts/red-main.py"], cwd=part_dir)
 check(
     result.returncode == 0
     and outputs.get("godot") == "false"
@@ -7204,13 +7166,15 @@ if [ ! -f "$counter_file" ]; then
 fi
 attempt=$(<"$counter_file")
 echo $((attempt + 1)) > "$counter_file"
-# On the first gh call in each action, print the issue URL; on comment/close/edit, succeed silently
+# First gh call (any operation): fail with exit 42
+# Second gh call: succeed
+if [ $attempt -lt 1 ]; then
+    # First attempt always fails
+    exit 42
+fi
+# Second attempt onwards: succeed
 if [[ "$1" == "issue" && "$2" == "create" ]]; then
     echo "https://github.com/test/repo/issues/123"
-    exit 0
-fi
-if [ $attempt -lt 1 ]; then
-    exit 42
 fi
 exit 0
 """,
@@ -7260,6 +7224,72 @@ check(
     result.returncode == 0 and attempts >= 1,
     "Execute Action with fail-then-succeed stub: retries, exits 0",
     f"exit {result.returncode}, attempts={attempts}, stderr={result.stderr!r}"
+)
+
+# Test: Execute Action with always-failing stub
+# Verify exactly 2 attempts, non-zero exit, error annotation, and reason in summary
+def create_always_fail_stub(stub_path, counter_file):
+    stub_path.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+counter_file="{counter_file}"
+mkdir -p "$(dirname "$counter_file")"
+if [ ! -f "$counter_file" ]; then
+    echo "0" > "$counter_file"
+fi
+attempt=$(<"$counter_file")
+echo $((attempt + 1)) > "$counter_file"
+# Always fail, regardless of operation
+exit 42
+""",
+        encoding="utf-8",
+    )
+    stub_path.chmod(0o755)
+
+case_dir_fail = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+counter_file_fail = case_dir_fail / "attempts"
+bin_subdir_fail = case_dir_fail / "bin"
+bin_subdir_fail.mkdir()
+
+gh_stub_fail_always = bin_subdir_fail / "gh"
+create_always_fail_stub(gh_stub_fail_always, counter_file_fail)
+
+# Create mock input files for Execute Action
+body_file_fail = case_dir_fail / "body.md"
+body_file_fail.write_text("Issue body\n", encoding="utf-8")
+comment_file_fail = case_dir_fail / "comment.md"
+comment_file_fail.write_text("Comment body\n", encoding="utf-8")
+step_summary_fail = case_dir_fail / "step_summary"
+step_summary_fail.write_text("", encoding="utf-8")
+
+result_fail = subprocess.run(
+    ["bash", str(execute_action)],
+    capture_output=True,
+    text=True,
+    cwd=str(case_dir_fail),
+    env={
+        "RUNNER_TEMP": str(case_dir_fail),
+        "GITHUB_STEP_SUMMARY": str(step_summary_fail),
+        "ACTION": "open",
+        "REASON": "test failure reason",
+        "TITLE": "Test Issue",
+        "GITHUB_REPOSITORY": "test/repo",
+        "RED_MAIN_LABEL": "red-main",
+        "PATH": f"{bin_subdir_fail}:{os.environ.get('PATH', '')}",
+        "GH_TOKEN": "test-token",
+    },
+)
+
+# With always-fail stub, should exit non-zero with exactly 2 attempts
+attempts_fail = int(counter_file_fail.read_text().strip())
+summary_content = step_summary_fail.read_text()
+has_error = "::error::" in result_fail.stderr
+has_reason_in_summary = "test failure reason" in summary_content
+
+check(
+    result_fail.returncode != 0 and attempts_fail == 2 and has_error and has_reason_in_summary,
+    "Execute Action with always-fail stub: exactly 2 attempts, non-zero exit, error annotation, reason in summary",
+    f"exit {result_fail.returncode}, attempts={attempts_fail}, has_error={has_error}, has_reason={has_reason_in_summary}, summary={summary_content!r}"
 )
 
 sys.exit(1 if failures else 0)
