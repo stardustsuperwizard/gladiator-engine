@@ -104,6 +104,8 @@ CardProfile {                       // one per match; every card-count dial
   abilityHandCap                     // 3  — §10 step 4 refills up to this
   mulligansAllowed                   // 1  — §4 step 2
   discardCap                         // null = no limit — §10 step 3
+  emptyDeckRule                      // none — what drawing from an empty
+                                     //   deck does (§4)
   rollOffLoserBonusDraw              // 1  — §5.2's compensation
   focusBonusDraw                     // 1  — §6's Focus/Mulligan
   scoringDeckSize                    // scoring-deck module only (§11.4);
@@ -270,11 +272,19 @@ End Segment runs steps 1–2 only (§10) and does not refill — reaches 9 befor
 Focus draws anything. Treat it as a placeholder with headroom, and reprice it
 once there is a card pool.
 
-**Drawing from an empty deck draws nothing.** Running out is not a loss
-condition and there is no reshuffle of the discard pile. This is stated so that
-a low authored `abilityDeckSize` has a defined outcome rather than an invented
-one; if decking out should ever *do* something, that is a rule to add here
-deliberately, not a behaviour to discover in a resolver.
+**What a draw from an empty deck does is `emptyDeckRule`, and the MVP value is
+`none`:** the draw yields nothing, the deck stays empty, running out is not a
+loss condition, and there is no reshuffle. Play continues exactly as if the
+draw had not been requested.
+
+It is a dial rather than a fixed rule because a tunable `abilityDeckSize` makes
+running out reachable on purpose, and the alternatives are real: reshuffling
+the discard pile, a penalty on the drawing player, or decking out as a loss
+condition. **None of those are specified here and none are rules until they
+are** — `none` is the only value this document defines, and a match authored
+with another is asking for a rule that does not exist yet. The dial exists so
+that adding one is an authored choice rather than a behaviour discovered in a
+resolver.
 
 ---
 

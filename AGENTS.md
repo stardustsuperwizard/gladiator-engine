@@ -114,8 +114,10 @@ starting hand, hand cap, mulligans, the discard cap and both bonus draws are
 §3.1's `CardProfile`, with MVP values in §4 (a 15-card ability deck, hand of 3,
 cap of 3). Read them from data; do not write a literal 3 into a draw routine.
 The ability deck is **core**, not one of §11.4's optional modules — only the
-scoring deck is optional. Spec §4 also settles what an empty deck does: drawing
-from one draws nothing, and decking out is not a loss condition.
+scoring deck is optional. Spec §4 also settles what an empty deck does, and makes
+it a dial too: `emptyDeckRule`, whose only defined value is `none` — the draw
+yields nothing, there is no reshuffle, and decking out is not a loss
+condition.
 
 **Before the card system — one constraint, revised 2026-09-15.** The card
 schema must be able to load content **served from outside this repository**,
