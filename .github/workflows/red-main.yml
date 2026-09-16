@@ -96,32 +96,11 @@ jobs:
       - name: Check Trigger Event
         id: check-event
         shell: bash
-        env:
-          EVENT: ${{ github.event.workflow_run.event }}
-          DISPATCH_RUN_ID: ${{ inputs.run_id }}
         run: |
-          set -euo pipefail
-
-          if [ -n "$DISPATCH_RUN_ID" ]; then
-            # Manual dispatch always runs, regardless of the original event.
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$EVENT" = "push" ]; then
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "## Red Main"
-              echo
-              echo "Skipped: triggering event is '$EVENT', not 'push'"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
 
       - name: Fetch Run
         id: fetch-run
-        if: steps.check-event.outputs.proceed == 'true'
         shell: bash
         env:
           RUN_ID: ${{ steps.run-id.outputs.run_id }}
@@ -136,7 +115,6 @@ jobs:
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
       - name: Fetch Run Jobs
-        if: steps.check-event.outputs.proceed == 'true'
         shell: bash
         env:
           RUN_ID: ${{ steps.run-id.outputs.run_id }}
@@ -147,7 +125,6 @@ jobs:
             > "$RUNNER_TEMP/jobs.json"
 
       - name: Fetch Head Commit
-        if: steps.check-event.outputs.proceed == 'true'
         shell: bash
         env:
           RUN_ID: ${{ steps.run-id.outputs.run_id }}
@@ -181,7 +158,6 @@ jobs:
             > "$RUNNER_TEMP/commit.json"
 
       - name: Fetch Open Red-Main Issue
-        if: steps.check-event.outputs.proceed == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -204,7 +180,6 @@ jobs:
 
       - name: Decide Action
         id: decide
-        if: steps.check-event.outputs.proceed == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -227,7 +202,6 @@ jobs:
 
       - name: Execute Action
         id: execute
-        if: steps.check-event.outputs.proceed == 'true'
         shell: bash
         env:
           ACTION: ${{ steps.decide.outputs.action }}
@@ -479,7 +453,7 @@ jobs:
           esac
 
       - name: Summary
-        if: always() && steps.check-event.outputs.proceed == 'true'
+        if: always()
         shell: bash
         env:
           ACTION: ${{ steps.decide.outputs.action }}
