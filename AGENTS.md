@@ -119,6 +119,59 @@ it a dial too: `emptyDeckRule`, whose only defined value is `none` — the draw
 yields nothing, there is no reshuffle, and decking out is not a loss
 condition.
 
+**Before the card system — cards outrank the baseline rules, and there is
+nowhere to put that yet.** Owner decision, 2026-09-16: the rules in the spec
+are the **baseline**, and a card may break them. The worked example is a
+`+1 Health` attachment taking a fighter built with 5 Health to 6 — legal, and
+the ceiling in §3.2 does not stop it. Eventually a card should be able to break
+any rule the code can express.
+
+Two halves of that already work, and one does not.
+
+*Already true, do not "fix" it.* `ConstructionBudget` will not object to a
+fighter at 6 Health, because it never looks: its own docstring says "no
+validation at runtime, no gates, no refusals... nothing in `AttackAction`,
+`DicePool` or any resolution path may call it," and §3.2 says "nothing in §7
+reads the budget." It is an **authoring** rule that checks templates, not a
+runtime clamp. Likewise `Fighter.apply_damage()` deliberately does not clamp
+the counter at Health — a counter above health is legitimate state. Neither is
+an oversight; both are the same principle arriving early.
+
+*Not true yet.* **There is nowhere to store a modified stat.** `Fighter` holds
+the mutable half — position, damage counter, status flags, owner — over a
+**shared** `FighterTemplate`, and all six stat accessors are read-throughs
+(`func health() -> int: return _template.health`). Two loads of one `.tres`
+hand back the same object, so writing `_template.health` would change every
+fighter built from that template, and `fighter.gd` explicitly rejects
+`template.duplicate()` as the way out. So a card that grants +1 Health today
+has no legal place to put the +1.
+
+Four things whoever builds this has to get right:
+
+- **Add a modifier layer; do not copy the stats onto `Fighter`.** Effective
+  stat = the template's base plus the fighter's own modifiers. That keeps
+  retuning a `.tres` moving every fighter's base, which is the property the
+  read-through exists to protect, while letting a card diverge the effective
+  value.
+- **`is_vulnerable()` and `is_defeated()` read `_template.health` directly.**
+  They must read the effective value instead, or a `+1 Health` card changes a
+  number nobody consults and the card does nothing — which is the entire point
+  of the card.
+- **Modifiers are mutable state, so they must serialize.** `to_dict()` carries
+  the mutable half only and deliberately omits stats; `from_dict()` takes the
+  template as an argument. A modifier that is not in the serialized form does
+  not survive save/load and never reaches a client (§3.4,
+  `docs/headless-authority-and-client-sdk.md`).
+- **The rule the card breaks is still the rule.** Breaking a baseline rule is a
+  card doing its job; a resolver quietly disagreeing with the spec is a bug.
+  The difference has to stay visible in the code, not become a general licence
+  to skip validation.
+
+The spec does not yet state the baseline-versus-card principle as a rule,
+because which rules a card may break is not yet specifiable. That statement
+belongs in §4 or a card section when the card system's own rules are written,
+as an owner decision with a dated note like any other.
+
 **Before the card system — one constraint, revised 2026-09-15.** The card
 schema must be able to load content **served from outside this repository**,
 not only from a `res://rules/cards/*.tres` path compiled into the build. A card
