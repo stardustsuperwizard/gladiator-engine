@@ -191,6 +191,12 @@ note above, and almost none of it was visible anywhere else in this file:
   `.github/actions/setup-godot`. No call site restates it, and Part 7 of
   `.github/scripts/test-workflow-logic.sh` fails a *second* literal even when
   it matches today's value. Change the version there and nowhere else.
+- **The release stage.** `.github/workflows/release.yml`, dispatched by hand
+  against a commit and version, decides releasability via
+  `.github/scripts/release-preflight.py` and publishes the artifact a `ci.yml`
+  run already exported and smoke-ran. Releasing is manual on purpose — see
+  `docs/RELEASING.md` — and nothing else in this repository publishes a
+  release.
 
 **The spec is the authority on mechanics, and an implementation session does
 not redesign them.** Most of the rules are inherited from a settled tabletop
