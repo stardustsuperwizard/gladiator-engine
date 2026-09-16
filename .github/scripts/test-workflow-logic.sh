@@ -247,6 +247,33 @@ class TestHarness:
             },
             cwd=case,
         )
+
+    def make_repo(self):
+        """Create a temporary git repository for testing push events."""
+        import subprocess
+        repo_dir = pathlib.Path(tempfile.mkdtemp(dir=self.part_dir))
+        subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_dir, check=True)
+        return repo_dir
+
+    def commit(self, repo_dir, files, message):
+        """Add files and commit to a test repository."""
+        import subprocess
+        for name, content in files.items():
+            path = repo_dir / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo_dir, check=True)
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
 EXTRACTOR
 
 # ---------------------------------------------------------------------------
