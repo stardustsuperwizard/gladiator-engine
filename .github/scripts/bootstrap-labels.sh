@@ -79,6 +79,7 @@ characterization-test|FBCA04|Human approval: this pull request's new tests legit
 dashboard|5319E7|The control-plane dashboard Issue
 dashboard:update|5319E7|Request a dashboard re-render
 pipeline-report|5319E7|The pinned weekly pipeline-report Issue
+red-main|B23F00|main is red: escalation Issue from ci.yml
 LABELS
 )
 

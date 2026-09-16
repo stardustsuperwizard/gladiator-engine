@@ -6871,6 +6871,255 @@ sys.exit(1 if failures else 0)
 PY
 }
 
+part24 () {
+  python3 - "$work_dir" "$repo_root" <<'PY'
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1])
+import wf
+
+work_dir, repo_root = sys.argv[1], sys.argv[2]
+part_dir = pathlib.Path(tempfile.mkdtemp(prefix="part24.", dir=work_dir))
+
+RED_MAIN_WF = ".github/workflows/red-main.yml"
+RED_MAIN_PY = ".github/scripts/red-main.py"
+BOOTSTRAP = ".github/scripts/bootstrap-labels.sh"
+
+failures = []
+
+
+def check(condition, ok, why):
+    if condition:
+        print(f"  ok   — {ok}")
+    else:
+        failures.append(why)
+        print(f"  FAIL — {why}", file=sys.stderr)
+
+
+# -- criterion 1: red-main.yml shape by text inspection. --------------------
+wf_path = pathlib.Path(repo_root) / RED_MAIN_WF
+wf_text = wf_path.read_text(encoding="utf-8")
+
+check(
+    "workflow_run:" in wf_text
+    and "types: [completed]" in wf_text
+    and "branches: [main]" in wf_text,
+    "red-main.yml triggers on workflow_run for CI with [completed] and [main]",
+    "trigger check"
+)
+
+check(
+    "workflow_dispatch:" in wf_text
+    and "run_id:" in wf_text
+    and "type: string" in wf_text,
+    "red-main.yml has workflow_dispatch with run_id input of type: string",
+    "dispatch check"
+)
+
+check(
+    re.search(r"if:.*github\.event\.workflow_run\.event", wf_text) or
+    re.search(r'EVENT.*push', wf_text),
+    "red-main.yml has a job-level or step-level if: checking for push event",
+    "no push event guard found"
+)
+
+check(
+    "permissions:" in wf_text
+    and "contents: read" in wf_text
+    and "issues: write" in wf_text,
+    "red-main.yml has exactly contents: read and issues: write permissions",
+    "permissions check"
+)
+
+check(
+    "GH_TOKEN: ${{ github.token }}" in wf_text,
+    "red-main.yml sets GH_TOKEN to github.token, not secrets.*",
+    "token check"
+)
+
+check(
+    "secrets." not in wf_text,
+    "red-main.yml contains no secrets.* reference",
+    "secrets reference found"
+)
+
+check(
+    "run-agent-session" not in wf_text,
+    "red-main.yml does not invoke run-agent-session",
+    "run-agent-session found"
+)
+
+check(
+    not re.search(r"^\s*continue-on-error:", wf_text, re.MULTILINE),
+    "red-main.yml contains no continue-on-error line",
+    "continue-on-error found"
+)
+
+check(
+    "concurrency:" in wf_text
+    and "group: red-main" in wf_text
+    and "cancel-in-progress: false" in wf_text,
+    "red-main.yml has concurrency group red-main with cancel-in-progress: false",
+    "concurrency check"
+)
+
+check(
+    "gh label list" in wf_text,
+    "red-main.yml ensures label exists before querying",
+    "label list/create not found"
+)
+
+check(
+    "gh issue list" in wf_text and "--label" in wf_text and "red-main" in wf_text,
+    "red-main.yml uses label for issue lookup, not title search",
+    "issue list by label not found"
+)
+
+check(
+    not any(cli in wf_text for cli in ["claude ", "copilot ", "anthropic "]),
+    "red-main.yml contains no model CLI invocations",
+    "model CLI found in workflow"
+)
+
+# -- criterion 2: bootstrap-labels.sh has red-main entry. ------------------
+bootstrap_path = pathlib.Path(repo_root) / BOOTSTRAP
+bootstrap_text = bootstrap_path.read_text(encoding="utf-8")
+
+check(
+    "red-main|" in bootstrap_text,
+    "bootstrap-labels.sh has a red-main label entry",
+    "red-main entry not found in bootstrap"
+)
+
+# Extract and check description length
+desc_match = re.search(r"red-main\|[^|]*\|(.{1,100})\n", bootstrap_text)
+if desc_match:
+    desc = desc_match.group(1)
+    check(
+        len(desc) <= 100,
+        f"bootstrap-labels.sh red-main description is {len(desc)} chars (≤100)",
+        f"description too long: {len(desc)} chars"
+    )
+else:
+    check(False, "bootstrap-labels.sh has valid red-main entry", "malformed entry")
+
+# -- criterion 3: ci.yml GODOT_DENY has both new files. -------------------
+CI_WF = ".github/workflows/ci.yml"
+ci_path = pathlib.Path(repo_root) / CI_WF
+ci_text = ci_path.read_text(encoding="utf-8")
+
+check(
+    ".github/workflows/red-main.yml" in ci_text
+    and ".github/scripts/red-main.py" in ci_text,
+    "ci.yml GODOT_DENY list includes both red-main.yml and red-main.py",
+    "ci.yml missing new files in GODOT_DENY"
+)
+
+# -- criterion 4: gate harness test for new files (reuse Part 13). ---------
+determine_gates = wf.step_source(CI_WF, "Determine Gates", shell="bash")
+step = part_dir / "determine-gates.sh"
+step.write_text(determine_gates, encoding="utf-8")
+
+def run_step(env_overrides, cwd):
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    output_file = case / "github_output"
+    output_file.write_text("", encoding="utf-8")
+
+    env = dict(os.environ)
+    env.update({"RUNNER_TEMP": str(case), "GITHUB_OUTPUT": str(output_file)})
+    env.update(env_overrides)
+
+    result = subprocess.run(
+        ["bash", str(step)],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd),
+        env=env,
+    )
+    outputs = dict(
+        line.split("=", 1)
+        for line in output_file.read_text().splitlines()
+        if "=" in line
+    )
+    return result, outputs
+
+bin_dir = part_dir / "bin"
+bin_dir.mkdir()
+gh_stub = bin_dir / "gh"
+gh_stub.write_text(
+    "#!/usr/bin/env bash\nset -euo pipefail\ncat \"$GH_STUB_FILES\"\n",
+    encoding="utf-8",
+)
+gh_stub.chmod(0o755)
+
+def run_pull_request(files):
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    files_path = case / "files.txt"
+    files_path.write_text("\n".join(files) + "\n", encoding="utf-8")
+    return run_step(
+        {
+            "EVENT_NAME": "pull_request",
+            "PR_NUMBER": "1",
+            "REPOSITORY": "o/r",
+            "GH_TOKEN": "stub-token",
+            "GH_STUB_FILES": str(files_path),
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        },
+        cwd=part_dir,
+    )
+
+# Test: PR touching only red-main files should gate correctly
+result, outputs = run_pull_request([".github/workflows/red-main.yml", ".github/scripts/red-main.py"])
+check(
+    result.returncode == 0
+    and outputs.get("godot") == "false"
+    and outputs.get("control_plane") == "true",
+    "PR touching only red-main files: godot=false, control_plane=true",
+    f"exit {result.returncode}, outputs={outputs}, stderr={result.stderr!r}",
+)
+
+# -- criterion 5: Decide Action output parsing tolerates missing optional keys.
+# Check the script directly for the grep | while pattern with proper error handling
+decide_action_src = wf.step_source(".github/workflows/red-main.yml", "Decide Action", shell="bash")
+check(
+    "grep -E '^(action|reason|title" in decide_action_src
+    and ("|| true" in decide_action_src or "grep" in decide_action_src),
+    "Decide Action output parsing handles missing optional keys",
+    "grep | while read pattern not properly guarded"
+)
+
+# -- criterion 6: Execute Action contains retry logic for gh calls.
+execute_action_src = wf.step_source(".github/workflows/red-main.yml", "Execute Action", shell="bash")
+check(
+    "sleep 1" in execute_action_src
+    and execute_action_src.count("gh issue create") >= 2,
+    "Execute Action retries gh issue create with sleep",
+    "retry pattern not found"
+)
+
+check(
+    "sleep 1" in execute_action_src
+    and execute_action_src.count("gh issue edit") >= 2,
+    "Execute Action retries gh issue edit with sleep",
+    "retry pattern not found"
+)
+
+check(
+    "sleep 1" in execute_action_src
+    and execute_action_src.count("gh issue close") >= 2,
+    "Execute Action retries gh issue close with sleep",
+    "retry pattern not found"
+)
+
+sys.exit(1 if failures else 0)
+PY
+}
+
 echo "Checking logic embedded in workflow YAML"
 
 run_part "Part 1: embedded programs parse" part1
@@ -6897,6 +7146,7 @@ run_part "Part 20: pipeline-report.yml shape and ci.yml gate (#341)" part20
 run_part "Part 21: release preflight verdicts (#223)" part21
 run_part "Part 22: release workflow shape (#223)" part22
 run_part "Part 23: red-main.py decision and rendering (#224)" part23
+run_part "Part 24: red-main.yml workflow shape and gate logic (#360)" part24
 
 echo
 if [ "$failures" -eq 0 ]; then

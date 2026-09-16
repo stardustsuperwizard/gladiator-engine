@@ -197,6 +197,14 @@ note above, and almost none of it was visible anywhere else in this file:
   run already exported and smoke-ran. Releasing is manual on purpose — see
   `docs/RELEASING.md` — and nothing else in this repository publishes a
   release.
+- **Main escalation.** `.github/workflows/red-main.yml` is triggered when
+  `ci.yml` completes on `main`: it fetches the run's state, calls
+  `.github/scripts/red-main.py` to decide the action (open/update/close/none),
+  and escalates a failing default branch by operating on the single
+  `red-main` Issue. Spends no AI credits, uses `GITHUB_TOKEN` only, and never
+  attempts to fix — it only reports state and tracks intervals. A failing
+  main is visible in GitHub's UI and available for human triage; the workflow
+  is a reporting and bookkeeping layer, never a decision maker.
 
 **The spec is the authority on mechanics, and an implementation session does
 not redesign them.** Most of the rules are inherited from a settled tabletop
