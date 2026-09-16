@@ -245,7 +245,7 @@ class TestHarness:
                 "GH_STUB_FILES": str(files_path),
                 "PATH": f"{self.bin_dir}:{os.environ['PATH']}",
             },
-            cwd=case,
+            cwd=cwd,
         )
 
     def make_repo(self):
@@ -7285,6 +7285,62 @@ check(
     and has_commit_in_summary,
     "Execute Action with always-fail stub: exactly 2 attempts, non-zero exit, error annotation, reason and commit in summary",
     f"exit {result_fail.returncode}, attempts={attempts_fail}, has_error={has_error}, has_reason={has_reason_in_summary}, has_commit={has_commit_in_summary}, summary={summary_content!r}"
+)
+
+# -- criterion 7 (cont.): the Summary step exits 0 for every action.
+# `shell: bash` runs `bash --noprofile --norc -e -o pipefail`, and a step's
+# exit status is its last command's. red-main.py prints `title=` on open and
+# update only, so a trailing `[ -n "$TITLE" ] && echo ...` returns 1 and fails
+# the step on every `none` and `close` -- that is, on every ordinary green push
+# to main, in the workflow whose whole job is to report a red one.
+summary_src = wf.step_source(".github/workflows/red-main.yml", "Summary", shell="bash")
+summary_step = part_dir / "summary.sh"
+summary_step.write_text(summary_src, encoding="utf-8")
+
+
+def run_summary(env_overrides):
+    case = pathlib.Path(tempfile.mkdtemp(dir=part_dir))
+    summary_file = case / "step_summary"
+    summary_file.write_text("", encoding="utf-8")
+
+    env = dict(os.environ)
+    env.update({"GITHUB_STEP_SUMMARY": str(summary_file), "HEAD_SHA": HEAD_SHA})
+    env.update(env_overrides)
+
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", str(summary_step)],
+        capture_output=True,
+        text=True,
+        cwd=str(case),
+        env=env,
+    )
+    return result, summary_file.read_text()
+
+
+for summary_action, summary_extra in (
+    ("none", {"REASON": "already-green"}),
+    ("close", {"REASON": "state-recovered", "ISSUE_NUMBER": "7"}),
+):
+    summary_env = {"ACTION": summary_action, "TITLE": "", "ISSUE_NUMBER": "", "REASON": ""}
+    summary_env.update(summary_extra)
+    result_summary, summary_text = run_summary(summary_env)
+    check(
+        result_summary.returncode == 0
+        and f"Action: {summary_action}" in summary_text
+        and f"Commit: {HEAD_SHA}" in summary_text,
+        f"Summary step with action={summary_action} and no title: exits 0, reports the action and commit",
+        f"exit {result_summary.returncode}, stderr={result_summary.stderr!r}, summary={summary_text!r}",
+    )
+
+result_summary, summary_text = run_summary(
+    {"ACTION": "open", "TITLE": "main is red", "ISSUE_NUMBER": "8", "REASON": "new-failure"}
+)
+check(
+    result_summary.returncode == 0
+    and "Title: main is red" in summary_text
+    and "Issue: #8" in summary_text,
+    "Summary step with action=open: exits 0 and reports the title and Issue",
+    f"exit {result_summary.returncode}, summary={summary_text!r}",
 )
 
 sys.exit(1 if failures else 0)

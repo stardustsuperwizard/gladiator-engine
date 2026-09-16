@@ -463,6 +463,12 @@ jobs:
               [ -n "$ISSUE_NUMBER" ] && echo "Issue: #$ISSUE_NUMBER"
               [ -n "${REASON:-}" ] && echo "Reason: ${REASON:-}"
               [ -n "$TITLE" ] && echo "Title: $TITLE"
+              # Load-bearing. Every line above is an AND-list that returns 1
+              # when its test fails, and the last command's status is the
+              # step's. `red-main.py` prints `title=` on open/update only, so
+              # without this terminator the step fails on every `none` and
+              # `close` -- that is, on every ordinary green push to main.
+              # part24 covers all three actions; keep new lines above it.
               true
             } >> "$GITHUB_STEP_SUMMARY"
           fi
