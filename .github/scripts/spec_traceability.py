@@ -22,10 +22,10 @@ def parse_sections(text: str) -> List[Dict[str, Any]]:
     sections = []
     current_section = None
 
-    # Pattern for headings: ## N. Title (top-level) or ### N.M Title (subsection)
-    # Top-level: ## N. Title
-    # Subsection: ### N.M Title (no period after subsection number)
-    section_pattern = re.compile(r'^(##|###)\s+(\d+(?:\.\d+)?)(?:\.)?\s+(.+)$')
+    # Pattern for headings: any markdown heading level (# through ####)
+    # matches ## N. Title (top-level) or ### N.M Title (subsection) or #### Title (unnumbered)
+    # This allows parse_sections to terminate a section at any heading level, not just numbered ones
+    section_pattern = re.compile(r'^#+\s+(?:(\d+(?:\.\d+)?)(?:\.)?\s+)?(.+)$')
 
     for line_no, line in enumerate(lines, start=1):
         match = section_pattern.match(line)
@@ -38,16 +38,20 @@ def parse_sections(text: str) -> List[Dict[str, Any]]:
                 )
                 sections.append(current_section)
 
-            # Start new section
-            section_id = match.group(2)
-            title = match.group(3)
-            current_section = {
-                'id': section_id,
-                'title': title,
-                'start_line': line_no,
-                'end_line': None,
-                'text': None
-            }
+            # Start new section only if this heading has a section number
+            section_id = match.group(1)  # Optional numbered section (e.g., "7.3")
+            if section_id is not None:
+                title = match.group(2)  # Title text
+                current_section = {
+                    'id': section_id,
+                    'title': title,
+                    'start_line': line_no,
+                    'end_line': None,
+                    'text': None
+                }
+            else:
+                # Unnumbered heading (like ####); closes previous section but doesn't start a new one
+                current_section = None
 
     # Save the last section
     if current_section is not None:
@@ -114,22 +118,21 @@ def load_index(path: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]
         # Validate id
         if not entry_id:
             errors.append({'type': 'missing_id', 'index': i, 'message': 'Entry missing "id"'})
-            continue
-
-        if not isinstance(entry_id, str) or not re.match(r'^TR-\d{4}$', entry_id):
+        elif not isinstance(entry_id, str) or not re.match(r'^TR-\d{4}$', entry_id):
             errors.append({
                 'type': 'invalid_id_format',
                 'id': entry_id,
                 'message': f'ID must match TR-NNNN: {entry_id}'
             })
 
-        if entry_id in seen_ids:
+        if entry_id and entry_id in seen_ids:
             errors.append({
                 'type': 'duplicate_id',
                 'id': entry_id,
                 'message': f'Duplicate ID: {entry_id}'
             })
-        seen_ids.add(entry_id)
+        if entry_id:
+            seen_ids.add(entry_id)
 
         # Validate section
         if not section or not isinstance(section, str):
@@ -138,16 +141,15 @@ def load_index(path: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]
                 'id': entry_id,
                 'message': 'Entry missing or invalid "section"'
             })
-            continue
-
-        # Validate section format (simple check - can be 1-12 or 1.1-1.8 etc)
-        if not re.match(r'^\d+(?:\.\d+)?$', section):
-            errors.append({
-                'type': 'invalid_section_format',
-                'id': entry_id,
-                'section': section,
-                'message': f'Section must be numeric like "7" or "7.3": {section}'
-            })
+        else:
+            # Validate section format (simple check - can be 1-12 or 1.1-1.8 etc)
+            if not re.match(r'^\d+(?:\.\d+)?$', section):
+                errors.append({
+                    'type': 'invalid_section_format',
+                    'id': entry_id,
+                    'section': section,
+                    'message': f'Section must be numeric like "7" or "7.3": {section}'
+                })
 
         # Validate status
         if not status or status not in ('active', 'unimplemented', 'superseded'):
@@ -168,21 +170,22 @@ def load_index(path: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]
                     'message': f'Active entry must have at least one module'
                 })
 
-            if isinstance(modules, list):
-                for module in modules:
-                    if not isinstance(module, str):
-                        errors.append({
-                            'type': 'invalid_module_type',
-                            'id': entry_id,
-                            'message': f'Module path must be string'
-                        })
-                    elif not module.startswith('rules/'):
-                        errors.append({
-                            'type': 'invalid_module_path',
-                            'id': entry_id,
-                            'module': module,
-                            'message': f'Module path must start with "rules/": {module}'
-                        })
+        # Validate module paths for all entries (not just active)
+        if isinstance(modules, list):
+            for module in modules:
+                if not isinstance(module, str):
+                    errors.append({
+                        'type': 'invalid_module_type',
+                        'id': entry_id,
+                        'message': f'Module path must be string'
+                    })
+                elif not module.startswith('rules/'):
+                    errors.append({
+                        'type': 'invalid_module_path',
+                        'id': entry_id,
+                        'module': module,
+                        'message': f'Module path must start with "rules/": {module}'
+                    })
 
         # Track active sections
         if status == 'active':
@@ -204,17 +207,26 @@ def resolve(section_id: str, index: Dict[str, Any]) -> Tuple[Optional[Dict[str, 
 
     Returns (entry, resolution_type) where resolution_type is "direct" or "inherited".
     Returns (None, "not_found") if neither the section nor its parent is in the index.
+    Prefers non-superseded entries when multiple entries share a section.
     """
     entries = index.get('entries', [])
 
-    # Look for direct entry
+    # Look for direct entry, preferring non-superseded
+    for entry in entries:
+        if entry.get('section') == section_id and entry.get('status') != 'superseded':
+            return entry, 'direct'
+    # Fallback to superseded entry if no non-superseded entry exists
     for entry in entries:
         if entry.get('section') == section_id:
             return entry, 'direct'
 
-    # Look for parent entry
+    # Look for parent entry, preferring non-superseded
     parent = parent_of(section_id)
     if parent:
+        for entry in entries:
+            if entry.get('section') == parent and entry.get('status') != 'superseded':
+                return entry, 'inherited'
+        # Fallback to superseded parent entry if no non-superseded entry exists
         for entry in entries:
             if entry.get('section') == parent:
                 return entry, 'inherited'

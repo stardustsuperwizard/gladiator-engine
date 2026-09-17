@@ -77,7 +77,7 @@
         "rules/tests/fighter_test.gd",
         "rules/tests/construction_budget_test.gd"
       ],
-      "note": "Six combat stats (move, save, health, range, attack, damage) and construction budget validation."
+      "note": "Combat stats and construction budget validation."
     },
     {
       "id": "TR-0006",
@@ -276,7 +276,7 @@
         "rules/tests/match_victory_test.gd",
         "rules/tests/game_mode_test.gd"
       ],
-      "note": "Match configuration (length, game mode, victory condition) and the MVP (3 rounds, Deathmatch, Standard Victory)."
+      "note": "Match configuration (length, game mode, victory condition)."
     },
     {
       "id": "TR-0020",
