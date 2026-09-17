@@ -72,7 +72,7 @@ build order and architecture live in
 Fighter {
   id, owner, position
   stats: { move, save, health, range, attack, damage }
-  statusFlags: [moved, charged, guarded, hazard, ...]
+  statusFlags: [moved, charged, guarded, activated, hazard, ...]
   damageCounter: int
   tags: [ ]            // used to gate which abilities/cards apply
   abilityTags: [ ]     // optional special rules usable during combat
@@ -115,11 +115,11 @@ CardProfile {                       // one per match; every card-count dial
 
 MatchProfile {                      // one per match; every dial in §11
   roundsPerMatch                     // 3; null = unbounded, see §11.1
-  turnsPerPlayer                     // §5.2 — Turns each player takes per round
   gameMode                           // what awards VP — MVP: deathmatch (§11.2)
   victoryCondition                   // when the match ends, who won — MVP: standard (§11.3)
   optionalModules: [ ]               // opt-in rules (§11.4); empty in the MVP
-}
+}                                    // a round's Turn allowance is derived
+                                     // from the board, not a dial here — §5.2
 
 Hex {
   coord, type: normal | starting | edge | blocked | hazard
@@ -359,7 +359,41 @@ react, and only during the Power Step.
 
 ### 5.2 The Combat Segment
 
-- Players alternate Turns until each has taken a set number of Turns (e.g. 4 each).
+> **Revised 2026-09-17. Owner decision.** This section previously said
+> "Players alternate Turns until each has taken a set number of Turns (e.g. 4
+> each)," and §3.1 modelled that count as an authored `turnsPerPlayer` dial.
+> The implementation was not diverging from that text — it authored a fixed
+> count of four Turns per player and ended the Segment once that many had
+> been taken, exactly what the sentence above asked for. This is a rules
+> fix, not a code defect.
+>
+> **A round's Turn allowance is now derived, not authored.** A player takes
+> as many Turns in a round as they have fighters on the board, and each
+> fighter may be acted with exactly once per round — it gains an "activated"
+> status flag (§3.1) the Turn it acts, and an already-activated fighter is not
+> eligible to act again until the flag clears at end of round (§9).
+> `turnsPerPlayer` is removed outright rather than kept as a derived value
+> with an authored override: §3.1's `MatchProfile` no longer lists it, and §11
+> does not carry it as a fifth dial.
+>
+> **The allowance is read off the board as it stands, not snapshotted when the
+> round began.** A fighter defeated before it has acted takes its Turn with
+> it: it can never be activated, so its owner's remaining Turns for the round
+> drop by one the instant it is removed (§9), not because anything decremented
+> a stored counter.
+>
+> **Turns are still taken in turn order, and a player with no unacted fighter
+> left is skipped.** Once the shorter roster is spent, every remaining Turn in
+> the round belongs to whichever player still has an unacted fighter — the
+> Combat Segment does not end just because one side ran out of fighters to
+> activate first, and it does not owe that player any further Turns once it
+> has.
+
+- A player takes as many Turns in a round as they have fighters on the board,
+  and each fighter may be acted with exactly once per round.
+- Turns are taken in turn order (below); a player with no unacted fighter left
+  is skipped, so once the shorter roster is spent, the round's remaining Turns
+  belong to whichever player still has one.
 - Turn order for round 1 is decided by roll-off; the loser draws `rollOffLoserBonusDraw` bonus ability cards as compensation — one, in the MVP (§3.1).
 - In later rounds, ties on the roll-off favor whichever player is currently behind on VP.
 
@@ -385,9 +419,9 @@ in the game, the two passes happen; the Step is empty, not skipped.
 **Every Action Step resolves exactly one core action, including one the active
 player did not choose.** A player who does not choose takes **Guard** (§6) on
 the first of their fighters, in deployment order (§4), that is eligible to
-Guard — not defeated, and not held by the lockout rule in §6. A player with no
-eligible fighter resolves nothing, and the Action Step ends having changed
-nothing.
+Guard — not defeated, has not already acted this round (§5.2), and not held by
+the lockout rule in §6. A player with no eligible fighter resolves nothing,
+and the Action Step ends having changed nothing.
 
 *Why the rule exists at all:* a Turn that can stall has no end, and a timed
 game needs a defined outcome when the clock runs out. What triggers "did not
@@ -409,7 +443,9 @@ farm it.
 
 ### 5.4 The End Segment
 
-Runs once both players have used all their Turns for the round. See §10.
+Runs once every fighter still on the board has been activated for the round —
+equivalently, once neither player has an unacted fighter left to take a Turn
+with (§5.2). See §10.
 
 ---
 
@@ -731,7 +767,7 @@ number.)*
 - Each fighter tracks a damage counter.
 - **Damaged** = counter > 0. **Vulnerable** = one more point of damage would defeat them. **Undamaged** = counter is 0.
 - **Defeated** when the counter reaches or exceeds Health: remove the fighter and its tokens from the board, discard its attachments, and award VP as the active game mode directs (§11.2). Under **Deathmatch** that is **1 VP** to the side opposing the defeated fighter's controller — regardless of what caused the defeat, so a fighter killed by a hazard or by its own side still pays the opponent.
-- Most per-round status flags (moved, charged, guarded, hazard-triggered) clear at end of round.
+- Most per-round status flags (moved, charged, guarded, activated, hazard-triggered) clear at end of round.
 - An "enhanced" state (better stats) can be defined to trigger on a fighter meeting a condition (e.g. successfully attacking from an enemy-held zone), and reverts on a separate condition if you want that nuance.
 
 ---
@@ -808,6 +844,13 @@ be mid-Turn. No End Segment runs for that round at all — go straight to §11.)
 >
 > The third tiebreaker's own 2026-09-08 revision is preserved below, since the
 > reasoning still governs the rule it produced.
+
+> **Revised 2026-09-17. Owner decision.** A round's Turn allowance is not a
+> fifth dial alongside the four below. §5.2 now derives it from how many
+> fighters each side currently has on the board, rather than authoring it
+> anywhere in this document — `turnsPerPlayer` is removed from §3.1's
+> `MatchProfile` outright, not kept as one more configured value. §11.1–§11.4's
+> four dials are otherwise unchanged.
 
 A match is configured before it starts, and the configuration is data, not
 code (§12). The four dials are independent: any length, under any mode, under

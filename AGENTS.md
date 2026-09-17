@@ -108,17 +108,20 @@ Then the card system, which unblocks Focus/Mulligan and §10's card steps.
 > building anything that reasons about how many Turns a round has, which
 > champion may act, or what a Turn is made of.
 >
-> - **#377 — Turns per round.** §5.2 currently says players alternate "until
->   each has taken a set number of Turns (e.g. 4 each)", and §3.1 models
->   `turnsPerPlayer` as an authored dial. The intended rule is **one Turn per
->   champion on the board, and each champion acts exactly once per round.** The
->   code is not diverging from the spec here — `resources/round/round_profile.tres`
->   authors `turns_per_player = 4` and `GameState.combat_segment_complete()`
->   ends the Segment at `turns_taken >= turns_per_player * _turn_order.size()`,
->   which is exactly what the document asks for. The misunderstanding reached
->   the spec first and the code second, so that epic revises §5.2 as its first
->   sub-task and the resolver follows. There is no activation concept anywhere
->   yet: `StatusFlags` carries only `MOVED`, `GUARDED` and `CHARGED`.
+> - **#377 — Turns per round.** §5.2 has been revised (2026-09-17): a player
+>   now takes as many Turns in a round as they have fighters on the board, and
+>   each fighter may be acted with exactly once per round — derived from the
+>   board as it stands, not snapshotted when the round began, so a fighter
+>   defeated before it acts takes its Turn with it and its owner's remaining
+>   Turns for the round drop by one. §3.1's `MatchProfile` no longer lists
+>   `turnsPerPlayer`, and §11 does not carry it as a fifth dial. The resolver
+>   has not caught up: `resources/round/round_profile.tres` still authors
+>   `turns_per_player = 4` and `GameState.combat_segment_complete()` still ends
+>   the Segment at `turns_taken >= turns_per_player * _turn_order.size()`, and
+>   there is still no activation concept anywhere — `StatusFlags` carries only
+>   `MOVED`, `GUARDED` and `CHARGED`. Adding an activation flag, deriving the
+>   allowance from the board, and refusing to activate an already-acted fighter
+>   is the remainder of the epic (#406, #407, #408).
 > - **#374 — a pre-action Power Step.** §5.3 currently makes a Turn an Action
 >   Step followed by a Power Step. That epic would make it **Pre-Action →
 >   Action → Post-Action**, so cards can be played before the action rather
