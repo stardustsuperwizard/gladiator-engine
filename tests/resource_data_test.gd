@@ -518,6 +518,12 @@ static func _test_round_profile_loads_correctly() -> Array[String]:
 			_expect(profile.game_mode == "deathmatch", 'game_mode must be "deathmatch"')
 		)
 		violations.append_array(
+			_expect(
+				GameMode.is_known(profile.game_mode),
+				"the authored game_mode must resolve in GameMode's registry"
+			)
+		)
+		violations.append_array(
 			_expect(profile.victory_condition == "standard", 'victory_condition must be "standard"')
 		)
 		violations.append_array(

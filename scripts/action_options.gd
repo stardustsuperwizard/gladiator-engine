@@ -48,10 +48,21 @@ var _templates: FighterTemplates
 ## calls no `load()` and knows no resource path.
 var _combat_profile: CombatProfile
 
+## Spec §11.2's active game mode, carried into every `AttackAction`/
+## `ChargeAction` this class builds. Configuration, not a rule: this class
+## decides no VP itself, and defaults to `Deathmatch.MODE_ID` so a caller that
+## does not yet configure a mode keeps the behaviour it already had.
+var _game_mode: String
 
-func _init(templates: FighterTemplates, combat_profile: CombatProfile) -> void:
+
+func _init(
+	templates: FighterTemplates,
+	combat_profile: CombatProfile,
+	game_mode: String = Deathmatch.MODE_ID
+) -> void:
 	_templates = templates
 	_combat_profile = combat_profile
+	_game_mode = game_mode
 
 
 ## `player_id`'s fighters, in `state.fighter_ids()` order, that are still the
@@ -117,7 +128,13 @@ func attack_targets(state: GameState, fighter_id: String) -> Array[String]:
 			continue
 
 		var candidate := AttackAction.new(
-			fighter_id, target_id, attacker_template, target_template, _combat_profile
+			fighter_id,
+			target_id,
+			attacker_template,
+			target_template,
+			_combat_profile,
+			false,
+			_game_mode
 		)
 		if candidate.refusal_from(state, attacker.position()).is_empty():
 			result.append(target_id)
@@ -146,7 +163,7 @@ func charge_destinations(
 		return []
 
 	var candidate := AttackAction.new(
-		fighter_id, target_id, actor_template, target_template, _combat_profile
+		fighter_id, target_id, actor_template, target_template, _combat_profile, false, _game_mode
 	)
 
 	var result: Array[Vector3i] = []
@@ -191,7 +208,7 @@ func attack(state: GameState, fighter_id: String, target_id: String) -> AttackAc
 		return null
 
 	return AttackAction.new(
-		fighter_id, target_id, attacker_template, target_template, _combat_profile
+		fighter_id, target_id, attacker_template, target_template, _combat_profile, false, _game_mode
 	)
 
 
@@ -217,7 +234,14 @@ func charge(
 		return null
 
 	return ChargeAction.new(
-		fighter_id, destination, target_id, actor_template, target_template, _combat_profile
+		fighter_id,
+		destination,
+		target_id,
+		actor_template,
+		target_template,
+		_combat_profile,
+		false,
+		_game_mode
 	)
 
 

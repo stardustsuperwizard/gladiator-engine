@@ -4,10 +4,10 @@
 ## This is `res://scenes/main.tscn`'s own script. It builds the match once in
 ## `_ready()` -- `MatchSetup.build()`, an `Authority` over that state, a
 ## `HotseatSession` over that `Authority`, and an `ActionOptions` over the same
-## templates and the authored `CombatProfile` -- and from then on it does three
-## things and no more: it turns a tap or a button press into a command, it
-## hands that command to `HotseatSession`, and it re-renders whatever comes
-## back.
+## templates, the authored `CombatProfile`, and the authored `RoundProfile`'s
+## `game_mode` -- and from then on it does three things and no more: it turns a
+## tap or a button press into a command, it hands that command to
+## `HotseatSession`, and it re-renders whatever comes back.
 ##
 ## **Every command goes out through `HotseatSession`.** `submit()`, `decline()`,
 ## `pass_power_step()` and `advance_segment()` are the only four ways anything
@@ -144,7 +144,9 @@ func _ready() -> void:
 	_templates = MatchSetup.templates()
 	_authority = Authority.new(MatchSetup.build())
 	_session = HotseatSession.new(_authority, _templates)
-	_options = ActionOptions.new(_templates, MatchSetup.combat_profile())
+	_options = ActionOptions.new(
+		_templates, MatchSetup.combat_profile(), MatchSetup.round_profile().game_mode
+	)
 
 	_board_view.hex_selected.connect(select_hex)
 	_move_button.pressed.connect(choose_action.bind(ACTION_MOVE))
