@@ -6,6 +6,15 @@
 ## clears every flag in `StatusFlags.round_level()` from every fighter still on
 ## the board, resets the Turn counter and advances `round_number`.
 ##
+## **Spec §10 step 6's final-round branch.** When `MatchVictory.has_ended()`
+## reports the match is over, the Segment runs only steps 1-2 (both card-blocked
+## comments, no-ops today) and returns success without clearing flags, resetting
+## `turns_taken`, or advancing `round_number`. Nothing is written to `state` and
+## nothing is read from `state.rng` on that path. The match-end question is asked
+## first, at the top of the sequence, before the incomplete-Segment check -- so an
+## elimination ends the match even mid-round, and a final-round Segment succeeds
+## whether the elimination has already happened or is discovered by `MatchVictory`.
+##
 ## **It is not a `TurnAction`, and it does not route through the gate.** This
 ## is the first state-mutating thing in the project that is not a player
 ## command, so the reasoning is written out here rather than left to be
@@ -69,39 +78,42 @@ extends RefCounted
 ## The Combat Segment is not over: at least one Turn of this round remains.
 const FAILURE_COMBAT_SEGMENT_INCOMPLETE := &"end_segment_combat_incomplete"
 
-## The match is already on its final round; there is no next round to begin.
-const FAILURE_FINAL_ROUND := &"end_segment_final_round"
-
 
 ## True when `run()` would do its work rather than refuse.
 ##
 ## The predicate and the reason are one implementation -- `_refusal()` -- so the
 ## two can never disagree about what is runnable.
-static func can_run(state: GameState) -> bool:
-	return _refusal(state).is_empty()
+static func can_run(state: GameState, profile: RoundProfile) -> bool:
+	return _refusal(state, profile).is_empty()
 
 
 ## Spec §10's End Segment.
 ##
 ## Refuses first, changing nothing at all: no flag cleared, no counter moved,
-## no board write, no `state.rng` draw. Then walks §10's sequence in order.
-static func run(state: GameState) -> TurnResult:
-	var reason := _refusal(state)
+## no board write, no `state.rng` draw. When the match has ended per §11.3,
+## runs only steps 1-2 (both comments, no-ops today) and returns success without
+## mutations. Otherwise walks §10's sequence in order.
+static func run(state: GameState, profile: RoundProfile) -> TurnResult:
+	# §11.3: match-end question first, before anything else.
+	if MatchVictory.has_ended(state, profile):
+		# 1. Score   -- unimplemented: reads scoring cards. `rules/cards/` does not
+		#               exist.
+		# 2. Equip   -- unimplemented: plays attachment cards.
+
+		# Match has ended. No further steps. No mutations.
+		return TurnResult.ok()
+
+	var reason := _refusal(state, profile)
 	if not reason.is_empty():
 		return TurnResult.failure(reason)
 
-	# 1. Score   -- unimplemented: reads scoring cards. `rules/cards/` does not
-	#               exist.
-	# 2. Equip   -- unimplemented: plays attachment cards.
 	# 3. Discard -- unimplemented: discards from hand.
 	# 4. Refill  -- unimplemented: draws back to hand-size caps.
 
 	# 5. Clear round-level status flags on the board.
 	_clear_round_level_flags(state)
 
-	# 6. Next round begins. The final-round branch -- §10 step 6's "run only
-	#    steps 1-2, then go to victory determination" -- belongs to §11's
-	#    victory work; here a final round is a refusal above, not a branch.
+	# 6. Next round begins.
 	state.turns_taken = 0
 	state.round_number += 1
 	return TurnResult.ok()
@@ -110,14 +122,10 @@ static func run(state: GameState) -> TurnResult:
 ## Why the Segment cannot run, or `&""` when it can.
 ##
 ## The single implementation of the predicate, in a fixed order: whether the
-## round's Turns are all taken first, then whether there is a next round to
-## begin at all.
-static func _refusal(state: GameState) -> StringName:
+## round's Turns are all taken first.
+static func _refusal(state: GameState, profile: RoundProfile) -> StringName:
 	if not state.combat_segment_complete():
 		return FAILURE_COMBAT_SEGMENT_INCOMPLETE
-
-	if state.is_final_round():
-		return FAILURE_FINAL_ROUND
 
 	return &""
 

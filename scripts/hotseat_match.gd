@@ -53,7 +53,7 @@
 ##
 ## **At `MATCH_COMPLETE` it stops.** The buttons go dead and the HUD says the
 ## match is over and that working out who won is #173. It names no winner and
-## computes no score -- `EndSegment` refusing `FAILURE_FINAL_ROUND` is where
+## computes no score -- the match-end form (steps 1-2 only) is where
 ## this scene's job ends.
 class_name HotseatMatch
 extends Node
@@ -136,14 +136,14 @@ var _log: Array[String] = []
 ## Builds the match, wires the HUD and the board to the intent methods below,
 ## and renders the opening position.
 ##
-## The four objects are built here and nowhere else, in the one order that
+## The five objects are built here and nowhere else, in the one order that
 ## keeps them a matched set: the state first, the gate over that state, the
-## session over that gate, and the options over the same templates the session
-## was given.
+## round profile for match configuration, the session over that gate and
+## profile, and the options over the same templates the session was given.
 func _ready() -> void:
 	_templates = MatchSetup.templates()
 	_authority = Authority.new(MatchSetup.build())
-	_session = HotseatSession.new(_authority, _templates)
+	_session = HotseatSession.new(_authority, MatchSetup.round_profile(), _templates)
 	_options = ActionOptions.new(
 		_templates, MatchSetup.combat_profile(), MatchSetup.round_profile().game_mode
 	)
@@ -289,8 +289,10 @@ func pass_power_step() -> TurnResult:
 ##
 ## Offered by a button rather than taken automatically, so the Segment boundary
 ## is something the two players cross when they have both looked at the board.
-## Its refusals -- an incomplete Segment, and the final round's
-## `EndSegment.FAILURE_FINAL_ROUND` -- reach the log like any other result.
+## When the match has ended per §11.3, runs the match-end form (steps 1-2 only)
+## and reports success. An incomplete Segment is refused with
+## `EndSegment.FAILURE_COMBAT_SEGMENT_INCOMPLETE`. Both reach the log like any
+## other result.
 func advance_segment() -> TurnResult:
 	return _record("begin next round", _session.advance_segment())
 

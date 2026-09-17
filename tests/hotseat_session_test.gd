@@ -191,8 +191,9 @@ static func _board_is_clear_of_round_flags(state: GameState) -> bool:
 ## case can assert against all three.
 static func _session() -> Array:
 	var state := _build_state()
+	var profile := _profile()
 	var authority := Authority.new(state)
-	return [HotseatSession.new(authority, _templates()), state, authority]
+	return [HotseatSession.new(authority, profile, _templates()), state, authority]
 
 
 # --- Driving a round through the session ------------------------------------
@@ -559,16 +560,33 @@ static func _test_the_final_round_completes_the_match() -> Array[String]:
 	)
 
 	var before := state.digest()
-	var refused := session.advance_segment()
+	var before_round := state.round_number
+	var before_turns := state.turns_taken
+	var advanced := session.advance_segment()
 
 	violations.append_array(
 		_expect(
-			not refused.success and refused.reason == EndSegment.FAILURE_FINAL_ROUND,
-			"advancing past the final round must fail FAILURE_FINAL_ROUND, got %s" % refused.reason
+			advanced.success,
+			"the final round's Segment must run the match-end form and succeed, got %s" % advanced.reason
 		)
 	)
 	violations.append_array(
-		_expect(state.digest() == before, "a refused Segment must leave the state identical")
+		_expect(
+			state.digest() == before,
+			"the match-end form must leave the state digest identical (no mutations)"
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.round_number == before_round,
+			"the match-end form must not advance round_number"
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.turns_taken == before_turns,
+			"the match-end form must not reset turns_taken"
+		)
 	)
 
 	return violations

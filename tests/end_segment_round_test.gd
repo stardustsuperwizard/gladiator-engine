@@ -104,6 +104,16 @@ static func _build_state() -> GameState:
 	return state
 
 
+## A RoundProfile with Standard Victory configured, so MatchVictory
+## can properly detect match-end conditions.
+static func _round_profile() -> RoundProfile:
+	var profile := RoundProfile.new()
+	profile.turns_per_player = TURNS_PER_PLAYER
+	profile.rounds_per_match = ROUNDS_PER_MATCH
+	profile.victory_condition = "standard"
+	return profile
+
+
 static func _place(state: GameState, fighter_id: String, owner_id: String, coord: Vector3i) -> void:
 	state.add_fighter(fighter_id, Fighter.new(fighter_id, _template(), owner_id, coord).to_dict())
 	state.board.place_occupant(coord, StringName(fighter_id))
@@ -168,6 +178,7 @@ static func _play_turn(
 static func _test_a_full_round_completes_and_the_end_segment_begins_the_next() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state()
+	var profile := _round_profile()
 	var authority := Authority.new(state)
 	var runner := ActionRunner.new(authority)
 
@@ -222,10 +233,10 @@ static func _test_a_full_round_completes_and_the_end_segment_begins_the_next() -
 		)
 	)
 	violations.append_array(
-		_expect(EndSegment.can_run(state), "a complete Combat Segment must be runnable")
+		_expect(EndSegment.can_run(state, profile), "a complete Combat Segment must be runnable")
 	)
 
-	var result := EndSegment.run(state)
+	var result := EndSegment.run(state, profile)
 
 	violations.append_array(
 		_expect(result.success, "the End Segment must run, got %s" % result.reason)
