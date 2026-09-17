@@ -527,6 +527,12 @@ static func _test_round_profile_loads_correctly() -> Array[String]:
 			_expect(profile.victory_condition == "standard", 'victory_condition must be "standard"')
 		)
 		violations.append_array(
+			_expect(
+				MatchVictory.is_known(profile.victory_condition),
+				"the authored victory_condition must resolve in MatchVictory's registry"
+			)
+		)
+		violations.append_array(
 			_expect(profile.optional_modules.is_empty(), "optional_modules must be empty")
 		)
 

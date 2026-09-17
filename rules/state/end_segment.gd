@@ -14,6 +14,8 @@
 ## first, at the top of the sequence, before the incomplete-Segment check -- so an
 ## elimination ends the match even mid-round, and a final-round Segment succeeds
 ## whether the elimination has already happened or is discovered by `MatchVictory`.
+## A match that has ended is therefore *runnable*, not refusable, and `can_run()`
+## says so: the form below succeeds, so the predicate reports success too.
 ##
 ## **It is not a `TurnAction`, and it does not route through the gate.** This
 ## is the first state-mutating thing in the project that is not a player
@@ -79,33 +81,42 @@ extends RefCounted
 const FAILURE_COMBAT_SEGMENT_INCOMPLETE := &"end_segment_combat_incomplete"
 
 
-## True when `run()` would do its work rather than refuse.
+## True when `run()` would do its work -- §10's sequence, or §11.3's match-end
+## form -- rather than refuse.
 ##
 ## The predicate and the reason are one implementation -- `_refusal()` -- so the
-## two can never disagree about what is runnable.
+## two can never disagree about what is runnable. A match that has ended is
+## runnable: `run()` answers it with the match-end form, which succeeds, and a
+## predicate that called that state unrunnable would be the disagreement this
+## division exists to rule out.
 static func can_run(state: GameState, profile: RoundProfile) -> bool:
-	return _refusal(state, profile).is_empty()
+	return _refusal(state, MatchVictory.has_ended(state, profile)).is_empty()
 
 
 ## Spec §10's End Segment.
 ##
-## Refuses first, changing nothing at all: no flag cleared, no counter moved,
-## no board write, no `state.rng` draw. When the match has ended per §11.3,
+## Asks §11.3's match-end question first, and once. When the match has ended,
 ## runs only steps 1-2 (both comments, no-ops today) and returns success without
-## mutations. Otherwise walks §10's sequence in order.
+## a single mutation. When it has not, refuses an incomplete Combat Segment
+## changing nothing at all -- no flag cleared, no counter moved, no board write,
+## no `state.rng` draw -- and otherwise walks §10's sequence in order.
 static func run(state: GameState, profile: RoundProfile) -> TurnResult:
-	# §11.3: match-end question first, before anything else.
-	if MatchVictory.has_ended(state, profile):
+	# §11.3: the match-end question, asked first and asked once, through
+	# `MatchVictory` -- the answer is then handed to `_refusal()` rather than
+	# asked for a second time.
+	var match_ended := MatchVictory.has_ended(state, profile)
+
+	var reason := _refusal(state, match_ended)
+	if not reason.is_empty():
+		return TurnResult.failure(reason)
+
+	if match_ended:
 		# 1. Score   -- unimplemented: reads scoring cards. `rules/cards/` does not
 		#               exist.
 		# 2. Equip   -- unimplemented: plays attachment cards.
 
 		# Match has ended. No further steps. No mutations.
 		return TurnResult.ok()
-
-	var reason := _refusal(state, profile)
-	if not reason.is_empty():
-		return TurnResult.failure(reason)
 
 	# 3. Discard -- unimplemented: discards from hand.
 	# 4. Refill  -- unimplemented: draws back to hand-size caps.
@@ -121,9 +132,17 @@ static func run(state: GameState, profile: RoundProfile) -> TurnResult:
 
 ## Why the Segment cannot run, or `&""` when it can.
 ##
-## The single implementation of the predicate, in a fixed order: whether the
-## round's Turns are all taken first.
-static func _refusal(state: GameState, profile: RoundProfile) -> StringName:
+## The single implementation of the predicate, in a fixed order: §11.3's ending
+## first -- a match that has ended refuses nothing, because `run()` answers it
+## with the match-end form -- and then whether the round's Turns are all taken.
+##
+## Takes `match_ended` as an answer rather than the `RoundProfile` it is derived
+## from, so that `MatchVictory` is asked exactly once per entry point while
+## `can_run()` and `run()` still share one implementation of the refusal.
+static func _refusal(state: GameState, match_ended: bool) -> StringName:
+	if match_ended:
+		return &""
+
 	if not state.combat_segment_complete():
 		return FAILURE_COMBAT_SEGMENT_INCOMPLETE
 

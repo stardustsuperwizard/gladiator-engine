@@ -186,10 +186,11 @@ func pass_power_step(player_id: String) -> TurnResult:
 ## no requester -- see the class docstring and `EndSegment`'s own. Takes the
 ## authored `RoundProfile` as a parameter (the driver holds no configuration of
 ## its own) and passes it to `EndSegment` for the match-end check. Returns its
-## `TurnResult` unchanged: an incomplete Combat Segment is refused, an incomplete
-## Segment is refused; when the match has ended per §11.3, runs only steps 1-2
-## and succeeds without mutations. What happens after the last round is victory
-## determination, which this class does not do and does not approximate.
+## `TurnResult` unchanged: an incomplete Combat Segment is refused with
+## `EndSegment.FAILURE_COMBAT_SEGMENT_INCOMPLETE`; a match that has ended per
+## §11.3 runs only steps 1-2 and succeeds without mutations. What happens after
+## the last round is victory determination, which this class does not do and does
+## not approximate.
 ##
 ## Re-syncs the gate on the way out, so a successful Segment leaves the front
 ## of the turn order active for the new round's first Turn, or leaves it at

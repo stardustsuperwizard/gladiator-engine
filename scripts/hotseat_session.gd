@@ -124,11 +124,24 @@ func phase() -> Phase:
 	return Phase.ACTION_STEP
 
 
-## The player whose Turn it is, or `""` when the round has none left.
+## The player whose Turn it is, or `""` when the round has none left and when
+## the match has ended.
 ##
 ## Delegates to `RoundDriver.active_player_id()`, which derives it from
 ## `TurnSequence`. Never read back off `Authority` -- see the class docstring.
+##
+## **A match that has ended names nobody**, even mid-round with Turns still
+## unspent. `TurnSequence` would still name the player whose Turn it structurally
+## is, because the round is not over; §11.3 says the match is, and this class
+## reports the match. That is a *report*, not a rule and not a gate: nothing here
+## refuses that player's command, and a submission by them still comes back
+## answered by `Authority` or by the action, exactly as the class docstring
+## promises. `players_to_act()` reads this answer and is empty for the same
+## reason.
 func active_player_id() -> String:
+	if phase() == Phase.MATCH_COMPLETE:
+		return ""
+
 	return _driver.active_player_id()
 
 
