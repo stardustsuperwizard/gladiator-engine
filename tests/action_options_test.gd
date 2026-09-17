@@ -43,6 +43,8 @@ static func run() -> bool:
 
 	violations.append_array(_test_queries_leave_state_untouched())
 
+	violations.append_array(_test_attack_and_charge_carry_the_constructed_mode_through())
+
 	if violations.is_empty():
 		return true
 
@@ -605,6 +607,120 @@ static func _test_builders_return_null_for_unknown_fighter() -> Array[String]:
 
 
 # --- Read-only ---------------------------------------------------------------
+
+# --- Game mode ---------------------------------------------------------------
+
+
+## `ActionOptions._init()`'s mode id reaches every `AttackAction`/`ChargeAction`
+## it builds, asserted by the one thing the mode actually changes: whether a
+## defeat that action resolves awards `CombatProfile.defeat_award` or nothing.
+## An `ActionOptions` built with `Deathmatch.MODE_ID` credits the award; one
+## built with a mode id no registry knows credits none -- for both an Attack
+## and a Charge, each freshly fixtured so the first defeat cannot affect the
+## second.
+static func _test_attack_and_charge_carry_the_constructed_mode_through() -> Array[String]:
+	var violations: Array[String] = []
+	var template := _template(4, 2, 1, 1, 3, 1)
+	var templates := FighterTemplates.new()
+	templates.register(template)
+
+	var profile := _profile()
+	profile.defeat_award = 5
+
+	var deathmatch_options := ActionOptions.new(templates, profile, Deathmatch.MODE_ID)
+	var unknown_options := ActionOptions.new(templates, profile, "treasure")
+
+	# Attack, under Deathmatch: the award reaches the attacker's owner.
+	var deathmatch_attack_state := _build_state()
+	_place(deathmatch_attack_state, "f1", "p1", Vector3i(0, 0, 0), template)
+	_place(deathmatch_attack_state, "f2", "p2", Vector3i(1, -1, 0), template)
+	var deathmatch_attack := deathmatch_options.attack(deathmatch_attack_state, "f1", "f2")
+	var deathmatch_attack_result := ActionRunner.new(Authority.new(deathmatch_attack_state)).run(
+		deathmatch_attack, "p1"
+	)
+	violations.append_array(
+		_expect(deathmatch_attack_result.success, "the Deathmatch-mode attack fixture must resolve")
+	)
+	violations.append_array(
+		_expect(
+			deathmatch_attack_state.player("p1").score == profile.defeat_award,
+			(
+				"an ActionOptions constructed with Deathmatch's id must build an AttackAction that "
+				+ "credits its award"
+			)
+		)
+	)
+
+	# Attack, under an unregistered mode: the same defeat awards nothing.
+	var unknown_attack_state := _build_state()
+	_place(unknown_attack_state, "f1", "p1", Vector3i(0, 0, 0), template)
+	_place(unknown_attack_state, "f2", "p2", Vector3i(1, -1, 0), template)
+	var unknown_attack := unknown_options.attack(unknown_attack_state, "f1", "f2")
+	var unknown_attack_result := ActionRunner.new(Authority.new(unknown_attack_state)).run(
+		unknown_attack, "p1"
+	)
+	violations.append_array(
+		_expect(unknown_attack_result.success, "the unknown-mode attack fixture must resolve")
+	)
+	violations.append_array(
+		_expect(
+			unknown_attack_state.player("p1").score == 0,
+			(
+				"an ActionOptions constructed with an unregistered mode id must build an "
+				+ "AttackAction that awards nothing"
+			)
+		)
+	)
+
+	# Charge, under Deathmatch: the composed attack half credits the award.
+	var deathmatch_charge_state := _charge_fixture(template)
+	var deathmatch_destination: Vector3i = (
+		deathmatch_options.charge_destinations(deathmatch_charge_state, "f1", "f2")[0]
+	)
+	var deathmatch_charge := deathmatch_options.charge(
+		deathmatch_charge_state, "f1", "f2", deathmatch_destination
+	)
+	var deathmatch_charge_result := ActionRunner.new(Authority.new(deathmatch_charge_state)).run(
+		deathmatch_charge, "p1"
+	)
+	violations.append_array(
+		_expect(deathmatch_charge_result.success, "the Deathmatch-mode charge fixture must resolve")
+	)
+	violations.append_array(
+		_expect(
+			deathmatch_charge_state.player("p1").score == profile.defeat_award,
+			(
+				"an ActionOptions constructed with Deathmatch's id must build a ChargeAction that "
+				+ "credits its award"
+			)
+		)
+	)
+
+	# Charge, under an unregistered mode: the same defeat awards nothing.
+	var unknown_charge_state := _charge_fixture(template)
+	var unknown_destination: Vector3i = (
+		unknown_options.charge_destinations(unknown_charge_state, "f1", "f2")[0]
+	)
+	var unknown_charge := unknown_options.charge(
+		unknown_charge_state, "f1", "f2", unknown_destination
+	)
+	var unknown_charge_result := ActionRunner.new(Authority.new(unknown_charge_state)).run(
+		unknown_charge, "p1"
+	)
+	violations.append_array(
+		_expect(unknown_charge_result.success, "the unknown-mode charge fixture must resolve")
+	)
+	violations.append_array(
+		_expect(
+			unknown_charge_state.player("p1").score == 0,
+			(
+				"an ActionOptions constructed with an unregistered mode id must build a "
+				+ "ChargeAction that awards nothing"
+			)
+		)
+	)
+
+	return violations
 
 
 static func _test_queries_leave_state_untouched() -> Array[String]:

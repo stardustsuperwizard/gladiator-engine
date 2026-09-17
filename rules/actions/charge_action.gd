@@ -113,8 +113,10 @@ var _attack: AttackAction
 ## `resolve()` with `FAILURE_MISSING_DATA`, which is where it can actually be
 ## answered.
 ##
-## `push_back` is passed straight through to the attack half and defaults to
-## `false`, exactly as `AttackAction._init()` already does.
+## `push_back` and `game_mode` are passed straight through to the attack half
+## and default to `false` and `Deathmatch.MODE_ID` respectively, exactly as
+## `AttackAction._init()` already does -- so a defeating Charge credits spec
+## §11.2's award through the identical seam a standalone Attack does.
 func _init(
 	actor_id: String,
 	destination: Vector3i,
@@ -122,7 +124,8 @@ func _init(
 	actor_template: FighterTemplate,
 	target_template: FighterTemplate,
 	combat_profile: CombatProfile,
-	push_back: bool = false
+	push_back: bool = false,
+	game_mode: String = Deathmatch.MODE_ID
 ) -> void:
 	super(actor_id)
 	_destination = destination
@@ -130,7 +133,7 @@ func _init(
 	_target_template = target_template
 	_combat_profile = combat_profile
 	_attack = AttackAction.new(
-		actor_id, target_id, actor_template, target_template, combat_profile, push_back
+		actor_id, target_id, actor_template, target_template, combat_profile, push_back, game_mode
 	)
 
 

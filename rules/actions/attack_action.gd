@@ -66,15 +66,18 @@
 ## counter at or above health, where `Fighter.is_defeated()` keeps answering
 ## true.
 ##
-## **Defeat also awards spec §9's flat point.** `_apply_hit()` credits
-## `_combat_profile.defeat_award` to `attacker.owner_id()`'s `PlayerState.score`
-## -- a flat, authored value, not anything read off either fighter's stats. A
-## missing `PlayerState` is skipped rather than refused, since the defeat
-## itself has already happened. This is the only seam that exists for the
-## award today; nothing routes it through `Authority` or `ActionRunner`. The
-## award draws nothing from `state.rng`. Who scores when a fighter is defeated
-## with no attacker (a §2 hazard, a friendly card effect) is an open spec
-## question this resolver does not answer.
+## **Defeat's award is the active game mode's, not an unconditional rule of
+## §9.** `_apply_hit()` credits `GameMode.defeat_award(_game_mode,
+## _combat_profile)` to `attacker.owner_id()`'s `PlayerState.score`. `GameMode`
+## is the decider -- an unregistered mode awards 0 -- and `CombatProfile
+## .defeat_award` is the number every registered mode reads, not anything read
+## off either fighter's stats; see `GameMode` and `Deathmatch` for spec §11.2's
+## rule. A missing `PlayerState` is skipped rather than refused, since the
+## defeat itself has already happened. This is the only seam that exists for
+## the award today; nothing routes it through `Authority` or `ActionRunner`.
+## The award draws nothing from `state.rng`. Who scores when a fighter is
+## defeated with no attacker (a §2 hazard, a friendly card effect) is an open
+## spec question this resolver does not answer.
 ##
 ## **A push is optional, declared, and not a move -- spec §7.6-7.7.**
 ## `push_back` arrives through `_init()`, because spec §7.6 leaves whether to
@@ -158,6 +161,12 @@ var _combat_profile: CombatProfile
 ## wants the target shoved on a Hit or a Drawn. See the class docstring.
 var _push_back: bool = false
 
+## Spec §11.2's active game mode, set once at construction and consulted only
+## by `_apply_hit()` through `GameMode.defeat_award()`. Defaults to
+## `Deathmatch.MODE_ID`, so every call site written before this parameter
+## existed keeps meaning what it meant.
+var _game_mode: String = Deathmatch.MODE_ID
+
 ## The resolution detail, read back through the accessors below. Every value
 ## here is meaningless until `resolve()` has returned a successful `TurnResult`;
 ## `_outcome` starts at `MISS` only because the enum has no "unresolved"
@@ -180,15 +189,17 @@ var _pushed: bool = false
 ## is validated here. A `null` template or profile is refused by `resolve()`
 ## with `FAILURE_MISSING_DATA`, which is where it can actually be answered.
 ##
-## `push_back` defaults to `false`, so every call site and every test written
-## before this parameter existed remains valid unchanged.
+## `push_back` defaults to `false` and `game_mode` defaults to
+## `Deathmatch.MODE_ID`, so every call site and every test written before
+## either parameter existed remains valid unchanged.
 func _init(
 	actor_id: String,
 	target_id: String,
 	attacker_template: FighterTemplate,
 	target_template: FighterTemplate,
 	combat_profile: CombatProfile,
-	push_back: bool = false
+	push_back: bool = false,
+	game_mode: String = Deathmatch.MODE_ID
 ) -> void:
 	super(actor_id)
 	_target_id = target_id
@@ -196,6 +207,7 @@ func _init(
 	_target_template = target_template
 	_combat_profile = combat_profile
 	_push_back = push_back
+	_game_mode = game_mode
 
 
 ## Resolves the attack against `state`, per spec §7.
@@ -479,7 +491,7 @@ func _engagement_bonus(attacker: Fighter, target: Fighter) -> int:
 
 ## Applies the *attacker's* damage to `target`, commits the payload, takes the
 ## fighter off the board when the damage defeated it, and on a defeat awards
-## spec §9's flat point to the attacker's owner.
+## whatever the active game mode says a defeat is worth.
 ##
 ## `attacker.damage()`, never the target's: the two fighters have different
 ## stats, and reading the wrong one is a wrong result rather than a crash.
@@ -488,12 +500,12 @@ func _engagement_bonus(attacker: Fighter, target: Fighter) -> int:
 ## fighter from the *board*, and `Fighter.is_defeated()` has to keep answering
 ## true for the stored record.
 ##
-## The award is `_combat_profile.defeat_award`, a flat authored value rather
-## than anything read off either fighter -- §3.2 deleted `pointValue`, and this
-## is not its replacement in disguise. The recipient is `attacker.owner_id()`;
-## a state with no `PlayerState` for that id is skipped, not refused -- the
-## defeat itself has already happened by the time the award is reached, so
-## there is nothing left to refuse. Draws nothing from `state.rng`.
+## The award is `GameMode.defeat_award(_game_mode, _combat_profile)` -- see
+## `GameMode` and `Deathmatch` for spec §11.2's rule -- never anything read off
+## either fighter. The recipient is `attacker.owner_id()`; a state with no
+## `PlayerState` for that id is skipped, not refused -- the defeat itself has
+## already happened by the time the award is reached, so there is nothing left
+## to refuse. Draws nothing from `state.rng`.
 func _apply_hit(state: GameState, attacker: Fighter, target: Fighter) -> void:
 	target.apply_damage(attacker.damage())
 	state.update_fighter(_target_id, target.to_dict())
@@ -506,7 +518,7 @@ func _apply_hit(state: GameState, attacker: Fighter, target: Fighter) -> void:
 
 	var scorer := state.player(attacker.owner_id())
 	if scorer != null:
-		scorer.score += _combat_profile.defeat_award
+		scorer.score += GameMode.defeat_award(_game_mode, _combat_profile)
 
 
 ## Spec §7.6-7.7: shoves `target` one hex directly away from `attacker`, on a
