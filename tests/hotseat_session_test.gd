@@ -53,6 +53,10 @@ const F1_HOME := Vector3i(0, 0, 0)
 const F2_HOME := Vector3i(3, -3, 0)
 const F3_HOME := Vector3i(-2, 2, 0)
 
+## Where the elimination case re-homes `F2_ID`: a free neighbour of `F1_HOME`,
+## so `F1_ID` is in range of p2's only fighter without anybody having to Move.
+const F2_ADJACENT := Vector3i(1, -1, 0)
+
 ## The seed every case runs on. Nothing about this value matters beyond its
 ## being fixed.
 const SEED := 29
@@ -71,6 +75,8 @@ static func run() -> bool:
 	violations.append_array(_test_a_three_round_match_plays_on_phase_alone())
 	violations.append_array(_test_the_segment_boundary_begins_the_next_round())
 	violations.append_array(_test_the_final_round_completes_the_match())
+	violations.append_array(_test_a_mid_round_elimination_completes_the_match())
+	violations.append_array(_test_the_outcome_reports_the_live_state())
 	violations.append_array(_test_the_session_refuses_nothing_of_its_own())
 	violations.append_array(_test_a_decline_guards_the_first_eligible_fighter())
 
@@ -91,9 +97,18 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 # --- Fixtures ---------------------------------------------------------------
 
 
-## This suite's one template. Nothing here Attacks or Charges, so only `health`
-## and `save` need to be sane; `move` and `range_hexes` are authored anyway so
-## the template is a well-formed one rather than a half-filled resource.
+## This suite's one template, and every stat on it is now load-bearing for at
+## least one case. Most cases only Guard, and need `health` and `save`; the
+## elimination case resolves a real `AttackAction` through the session, which
+## reads `range_hexes` to reach an adjacent target, `attack` for the size of the
+## dice pool and `damage` for what a Hit takes off -- with `health` deciding how
+## much damage `_elimination_session()` has to apply to leave its fighter one
+## point from defeat. Only `move` is authored purely so the template is a
+## well-formed one rather than a half-filled resource.
+##
+## The targets the Attack rolls against come from `_forced_hit_profile()` and
+## not from here, which is why `attack` and `save` set the pool's size rather
+## than its outcome.
 static func _template() -> FighterTemplate:
 	var template := FighterTemplate.new()
 	template.template_id = TEMPLATE_ID
@@ -187,12 +202,51 @@ static func _board_is_clear_of_round_flags(state: GameState) -> bool:
 	return true
 
 
+## A combat profile whose outcome is dictated by the die rather than by the
+## seed: every attack die counts (`attack_target` 1) and no save die does
+## (`save_target` 7), with the clamp widened so neither can be pulled back into
+## the rollable range and every modifier left at zero so no adjacency can move
+## them. The elimination case below is an assertion about what the session
+## reports, not about a roll, and this is what keeps it one.
+static func _forced_hit_profile() -> CombatProfile:
+	var profile := CombatProfile.new()
+	profile.profile_id = "hotseat-session-test-forced"
+	profile.die_sides = 6
+	profile.attack_target = 1
+	profile.save_target = 7
+	profile.min_target = 1
+	profile.max_target = 7
+	return profile
+
+
 ## A session over a freshly built state, and the state and gate behind it, so a
 ## case can assert against all three.
 static func _session() -> Array:
 	var state := _build_state()
+	var profile := _profile()
 	var authority := Authority.new(state)
-	return [HotseatSession.new(authority, _templates()), state, authority]
+	return [HotseatSession.new(authority, profile, _templates()), state, authority]
+
+
+## The same three, over a state one resolved Attack away from eliminating p2:
+## p2's only fighter is re-homed next to p1's and damaged to one point short of
+## defeat, so a single Hit takes it off the board.
+##
+## Built by rewriting the fighter rather than by adding a parameter to `_place()`
+## that only this case would ever pass, and committed through
+## `GameState.update_fighter()` -- the same seam every other case uses.
+static func _elimination_session() -> Array:
+	var state := _build_state()
+	var template := _template()
+
+	state.board.remove_occupant(F2_HOME)
+	var doomed := Fighter.new(F2_ID, template, "p2", F2_ADJACENT)
+	doomed.apply_damage(template.health - 1)
+	state.update_fighter(F2_ID, doomed.to_dict())
+	state.board.place_occupant(F2_ADJACENT, StringName(F2_ID))
+
+	var authority := Authority.new(state)
+	return [HotseatSession.new(authority, _profile(), _templates()), state, authority]
 
 
 # --- Driving a round through the session ------------------------------------
@@ -559,16 +613,181 @@ static func _test_the_final_round_completes_the_match() -> Array[String]:
 	)
 
 	var before := state.digest()
-	var refused := session.advance_segment()
+	var before_round := state.round_number
+	var before_turns := state.turns_taken
+	var advanced := session.advance_segment()
 
 	violations.append_array(
 		_expect(
-			not refused.success and refused.reason == EndSegment.FAILURE_FINAL_ROUND,
-			"advancing past the final round must fail FAILURE_FINAL_ROUND, got %s" % refused.reason
+			advanced.success,
+			(
+				"the final round's Segment must run the match-end form and succeed, got %s"
+				% advanced.reason
+			)
 		)
 	)
 	violations.append_array(
-		_expect(state.digest() == before, "a refused Segment must leave the state identical")
+		_expect(
+			state.digest() == before,
+			"the match-end form must leave the state digest identical (no mutations)"
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.round_number == before_round, "the match-end form must not advance round_number"
+		)
+	)
+	violations.append_array(
+		_expect(state.turns_taken == before_turns, "the match-end form must not reset turns_taken")
+	)
+
+	return violations
+
+
+## §11.3's elimination ends the match **inside a Turn**. The moment p1's Attack
+## takes p2's last fighter off the board the session reports `MATCH_COMPLETE`,
+## names nobody to act and hands back an ended outcome -- with no further Turn
+## taken and no End Segment having run.
+##
+## The Attack is submitted through the session like any other command, so what
+## ends the match is a resolved action and not a board edit this case made.
+static func _test_a_mid_round_elimination_completes_the_match() -> Array[String]:
+	var violations: Array[String] = []
+	var parts := _elimination_session()
+	var session: HotseatSession = parts[0]
+	var state: GameState = parts[1]
+
+	violations.append_array(
+		_expect(
+			session.phase() == HotseatSession.Phase.ACTION_STEP,
+			"the case must begin mid-round on an Action Step, got phase %d" % session.phase()
+		)
+	)
+	violations.append_array(
+		_expect(
+			not session.outcome().over,
+			"the outcome must be unended while both sides still hold a fighter"
+		)
+	)
+
+	var round_before := state.round_number
+	var turns_before := state.turns_taken
+	var killed := session.submit(
+		AttackAction.new(F1_ID, F2_ID, _template(), _template(), _forced_hit_profile()), "p1"
+	)
+
+	violations.append_array(
+		_expect(killed.success, "p1's Attack must resolve, got %s" % killed.reason)
+	)
+	violations.append_array(
+		_expect(
+			state.board.occupant_at(F2_ADJACENT) == Board.EMPTY_OCCUPANT,
+			"the Attack must have taken p2's last fighter off the board"
+		)
+	)
+	violations.append_array(
+		_expect(
+			session.phase() == HotseatSession.Phase.MATCH_COMPLETE,
+			(
+				"an elimination must report MATCH_COMPLETE inside the Turn, got phase %d"
+				% session.phase()
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			session.players_to_act().is_empty() and session.player_to_act().is_empty(),
+			"a match ended mid-round must name nobody to act, got %s" % [session.players_to_act()]
+		)
+	)
+	violations.append_array(
+		_expect(
+			session.active_player_id().is_empty(),
+			(
+				"a match ended mid-round must name no active player, got %s"
+				% session.active_player_id()
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.round_number == round_before and state.turns_taken == turns_before,
+			(
+				"no End Segment and no further Turn may have run, got round %d and %d Turns"
+				% [state.round_number, state.turns_taken]
+			)
+		)
+	)
+
+	var outcome := session.outcome()
+	violations.append_array(
+		_expect(
+			outcome.over and outcome.ended_by == MatchOutcome.ENDING_ELIMINATION,
+			"the outcome must report the match ended by elimination, got %s" % outcome.ended_by
+		)
+	)
+	violations.append_array(
+		_expect(
+			outcome.winner_id == "p1",
+			"the surviving side must be the winner, got %s" % outcome.winner_id
+		)
+	)
+
+	return violations
+
+
+## `outcome()` is a read of the live state and nothing else: unended while the
+## match is in play, and the ended `MatchOutcome` once §11.3's condition holds.
+##
+## Nothing here counts a round. The loop stops on `MATCH_COMPLETE`, which is the
+## phase the session derives from the same question `outcome()` answers.
+static func _test_the_outcome_reports_the_live_state() -> Array[String]:
+	var violations: Array[String] = []
+	var parts := _session()
+	var session: HotseatSession = parts[0]
+
+	var in_play := session.outcome()
+	violations.append_array(
+		_expect(not in_play.over, "a match still in play must report an unended outcome")
+	)
+	violations.append_array(
+		_expect(
+			in_play.ended_by == &"" and in_play.winner_id.is_empty(),
+			"an unended outcome must name no ending and no winner, got %s" % in_play.ended_by
+		)
+	)
+	violations.append_array(
+		_expect(
+			in_play.deciding_rule == &"",
+			"an unended outcome must name no deciding rule, got %s" % in_play.deciding_rule
+		)
+	)
+
+	var steps := 0
+	while session.phase() != HotseatSession.Phase.MATCH_COMPLETE:
+		steps += 1
+		if steps > MAX_STEPS:
+			violations.append_array(
+				_expect(false, "the session never reported MATCH_COMPLETE in %d steps" % MAX_STEPS)
+			)
+			return violations
+
+		var phase := session.phase()
+		if phase == HotseatSession.Phase.SEGMENT_COMPLETE:
+			var advanced := session.advance_segment()
+			violations.append_array(
+				_expect(advanced.success, "the Segment must advance, got %s" % advanced.reason)
+			)
+			continue
+
+		violations.append_array(_play_step(session, phase))
+
+	var ended := session.outcome()
+	violations.append_array(
+		_expect(
+			ended.over and ended.ended_by == MatchOutcome.ENDING_ROUND_LIMIT,
+			"a match played to its round limit must report that ending, got %s" % ended.ended_by
+		)
 	)
 
 	return violations

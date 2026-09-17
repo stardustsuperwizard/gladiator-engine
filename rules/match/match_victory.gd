@@ -54,6 +54,16 @@ static func has_ended(state: GameState, profile: RoundProfile) -> bool:
 	return evaluate(state, profile).over
 
 
+## Whether `condition_id` names a condition this registry implements.
+##
+## The mirror of `GameMode.is_known()`, and for the same caller: an authored
+## `RoundProfile` whose configured id resolves to nothing never ends its match,
+## so a test over `resources/` asserts the id is one this build implements
+## rather than only that it is the string somebody meant to write.
+static func is_known(condition_id: String) -> bool:
+	return _registry().has(condition_id)
+
+
 ## `RoundProfile.victory_condition` -> the condition that implements it.
 ##
 ## Built per call rather than held as a `const`, because a `Callable` to a

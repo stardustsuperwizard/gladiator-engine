@@ -92,7 +92,12 @@ var _suites: Array[Dictionary] = [
 	# the headless run's output. See its own docstring.
 	{"name": "Charge Action Test", "run": ChargeActionTest.run},
 	{"name": "Charge Action Equivalence Test", "run": ChargeActionEquivalenceTest.run},
+	# End Segment Match End Test is a suite of record rather than a nested call
+	# inside End Segment Test: the split exists to stay under .gdlintrc's
+	# 1000-line cap, and registering it directly keeps its name in the headless
+	# run's output. See its own docstring.
 	{"name": "End Segment Test", "run": EndSegmentTest.run},
+	{"name": "End Segment Match End Test", "run": EndSegmentMatchEndTest.run},
 	{"name": "Match Victory Test", "run": MatchVictoryTest.run},
 	{"name": "Game Mode Test", "run": GameModeTest.run},
 	{"name": "Turn Sequence Test", "run": TurnSequenceTest.run},

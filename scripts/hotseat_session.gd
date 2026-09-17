@@ -45,13 +45,13 @@
 ## `RoundDriver` both document: a second reference here could drift out of step
 ## with the one the gate validated against.
 ##
-## **`MATCH_COMPLETE` reports that the End Segment would refuse, and nothing
-## more.** It is not a victory check -- no winner, no score, no §11 branch, not
-## even a partial one. `EndSegment` refuses `FAILURE_FINAL_ROUND` on the last
-## round's complete Segment, and this phase is that refusal named in advance so
-## a view can stop asking for Turns that do not exist. What happens after the
-## last round is victory determination, which this class does not do and does
-## not approximate.
+## **`MATCH_COMPLETE` reports the match has ended per §11.3**, determined by
+## asking `MatchVictory.has_ended()` before any Segment or Step checks. It
+## happens when a side loses its last fighter, eliminating all its fighters
+## mid-round; when a round limit is reached at a Segment boundary; and at any
+## Segment boundary whose configured condition ends the match. What happens
+## after is victory determination, which this class does not do and does not
+## approximate.
 class_name HotseatSession
 extends RefCounted
 
@@ -65,15 +65,19 @@ extends RefCounted
 ## - `POWER_STEP` -- the Action Step's action has resolved and
 ##   `state.power_step_open` is true. Both players act, alternating, until two
 ##   passes in a row end the Step and the Turn with it (§5.3).
-## - `SEGMENT_COMPLETE` -- the round has run every Turn it has and is not the
-##   final round, so `advance_segment()` is the next thing to happen (§10).
-## - `MATCH_COMPLETE` -- the final round's Combat Segment is complete. There is
-##   no next round and `advance_segment()` will refuse.
+## - `SEGMENT_COMPLETE` -- the round has run every Turn it has and the match
+##   has not ended, so `advance_segment()` is the next thing to happen (§10).
+## - `MATCH_COMPLETE` -- the match has ended per §11.3, either by elimination,
+##   round limit, or the configured condition.
 enum Phase { ACTION_STEP, POWER_STEP, SEGMENT_COMPLETE, MATCH_COMPLETE }
 
 ## The gate, and the route to the state -- which is deliberately not cached
 ## here. Read through `_state()` at the point of use.
 var _authority: Authority
+
+## The authored round structure and §11 match dials. Stored here so the
+## session can ask MatchVictory whether the match has ended.
+var _profile: RoundProfile
 
 ## The one route to a resolver this class has. Built over `_authority` and
 ## `templates` when the caller does not supply one, so the session and the
@@ -82,30 +86,39 @@ var _authority: Authority
 var _driver: RoundDriver
 
 
-## `authority` and `templates` are required; `templates` is stored nowhere and
-## is used only to build the driver when one is not given.
+## `authority`, `profile` and `templates` are required; `profile` is stored
+## and `templates` is used only to build the driver when one is not given.
 ##
 ## `driver` is optional: a caller that already has a `RoundDriver` over the
 ## same `Authority` hands it in, and a caller that does not gets one built
 ## here.
-func _init(authority: Authority, templates: FighterTemplates, driver: RoundDriver = null) -> void:
+func _init(
+	authority: Authority,
+	profile: RoundProfile,
+	templates: FighterTemplates,
+	driver: RoundDriver = null
+) -> void:
 	_authority = authority
+	_profile = profile
 	_driver = driver if driver != null else RoundDriver.new(authority, templates)
 
 
 ## Which step of which Turn the match is on, derived from the state as it is
 ## right now.
 ##
-## The order of the tests is the meaning of the answer: a complete Combat
-## Segment is reported before anything about a Step, because a Segment with no
-## Turns left has no Step to be in, and the final round is distinguished from
-## every other complete Segment because only one of the two has a next round to
-## begin.
+## The order of the tests is the meaning of the answer: the match-end check
+## comes first, because an elimination can end the match mid-round and must be
+## reported immediately; then the complete Combat Segment check; then the
+## Power Step and Action Step. A match that has not ended reports a Segment or
+## Step as it does today.
 func phase() -> Phase:
 	var state := _state()
 
+	if MatchVictory.has_ended(state, _profile):
+		return Phase.MATCH_COMPLETE
+
 	if state.combat_segment_complete():
-		return Phase.MATCH_COMPLETE if state.is_final_round() else Phase.SEGMENT_COMPLETE
+		return Phase.SEGMENT_COMPLETE
 
 	if state.power_step_open:
 		return Phase.POWER_STEP
@@ -113,11 +126,24 @@ func phase() -> Phase:
 	return Phase.ACTION_STEP
 
 
-## The player whose Turn it is, or `""` when the round has none left.
+## The player whose Turn it is, or `""` when the round has none left and when
+## the match has ended.
 ##
 ## Delegates to `RoundDriver.active_player_id()`, which derives it from
 ## `TurnSequence`. Never read back off `Authority` -- see the class docstring.
+##
+## **A match that has ended names nobody**, even mid-round with Turns still
+## unspent. `TurnSequence` would still name the player whose Turn it structurally
+## is, because the round is not over; §11.3 says the match is, and this class
+## reports the match. That is a *report*, not a rule and not a gate: nothing here
+## refuses that player's command, and a submission by them still comes back
+## answered by `Authority` or by the action, exactly as the class docstring
+## promises. `players_to_act()` reads this answer and is empty for the same
+## reason.
 func active_player_id() -> String:
+	if phase() == Phase.MATCH_COMPLETE:
+		return ""
+
 	return _driver.active_player_id()
 
 
@@ -189,12 +215,22 @@ func pass_power_step(player_id: String) -> TurnResult:
 ## Runs spec §10's End Segment through `RoundDriver.end_segment()`: the round
 ## ends, its round-level flags clear, the next one begins.
 ##
-## Returns the driver's `TurnResult` unchanged, refusals included --
-## `EndSegment.FAILURE_COMBAT_SEGMENT_INCOMPLETE` while Turns remain, and
-## `EndSegment.FAILURE_FINAL_ROUND` on the match's last round, which is the
-## refusal `MATCH_COMPLETE` names in advance.
+## Returns the driver's `TurnResult` unchanged. On a complete Segment while the
+## match has not ended, the Segment succeeds and advances the round. On the
+## match's final round's complete Segment or on any Segment whose configured
+## condition ends the match, the Segment succeeds with the match-end form and
+## returns without mutations. An incomplete Segment is refused with
+## `EndSegment.FAILURE_COMBAT_SEGMENT_INCOMPLETE`.
 func advance_segment() -> TurnResult:
-	return _driver.end_segment()
+	return _driver.end_segment(_profile)
+
+
+## The match outcome for the live state, determined by asking `MatchVictory`.
+##
+## Returns an unended outcome while the match is still in play, and an ended
+## outcome once `phase()` reports `MATCH_COMPLETE`.
+func outcome() -> MatchOutcome:
+	return MatchVictory.evaluate(_state(), _profile)
 
 
 ## The live state, off the gate, at the moment of use. Never cached -- see the

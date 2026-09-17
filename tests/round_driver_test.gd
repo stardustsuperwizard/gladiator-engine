@@ -149,6 +149,10 @@ static func _combat_profile() -> CombatProfile:
 	return load(COMBAT_PROFILE_PATH)
 
 
+static func _round_profile() -> RoundProfile:
+	return load(ROUND_PROFILE_PATH)
+
+
 ## A hexagonal board of `BOARD_RADIUS` rings, all NORMAL.
 static func _board() -> Board:
 	var board := Board.new()
@@ -405,6 +409,7 @@ static func _expect_no_ninth_turn(driver: RoundDriver, state: GameState) -> Arra
 static func _test_the_end_segment_entry_point_begins_the_next_round() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state(SEED)
+	var profile := _round_profile()
 	var authority := Authority.new(state)
 	var driver := RoundDriver.new(authority, _templates())
 
@@ -416,7 +421,7 @@ static func _test_the_end_segment_entry_point_begins_the_next_round() -> Array[S
 		)
 	)
 
-	var ended := driver.end_segment()
+	var ended := driver.end_segment(profile)
 
 	violations.append_array(
 		_expect(ended.success, "the driver's End Segment must run, got %s" % ended.reason)
@@ -507,6 +512,7 @@ static func _test_the_gate_is_synced_from_the_rule_not_seeded_by_construction() 
 static func _test_a_charge_in_round_1_charges_again_in_round_2() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state(SEED)
+	var profile := _round_profile()
 	var authority := Authority.new(state)
 	var driver := RoundDriver.new(authority, _templates())
 
@@ -523,7 +529,7 @@ static func _test_a_charge_in_round_1_charges_again_in_round_2() -> Array[String
 	violations.append_array(_play_power_step(driver, "p1"))
 	violations.append_array(_play_remaining_turns_as_guards(driver))
 
-	var ended := driver.end_segment()
+	var ended := driver.end_segment(profile)
 	violations.append_array(
 		_expect(ended.success, "the driver's End Segment must run, got %s" % ended.reason)
 	)

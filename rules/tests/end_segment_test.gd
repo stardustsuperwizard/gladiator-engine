@@ -25,6 +25,29 @@
 ## Guarded is attacked and its save target read off the resolver, and the
 ## lockout is proved released by resolving the three actions it barred. A flag
 ## nobody reads would be a cleared flag that changed nothing.
+##
+## **The match-end form is asserted next door**, in
+## `rules/tests/end_segment_match_end_test.gd`: the final round's round limit,
+## a mid-round elimination and the unbounded match all live there, because
+## keeping them here puts this file past `.gdlintrc`'s `max-file-lines`. That
+## file forwards onto the fixtures below rather than copying them, and the
+## split falls on which branch a case asserts -- everything here is the
+## ordinary path, where the Segment actually does its six steps.
+##
+## **The RoundProfile fixture** is built in memory -- `_basic_round_profile()`
+## -- rather than named from `res://`, and it authors §11.3's Standard Victory,
+## because the branch under test is the one `MatchVictory.has_ended()` decides
+## and a profile naming no registered condition would never take it. The
+## unbounded companion lives with the one case that needs it, next door.
+##
+## **Every state fixture puts a fighter on the board for each side, and that is
+## load-bearing rather than decorative.** `StandardVictory` ends a match the
+## moment a side in `state.turn_order()` has nobody left on the board, so a
+## fixture that placed only one side's fighter would report an elimination its
+## case never intended and send every assertion below down the match-end branch,
+## where no flag clears and no counter moves. `_incomplete_state()` therefore
+## garrisons both players at the far edge of the board, adjacent to nothing any
+## case uses, and a case that wants the match *ended* says so itself.
 class_name EndSegmentTest
 
 ## The line running away from `ORIGIN`, all within `AttackActionTest`'s
@@ -45,6 +68,15 @@ const NEAR_ORIGIN := Vector3i(0, 1, -1)
 ## occupied hex.
 const AWAY_FROM_ORIGIN := Vector3i(-1, 0, 1)
 
+## One fighter per side, parked on the far rim of `AttackActionTest`'s radius-5
+## board so that neither side is ever `StandardVictory`'s eliminated side by
+## accident. Five hexes from `ORIGIN` and two from each other: adjacent to
+## nothing any case below moves through, attacks into or counts neighbours of.
+const GARRISON_P1 := "garrison-p1"
+const GARRISON_P2 := "garrison-p2"
+const GARRISON_P1_HOME := Vector3i(-5, 5, 0)
+const GARRISON_P2_HOME := Vector3i(-5, 3, 2)
+
 ## Spec §5.2's Turns per player and §5.1's rounds per match, chosen for this
 ## suite. Two players, so a complete Combat Segment is four Turns taken.
 const TURNS_PER_PLAYER := 2
@@ -61,7 +93,6 @@ static func run() -> bool:
 	var violations: Array[String] = []
 
 	violations.append_array(_test_an_incomplete_combat_segment_is_refused())
-	violations.append_array(_test_a_final_round_is_refused())
 	violations.append_array(_test_a_runnable_state_runs())
 	violations.append_array(_test_round_level_flags_clear_on_the_board())
 	violations.append_array(_test_the_counters_advance())
@@ -105,12 +136,19 @@ static func _template(move: int = 1, save: int = 2, health: int = 5) -> FighterT
 
 
 ## A state whose Combat Segment is **not** complete: the round structure is
-## configured, and one Turn of it remains.
+## configured, one Turn of it remains, and both sides hold a fighter.
+##
+## The two garrison fighters are what keep `StandardVictory` from reporting an
+## elimination nobody in these cases caused -- see the class docstring. They are
+## placed before any case adds its own fighters, so `state.fighter_ids()` order
+## is stable across the suite.
 static func _incomplete_state(seed_value: int = 11) -> GameState:
 	var state := AttackActionTest._build_state(seed_value)
 	state.turns_per_player = TURNS_PER_PLAYER
 	state.rounds_per_match = ROUNDS_PER_MATCH
 	state.turns_taken = TURNS_PER_PLAYER * state.turn_order().size() - 1
+	_place(state, GARRISON_P1, "p1", GARRISON_P1_HOME, _template())
+	_place(state, GARRISON_P2, "p2", GARRISON_P2_HOME, _template())
 	return state
 
 
@@ -169,6 +207,17 @@ static func _harmless_profile() -> CombatProfile:
 	)
 
 
+## A RoundProfile with Standard Victory configured, so `MatchVictory.has_ended()`
+## can detect both elimination and the round limit. This is the profile these
+## tests use when they need victory determination.
+static func _basic_round_profile() -> RoundProfile:
+	var profile := RoundProfile.new()
+	profile.turns_per_player = TURNS_PER_PLAYER
+	profile.rounds_per_match = ROUNDS_PER_MATCH
+	profile.victory_condition = "standard"
+	return profile
+
+
 # --- Refusals ---------------------------------------------------------------
 
 
@@ -179,6 +228,7 @@ static func _test_an_incomplete_combat_segment_is_refused() -> Array[String]:
 	var violations: Array[String] = []
 	var template := _template()
 	var state := _incomplete_state()
+	var profile := _basic_round_profile()
 	_place(state, "a1", "p1", ORIGIN, template)
 	_flag(state, "a1", template, StatusFlags.round_level())
 	var digest := state.digest()
@@ -186,12 +236,12 @@ static func _test_an_incomplete_combat_segment_is_refused() -> Array[String]:
 
 	violations.append_array(
 		_expect(
-			not EndSegment.can_run(state),
+			not EndSegment.can_run(state, profile),
 			"can_run() must be false while at least one Turn of the round remains"
 		)
 	)
 
-	var result := EndSegment.run(state)
+	var result := EndSegment.run(state, profile)
 
 	violations.append_array(
 		_expect(
@@ -215,61 +265,21 @@ static func _test_an_incomplete_combat_segment_is_refused() -> Array[String]:
 	return violations
 
 
-## On the final round there is no next round to begin, so a complete Combat
-## Segment is refused all the same -- and nothing is cleared on the way out.
-static func _test_a_final_round_is_refused() -> Array[String]:
-	var violations: Array[String] = []
-	var template := _template()
-	var state := _complete_state()
-	state.round_number = ROUNDS_PER_MATCH
-	_place(state, "a1", "p1", ORIGIN, template)
-	_flag(state, "a1", template, StatusFlags.round_level())
-	var digest := state.digest()
-	var rng_state := state.rng.get_state()
-
-	violations.append_array(
-		_expect(not EndSegment.can_run(state), "can_run() must be false on the match's final round")
-	)
-
-	var result := EndSegment.run(state)
-
-	violations.append_array(
-		_expect(
-			result.reason == EndSegment.FAILURE_FINAL_ROUND,
-			"a complete Segment on the final round must be refused with FAILURE_FINAL_ROUND"
-		)
-	)
-	violations.append_array(_expect(not result.success, "the refusal must not report success"))
-	violations.append_array(
-		_expect(
-			state.digest() == digest,
-			"a final-round refusal must leave the state digest identical -- no flag cleared"
-		)
-	)
-	violations.append_array(
-		_expect(
-			state.rng.get_state() == rng_state,
-			"a final-round refusal must not advance the generator's state"
-		)
-	)
-
-	return violations
-
-
 ## The other half of the `can_run()`/`run()` agreement: a state the predicate
 ## calls runnable is one `run()` resolves against.
 static func _test_a_runnable_state_runs() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _complete_state()
+	var profile := _basic_round_profile()
 
 	violations.append_array(
 		_expect(
-			EndSegment.can_run(state),
+			EndSegment.can_run(state, profile),
 			"can_run() must be true for a complete Segment short of the final round"
 		)
 	)
 
-	var result := EndSegment.run(state)
+	var result := EndSegment.run(state, profile)
 
 	violations.append_array(_expect(result.success, "run() must resolve when can_run() is true"))
 	violations.append_array(
@@ -288,6 +298,7 @@ static func _test_round_level_flags_clear_on_the_board() -> Array[String]:
 	var violations: Array[String] = []
 	var template := _template()
 	var state := _complete_state()
+	var profile := _basic_round_profile()
 	_place(state, "a1", "p1", ORIGIN, template)
 	_place(state, "a2", "p1", NEAR_ORIGIN, template)
 	_place(state, "b1", "p2", H1, template)
@@ -295,7 +306,7 @@ static func _test_round_level_flags_clear_on_the_board() -> Array[String]:
 	_flag(state, "a2", template, [StatusFlags.GUARDED] as Array[String])
 	_flag(state, "b1", template, StatusFlags.round_level())
 
-	var result := EndSegment.run(state)
+	var result := EndSegment.run(state, profile)
 
 	violations.append_array(
 		_expect(result.success, "this scenario must run for it to test anything")
@@ -335,9 +346,10 @@ static func _test_round_level_flags_clear_on_the_board() -> Array[String]:
 static func _test_the_counters_advance() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _complete_state()
+	var profile := _basic_round_profile()
 	var before_round := state.round_number
 
-	EndSegment.run(state)
+	EndSegment.run(state, profile)
 
 	violations.append_array(
 		_expect(
@@ -366,13 +378,14 @@ static func _test_a_defeated_fighter_is_left_exactly_as_it_is() -> Array[String]
 	var violations: Array[String] = []
 	var template := _template()
 	var state := _complete_state()
+	var profile := _basic_round_profile()
 	_place(state, "a1", "p1", ORIGIN, template)
 	_place(state, "d1", "p2", H1, template)
 	_flag(state, "d1", template, StatusFlags.round_level())
 	state.board.remove_occupant(H1)
 	var payload := JSON.stringify(state.fighter("d1"))
 
-	EndSegment.run(state)
+	EndSegment.run(state, profile)
 
 	violations.append_array(
 		_expect(
@@ -413,6 +426,7 @@ static func _test_a_moved_fighter_moves_again_next_round() -> Array[String]:
 	var violations: Array[String] = []
 	var template := _template()
 	var state := _complete_state()
+	var profile := _basic_round_profile()
 	_place(state, "a1", "p1", ORIGIN, template)
 
 	var first := MoveAction.new("a1", H1, template).resolve(state)
@@ -424,7 +438,7 @@ static func _test_a_moved_fighter_moves_again_next_round() -> Array[String]:
 		)
 	)
 
-	EndSegment.run(state)
+	EndSegment.run(state, profile)
 
 	violations.append_array(
 		_expect(_is_clear(state, "a1", template), 'the End Segment must clear the "moved" flag')
@@ -450,15 +464,18 @@ static func _test_a_moved_fighter_moves_again_next_round() -> Array[String]:
 static func _test_a_charged_fighter_charges_again_next_round() -> Array[String]:
 	var violations: Array[String] = []
 	var template := _template(4)
-	var profile := _harmless_profile()
+	var combat_profile := _harmless_profile()
+	var round_profile := _basic_round_profile()
 	var state := _complete_state()
 	_place(state, "a1", "p1", ORIGIN, template)
 	_place(state, "b1", "p2", H4, template)
 
-	var first := ChargeAction.new("a1", H3, "b1", template, template, profile).resolve(state)
+	var first := ChargeAction.new("a1", H3, "b1", template, template, combat_profile).resolve(state)
 	violations.append_array(_expect(first.success, "the round 1 Charge must resolve"))
 
-	var repeat := ChargeAction.new("a1", NEAR_H4, "b1", template, template, profile).resolve(state)
+	var repeat := ChargeAction.new("a1", NEAR_H4, "b1", template, template, combat_profile).resolve(
+		state
+	)
 	violations.append_array(
 		_expect(
 			repeat.reason == ChargeAction.FAILURE_ALREADY_ACTED,
@@ -466,13 +483,15 @@ static func _test_a_charged_fighter_charges_again_next_round() -> Array[String]:
 		)
 	)
 
-	EndSegment.run(state)
+	EndSegment.run(state, round_profile)
 
 	violations.append_array(
 		_expect(_is_clear(state, "a1", template), 'the End Segment must clear the "charged" flag')
 	)
 
-	var second := ChargeAction.new("a1", NEAR_H4, "b1", template, template, profile).resolve(state)
+	var second := ChargeAction.new("a1", NEAR_H4, "b1", template, template, combat_profile).resolve(
+		state
+	)
 
 	violations.append_array(
 		_expect(
@@ -497,7 +516,8 @@ static func _test_a_charged_fighter_charges_again_next_round() -> Array[String]:
 static func _test_the_charge_lockout_releases() -> Array[String]:
 	var violations: Array[String] = []
 	var template := _template()
-	var profile := _harmless_profile()
+	var combat_profile := _harmless_profile()
+	var round_profile := _basic_round_profile()
 	var state := _complete_state()
 	_place(state, "a1", "p1", ORIGIN, template)
 	_place(state, "a2", "p1", NEAR_ORIGIN, template)
@@ -522,7 +542,12 @@ static func _test_the_charge_lockout_releases() -> Array[String]:
 	violations.append_array(
 		_expect(
 			(
-				AttackAction.new("a1", "b1", template, template, profile).resolve(state).reason
+				(
+					AttackAction
+					. new("a1", "b1", template, template, combat_profile)
+					. resolve(state)
+					. reason
+				)
 				== AttackAction.FAILURE_CHARGE_LOCKOUT
 			),
 			"the locked-out fighter's Attack must be refused before the End Segment"
@@ -538,7 +563,7 @@ static func _test_the_charge_lockout_releases() -> Array[String]:
 		)
 	)
 
-	EndSegment.run(state)
+	EndSegment.run(state, round_profile)
 
 	for fighter_id in state.fighter_ids():
 		violations.append_array(
@@ -556,7 +581,7 @@ static func _test_the_charge_lockout_releases() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			AttackAction.new("a1", "b1", template, template, profile).resolve(state).success,
+			AttackAction.new("a1", "b1", template, template, combat_profile).resolve(state).success,
 			"the released fighter must resolve an Attack in round 2"
 		)
 	)
@@ -577,6 +602,7 @@ static func _test_a_guarded_fighter_saves_at_its_unmodified_target() -> Array[St
 	var violations: Array[String] = []
 	var template := _template()
 	var state := _complete_state()
+	var profile := _basic_round_profile()
 	_place(state, "a1", "p1", ORIGIN, template)
 	_place(state, "b1", "p2", H1, template)
 
@@ -600,7 +626,7 @@ static func _test_a_guarded_fighter_saves_at_its_unmodified_target() -> Array[St
 		)
 	)
 
-	EndSegment.run(state)
+	EndSegment.run(state, profile)
 
 	var cleared := AttackAction.new(
 		"a1", "b1", template, template, AttackActionTest.standard_profile()
@@ -628,12 +654,13 @@ static func _test_the_generator_is_untouched_by_a_successful_run() -> Array[Stri
 	var violations: Array[String] = []
 	var template := _template()
 	var state := _complete_state()
+	var profile := _basic_round_profile()
 	_place(state, "a1", "p1", ORIGIN, template)
 	_flag(state, "a1", template, StatusFlags.round_level())
 	var rng_state := state.rng.get_state()
 	var rng_seed := state.rng.get_seed()
 
-	var result := EndSegment.run(state)
+	var result := EndSegment.run(state, profile)
 
 	violations.append_array(
 		_expect(result.success, "this scenario must run for it to test anything")
@@ -660,11 +687,12 @@ static func _test_the_result_survives_serialization() -> Array[String]:
 	var violations: Array[String] = []
 	var template := _template()
 	var state := _complete_state()
+	var profile := _basic_round_profile()
 	_place(state, "a1", "p1", ORIGIN, template)
 	_flag(state, "a1", template, StatusFlags.round_level())
 	var before := state.digest()
 
-	EndSegment.run(state)
+	EndSegment.run(state, profile)
 
 	violations.append_array(
 		_expect(state.digest() != before, "the End Segment must change the state's digest")

@@ -547,19 +547,17 @@ static func _test_the_final_round_stops_offering_commands() -> Array[String]:
 		)
 	)
 
-	var refused := scene.advance_segment()
+	var advanced := scene.advance_segment()
 	violations.append_array(
 		_expect(
-			not refused.success and refused.reason == EndSegment.FAILURE_FINAL_ROUND,
-			"match: advancing past the final round was not refused"
+			advanced.success,
+			"match: the match-end form should succeed on the final round, got %s" % advanced.reason
 		)
 	)
 	violations.append_array(
 		_expect(
-			scene.log_lines()[scene.log_lines().size() - 1].ends_with(
-				String(EndSegment.FAILURE_FINAL_ROUND)
-			),
-			"match: the final-round refusal was not logged verbatim"
+			scene.log_lines()[scene.log_lines().size() - 1].ends_with("ok"),
+			"match: the match-end form should log success verbatim"
 		)
 	)
 	violations.append_array(
