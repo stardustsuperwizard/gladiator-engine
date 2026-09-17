@@ -133,18 +133,28 @@ static func _test_attack_defeat_under_deathmatch_awards_the_profile_amount() -> 
 	violations.append_array(
 		_expect(action.target_defeated(), "this scenario must defeat the target")
 	)
-	violations.append_array(
-		_expect(
-			state.board.occupant_at(AttackActionTest.TARGET_HEX) == Board.EMPTY_OCCUPANT,
-			"a defeated fighter's hex must report no occupant under Deathmatch, exactly as it does "
-			+ "with no mode named at all"
+	(
+		violations
+		. append_array(
+			_expect(
+				state.board.occupant_at(AttackActionTest.TARGET_HEX) == Board.EMPTY_OCCUPANT,
+				(
+					"a defeated fighter's hex must report no occupant under Deathmatch, exactly as it does "
+					+ "with no mode named at all"
+				)
+			)
 		)
 	)
-	violations.append_array(
-		_expect(
-			state.player("p1").score == profile.defeat_award,
-			"a defeat resolved under Deathmatch must raise the attacker's owner's score by exactly "
-			+ "defeat_award"
+	(
+		violations
+		. append_array(
+			_expect(
+				state.player("p1").score == profile.defeat_award,
+				(
+					"a defeat resolved under Deathmatch must raise the attacker's owner's score by exactly "
+					+ "defeat_award"
+				)
+			)
 		)
 	)
 
@@ -225,11 +235,16 @@ static func _test_charge_defeat_routes_through_the_same_seam() -> Array[String]:
 	violations.append_array(
 		_expect(action.attack_half().target_defeated(), "this scenario must defeat the target")
 	)
-	violations.append_array(
-		_expect(
-			state.player("p1").score == profile.defeat_award,
-			"a defeating Charge under Deathmatch must credit the same award a standalone Attack "
-			+ "would, routed through the same seam"
+	(
+		violations
+		. append_array(
+			_expect(
+				state.player("p1").score == profile.defeat_award,
+				(
+					"a defeating Charge under Deathmatch must credit the same award a standalone Attack "
+					+ "would, routed through the same seam"
+				)
+			)
 		)
 	)
 

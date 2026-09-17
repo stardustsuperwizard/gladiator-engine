@@ -208,7 +208,13 @@ func attack(state: GameState, fighter_id: String, target_id: String) -> AttackAc
 		return null
 
 	return AttackAction.new(
-		fighter_id, target_id, attacker_template, target_template, _combat_profile, false, _game_mode
+		fighter_id,
+		target_id,
+		attacker_template,
+		target_template,
+		_combat_profile,
+		false,
+		_game_mode
 	)
 
 

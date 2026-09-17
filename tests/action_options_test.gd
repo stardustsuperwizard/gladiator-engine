@@ -608,7 +608,6 @@ static func _test_builders_return_null_for_unknown_fighter() -> Array[String]:
 
 # --- Read-only ---------------------------------------------------------------
 
-
 # --- Game mode ---------------------------------------------------------------
 
 
@@ -675,9 +674,9 @@ static func _test_attack_and_charge_carry_the_constructed_mode_through() -> Arra
 
 	# Charge, under Deathmatch: the composed attack half credits the award.
 	var deathmatch_charge_state := _charge_fixture(template)
-	var deathmatch_destination: Vector3i = deathmatch_options.charge_destinations(
-		deathmatch_charge_state, "f1", "f2"
-	)[0]
+	var deathmatch_destination: Vector3i = (
+		deathmatch_options.charge_destinations(deathmatch_charge_state, "f1", "f2")[0]
+	)
 	var deathmatch_charge := deathmatch_options.charge(
 		deathmatch_charge_state, "f1", "f2", deathmatch_destination
 	)
@@ -699,9 +698,9 @@ static func _test_attack_and_charge_carry_the_constructed_mode_through() -> Arra
 
 	# Charge, under an unregistered mode: the same defeat awards nothing.
 	var unknown_charge_state := _charge_fixture(template)
-	var unknown_destination: Vector3i = unknown_options.charge_destinations(
-		unknown_charge_state, "f1", "f2"
-	)[0]
+	var unknown_destination: Vector3i = (
+		unknown_options.charge_destinations(unknown_charge_state, "f1", "f2")[0]
+	)
 	var unknown_charge := unknown_options.charge(
 		unknown_charge_state, "f1", "f2", unknown_destination
 	)
