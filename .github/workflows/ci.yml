@@ -309,6 +309,12 @@ jobs:
               # `spec-traceability` job below.
               ".github/scripts/spec_traceability.py",
               ".github/scripts/test-spec-traceability.sh",
+              # The spec-change impact report (T3, #385). Reads the same two
+              # files as the entries above via `git show` and `spec_traceability.py`;
+              # never loads the Godot project. Covered by the same
+              # `spec-traceability` job's test harness above, not run on
+              # every spec change by any workflow.
+              ".github/scripts/spec-impact-report.py",
           ]
 
           # Carried over verbatim in content from
