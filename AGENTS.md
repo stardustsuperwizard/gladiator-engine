@@ -367,6 +367,12 @@ believes a rule is wrong says so and stops; it does not correct it in the
 resolver, and a rule that lives only in code is a bug regardless of how right
 it is.
 
+After writing the dated revision note, run `.github/scripts/spec-impact-report.py`
+to classify what the change touches. Turn anything not classified `still-valid`
+into an Implementation Task before further work builds on it — the three
+classifications are `still-valid` (revision notes only), `needs-review` (content
+added), and `likely-superseded` (content altered or removed).
+
 The numbers are a different matter. Dice counts, damage values, target numbers,
 modifiers and point costs are all expected to be tuned, which is why they live
 in data files rather than in the resolver — see spec §12.

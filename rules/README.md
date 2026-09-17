@@ -41,6 +41,12 @@ dependency arrow: **the game depends on `rules/`, never the reverse.**
 | `match/` | Match configuration dials, game modes, victory conditions | §11 |
 | `tests/` | Contract and regression suites | — |
 
+The `## Layout` table above is a human overview mapping each directory to its
+spec section. The machine-readable form of the same mapping lives in
+`docs/spec-traceability.json`, indexed with stable `TR-NNNN` IDs and kept from
+rotting by `.github/scripts/test-spec-traceability.sh`. The table remains the
+human entry point and will not become a second source of truth.
+
 ## Why `TurnAction` lives here, not in the game
 
 The source repo keeps `Action`/`ActionResult` in game-side `scripts/` and lets

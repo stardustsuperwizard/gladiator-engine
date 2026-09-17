@@ -2503,6 +2503,9 @@ are custom agents and MCP servers.
 | `.github/scripts/task_scope.py` | The one path rule the pushing workflows share: the ⚠️ delicate-paths flag, implementer eligibility from an Issue's expected files (`agent-01-planner.yml`, `agent-02-implement.yml`, the control plane), and pushability from a pull request's changed files (`agent-05-fix.yml`) |
 | `.github/scripts/ledger_row.py` | The one derivation of a ledger row: turns a merged pull request's already-fetched GitHub JSON into the `merge` row and its `session` rows, with no network and no model. Called by `run-ledger.yml`, which appends what it prints and computes no field of its own |
 | `.github/scripts/build-plan-review-request.py` | Deterministic plan-review request assembler: no network, no `gh`, no model; resolves the greppable half of checks 5, 6 and 8 (dependency edges, expected files, unresolved artifact names) into one context file for `plan-reviewer` |
+| `.github/scripts/spec_traceability.py` | Parses the spec into sections and validates the traceability index's schema — id format, status, and module paths |
+| `.github/scripts/test-spec-traceability.sh` | Structural check harness for the spec-traceability index; no Godot, credentials or network |
+| `.github/scripts/spec-impact-report.py` | Spec-change impact report: diffs the spec, maps through the index, and classifies each changed section as still-valid, needs-review, or likely-superseded |
 | `.github/agents/01-planner.agent.md` | Planner role, Issue promotion criteria |
 | `.github/agents/02-implementer.agent.md` | Implementer role, scope boundaries |
 | `.github/agents/03-reviewer.agent.md` | Reviewer role, verdict classification |
