@@ -93,6 +93,7 @@ var _suites: Array[Dictionary] = [
 	{"name": "Charge Action Test", "run": ChargeActionTest.run},
 	{"name": "Charge Action Equivalence Test", "run": ChargeActionEquivalenceTest.run},
 	{"name": "End Segment Test", "run": EndSegmentTest.run},
+	{"name": "Match Victory Test", "run": MatchVictoryTest.run},
 	{"name": "Turn Sequence Test", "run": TurnSequenceTest.run},
 	{"name": "Determinism Test", "run": DeterminismTest.run},
 	{"name": "Fighter Template Test", "run": FighterTemplateTest.run},
