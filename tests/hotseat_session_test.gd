@@ -97,9 +97,18 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 # --- Fixtures ---------------------------------------------------------------
 
 
-## This suite's one template. Nothing here Attacks or Charges, so only `health`
-## and `save` need to be sane; `move` and `range_hexes` are authored anyway so
-## the template is a well-formed one rather than a half-filled resource.
+## This suite's one template, and every stat on it is now load-bearing for at
+## least one case. Most cases only Guard, and need `health` and `save`; the
+## elimination case resolves a real `AttackAction` through the session, which
+## reads `range_hexes` to reach an adjacent target, `attack` for the size of the
+## dice pool and `damage` for what a Hit takes off -- with `health` deciding how
+## much damage `_elimination_session()` has to apply to leave its fighter one
+## point from defeat. Only `move` is authored purely so the template is a
+## well-formed one rather than a half-filled resource.
+##
+## The targets the Attack rolls against come from `_forced_hit_profile()` and
+## not from here, which is why `attack` and `save` set the pool's size rather
+## than its outcome.
 static func _template() -> FighterTemplate:
 	var template := FighterTemplate.new()
 	template.template_id = TEMPLATE_ID
