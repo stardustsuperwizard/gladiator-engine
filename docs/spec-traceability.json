@@ -1,0 +1,337 @@
+{
+  "spec": "docs/hex-skirmish-game-spec.md",
+  "entries": [
+    {
+      "id": "TR-0001",
+      "section": "1",
+      "status": "unimplemented",
+      "modules": [],
+      "tests": [],
+      "note": "Overview and introduction; structural documentation with no implementation content."
+    },
+    {
+      "id": "TR-0002",
+      "section": "2",
+      "status": "active",
+      "modules": [
+        "rules/board/board.gd",
+        "rules/board/hex_coord.gd"
+      ],
+      "tests": [
+        "rules/tests/board_test.gd",
+        "rules/tests/hex_coord_test.gd",
+        "rules/tests/line_of_sight_test.gd",
+        "rules/tests/reachability_test.gd",
+        "rules/tests/board_serialization_test.gd"
+      ],
+      "note": "Hex grid structure, line-of-sight calculation, and distance measurement."
+    },
+    {
+      "id": "TR-0003",
+      "section": "3",
+      "status": "active",
+      "modules": [
+        "rules/fighters/fighter.gd",
+        "rules/fighters/fighter_template.gd",
+        "rules/combat/combat_profile.gd",
+        "rules/fighters/construction_budget.gd",
+        "rules/fighters/status_flags.gd",
+        "rules/state/game_state.gd"
+      ],
+      "tests": [
+        "rules/tests/fighter_test.gd",
+        "rules/tests/fighter_template_test.gd",
+        "rules/tests/combat_profile_test.gd",
+        "rules/tests/construction_budget_test.gd",
+        "rules/tests/status_flags_test.gd",
+        "rules/tests/fighter_serialization_test.gd",
+        "rules/tests/game_state_test.gd"
+      ],
+      "note": "Fighter entities, combat profile, construction budget, and game state data structures."
+    },
+    {
+      "id": "TR-0004",
+      "section": "3.1",
+      "status": "active",
+      "modules": [
+        "rules/fighters/fighter.gd",
+        "rules/fighters/fighter_template.gd",
+        "rules/combat/combat_profile.gd"
+      ],
+      "tests": [
+        "rules/tests/fighter_test.gd",
+        "rules/tests/fighter_template_test.gd",
+        "rules/tests/combat_profile_test.gd"
+      ],
+      "note": "Fighter, CombatProfile, ConstructionBudget, and other entity schemas."
+    },
+    {
+      "id": "TR-0005",
+      "section": "3.2",
+      "status": "active",
+      "modules": [
+        "rules/fighters/fighter.gd",
+        "rules/fighters/construction_budget.gd"
+      ],
+      "tests": [
+        "rules/tests/fighter_test.gd",
+        "rules/tests/construction_budget_test.gd"
+      ],
+      "note": "Combat stats and construction budget validation."
+    },
+    {
+      "id": "TR-0006",
+      "section": "3.3",
+      "status": "unimplemented",
+      "modules": [],
+      "tests": [],
+      "note": "Weapons as presentation-only; no mechanical implementation required."
+    },
+    {
+      "id": "TR-0007",
+      "section": "3.4",
+      "status": "active",
+      "modules": [
+        "rules/state/game_state.gd",
+        "rules/state/deterministic_rng.gd"
+      ],
+      "tests": [
+        "rules/tests/game_state_test.gd",
+        "rules/tests/deterministic_rng_test.gd",
+        "rules/tests/determinism_test.gd"
+      ],
+      "note": "GameState serialization and visibility; deterministic RNG for reproducibility."
+    },
+    {
+      "id": "TR-0008",
+      "section": "4",
+      "status": "unimplemented",
+      "modules": [],
+      "tests": [],
+      "note": "Setup sequence requires card system (ability and scoring decks); card system not yet implemented."
+    },
+    {
+      "id": "TR-0009",
+      "section": "5",
+      "status": "active",
+      "modules": [
+        "rules/state/turn_sequence.gd",
+        "rules/state/turn_action.gd",
+        "rules/state/end_segment.gd",
+        "rules/state/power_step.gd"
+      ],
+      "tests": [
+        "rules/tests/turn_sequence_test.gd",
+        "rules/tests/turn_action_test.gd",
+        "rules/tests/end_segment_test.gd",
+        "rules/tests/power_step_test.gd"
+      ],
+      "note": "Round structure, segments, turns, and steps."
+    },
+    {
+      "id": "TR-0010",
+      "section": "5.2",
+      "status": "active",
+      "modules": [
+        "rules/state/turn_sequence.gd"
+      ],
+      "tests": [
+        "rules/tests/turn_sequence_test.gd"
+      ],
+      "note": "Combat Segment alternation and turn order."
+    },
+    {
+      "id": "TR-0011",
+      "section": "5.3",
+      "status": "active",
+      "modules": [
+        "rules/state/turn_action.gd",
+        "rules/actions/default_action_step.gd"
+      ],
+      "tests": [
+        "rules/tests/turn_action_test.gd",
+        "rules/tests/default_action_step_test.gd"
+      ],
+      "note": "A Turn structure, Action and Power steps, default Guard action."
+    },
+    {
+      "id": "TR-0012",
+      "section": "5.4",
+      "status": "active",
+      "modules": [
+        "rules/state/end_segment.gd"
+      ],
+      "tests": [
+        "rules/tests/end_segment_test.gd",
+        "rules/tests/end_segment_match_end_test.gd"
+      ],
+      "note": "End Segment sequence (scoring, equip, discard, refill, flag clearing)."
+    },
+    {
+      "id": "TR-0013",
+      "section": "6",
+      "status": "active",
+      "modules": [
+        "rules/actions/move_action.gd",
+        "rules/actions/attack_action.gd",
+        "rules/actions/charge_action.gd",
+        "rules/actions/guard_action.gd",
+        "rules/actions/pass_action.gd"
+      ],
+      "tests": [
+        "rules/tests/move_action_test.gd",
+        "rules/tests/attack_action_test.gd",
+        "rules/tests/attack_action_target_test.gd",
+        "rules/tests/attack_action_guard_test.gd",
+        "rules/tests/attack_action_push_test.gd",
+        "rules/tests/charge_action_test.gd",
+        "rules/tests/charge_action_equivalence_test.gd",
+        "rules/tests/guard_action_test.gd",
+        "rules/tests/pass_action_test.gd",
+        "rules/tests/charge_lockout_test.gd"
+      ],
+      "note": "Core actions: Move, Attack, Charge, Guard, and their resolution."
+    },
+    {
+      "id": "TR-0014",
+      "section": "7",
+      "status": "active",
+      "modules": [
+        "rules/combat/combat_profile.gd",
+        "rules/combat/dice_pool.gd",
+        "rules/combat/flanking.gd"
+      ],
+      "tests": [
+        "rules/tests/combat_profile_test.gd",
+        "rules/tests/dice_pool_test.gd",
+        "rules/tests/flanking_test.gd"
+      ],
+      "note": "Combat resolution: ability tags, target validation, dice pool rolling, comparison, and outcomes."
+    },
+    {
+      "id": "TR-0015",
+      "section": "7.3",
+      "status": "active",
+      "modules": [
+        "rules/combat/dice_pool.gd"
+      ],
+      "tests": [
+        "rules/tests/dice_pool_test.gd"
+      ],
+      "note": "Dice pool rolling and target number calculation with modifiers (engagement, flanking, surrounding, guard)."
+    },
+    {
+      "id": "TR-0016",
+      "section": "8",
+      "status": "active",
+      "modules": [
+        "rules/combat/flanking.gd"
+      ],
+      "tests": [
+        "rules/tests/flanking_test.gd"
+      ],
+      "note": "Flanking and surrounding conditions and their modifiers on attack and save rolls."
+    },
+    {
+      "id": "TR-0017",
+      "section": "9",
+      "status": "active",
+      "modules": [
+        "rules/fighters/status_flags.gd",
+        "rules/state/end_segment.gd"
+      ],
+      "tests": [
+        "rules/tests/status_flags_test.gd",
+        "rules/tests/end_segment_test.gd",
+        "rules/tests/end_segment_match_end_test.gd"
+      ],
+      "note": "Damage counter, damage and defeat mechanics, status flag clearing."
+    },
+    {
+      "id": "TR-0018",
+      "section": "10",
+      "status": "active",
+      "modules": [
+        "rules/state/end_segment.gd"
+      ],
+      "tests": [
+        "rules/tests/end_segment_test.gd",
+        "rules/tests/end_segment_match_end_test.gd"
+      ],
+      "note": "End Segment sequence including scoring, card hand management, and match-end checking."
+    },
+    {
+      "id": "TR-0019",
+      "section": "11",
+      "status": "active",
+      "modules": [
+        "rules/match/match_victory.gd",
+        "rules/match/game_mode.gd",
+        "rules/match/match_outcome.gd",
+        "rules/match/deathmatch.gd",
+        "rules/match/standard_victory.gd",
+        "rules/state/round_profile.gd"
+      ],
+      "tests": [
+        "rules/tests/match_victory_test.gd",
+        "rules/tests/game_mode_test.gd"
+      ],
+      "note": "Match configuration (length, game mode, victory condition)."
+    },
+    {
+      "id": "TR-0020",
+      "section": "11.1",
+      "status": "active",
+      "modules": [
+        "rules/state/round_profile.gd"
+      ],
+      "tests": [
+        "rules/tests/round_profile_test.gd"
+      ],
+      "note": "Match length configuration (rounds per match, unbounded option)."
+    },
+    {
+      "id": "TR-0021",
+      "section": "11.2",
+      "status": "active",
+      "modules": [
+        "rules/match/game_mode.gd",
+        "rules/match/deathmatch.gd"
+      ],
+      "tests": [
+        "rules/tests/game_mode_test.gd"
+      ],
+      "note": "Game modes and VP scoring; Deathmatch MVP mode."
+    },
+    {
+      "id": "TR-0022",
+      "section": "11.3",
+      "status": "active",
+      "modules": [
+        "rules/match/standard_victory.gd",
+        "rules/match/match_outcome.gd",
+        "rules/match/match_victory.gd"
+      ],
+      "tests": [
+        "rules/tests/match_victory_test.gd"
+      ],
+      "note": "Victory conditions and winner determination; Standard Victory MVP condition."
+    },
+    {
+      "id": "TR-0023",
+      "section": "11.4",
+      "status": "unimplemented",
+      "modules": [],
+      "tests": [],
+      "note": "Optional modules (scoring deck, objective tokens) are out of MVP scope and unimplemented."
+    },
+    {
+      "id": "TR-0024",
+      "section": "12",
+      "status": "unimplemented",
+      "modules": [],
+      "tests": [],
+      "note": "Implementation notes and guidelines; documentation without direct implementation."
+    }
+  ]
+}
