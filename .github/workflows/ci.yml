@@ -226,6 +226,11 @@ jobs:
               ".github/scripts/sync-issue-dependencies.py",
               ".github/scripts/sync-human-credentials-label.py",
               ".github/scripts/test-issue-dependencies.sh",
+              # Spec traceability harness. Validates the index and spec
+              # sections; has its own check, run by the `spec-traceability`
+              # job below. The index schema module itself is tested here too.
+              ".github/scripts/spec_traceability.py",
+              ".github/scripts/test-spec-traceability.sh",
               # The control plane's own test harness. Neither it nor this
               # workflow loads the Godot project. `.github/tests/**` is the
               # harness's fixture tree -- captured Issue bodies read by
@@ -325,6 +330,10 @@ jobs:
               ".claude/commands/**",
               "project.godot",
               "docs/engine-reference/godot/VERSION.md",
+              # Spec and traceability index. A change to either must re-run
+              # the spec-traceability harness, which is control plane.
+              "docs/hex-skirmish-game-spec.md",
+              "docs/spec-traceability.json",
           ]
 
           # A PR runs the Godot check if *any* changed file falls outside the
@@ -597,6 +606,25 @@ jobs:
       - name: Issue Dependency Contract
         shell: bash
         run: .github/scripts/test-issue-dependencies.sh
+
+  # Spec traceability index validation. Verifies the index schema, checks
+  # that all cited paths exist, and ensures all spec sections are indexed.
+  # Needs no network, credentials, the GitHub CLI, or a real repository, so
+  # this job stays fast and is modelled on `issue-deps` above.
+  spec-traceability:
+    name: Spec Traceability Index
+    needs: changes
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.control_plane == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Spec Traceability Contract
+        shell: bash
+        run: .github/scripts/test-spec-traceability.sh
 
   # Workflow schema, expression syntax, and action-reference checking.
   actionlint:
@@ -1153,7 +1181,7 @@ jobs:
   ci:
     name: ci
     needs:
-      [changes, godot, export, smoke, workflow-logic, issue-deps, actionlint,
+      [changes, godot, export, smoke, workflow-logic, issue-deps, spec-traceability, actionlint,
        test-ratchet, red-gate]
     if: always()
     runs-on: ubuntu-latest
