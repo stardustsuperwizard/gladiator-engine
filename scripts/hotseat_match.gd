@@ -481,4 +481,6 @@ func _match_over_text(outcome: MatchOutcome) -> String:
 		return "%s It's a draw, decided by %s." % [MATCH_OVER_TEXT, ending]
 
 	var rule: String = RULE_LABELS.get(outcome.deciding_rule, "")
-	return "%s %s wins %s, decided by %s." % [MATCH_OVER_TEXT, _named(outcome.winner_id), rule, ending]
+	return (
+		"%s %s wins %s, decided by %s." % [MATCH_OVER_TEXT, _named(outcome.winner_id), rule, ending]
+	)

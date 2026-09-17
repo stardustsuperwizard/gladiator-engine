@@ -609,8 +609,10 @@ static func _test_an_outright_vp_win_names_the_winner_and_the_rule() -> Array[St
 	var outcome := session.outcome()
 	violations.append_array(
 		_expect(
-			session.phase() == HotseatSession.Phase.MATCH_COMPLETE
-			and outcome.deciding_rule == MatchOutcome.RULE_VICTORY_POINTS,
+			(
+				session.phase() == HotseatSession.Phase.MATCH_COMPLETE
+				and outcome.deciding_rule == MatchOutcome.RULE_VICTORY_POINTS
+			),
 			"vp win: the fixture must reach MATCH_COMPLETE decided outright on VP to test anything"
 		)
 	)
@@ -621,7 +623,8 @@ static func _test_an_outright_vp_win_names_the_winner_and_the_rule() -> Array[St
 	)
 	violations.append_array(
 		_expect(
-			not (MatchSetup.PLAYER_TWO in status), "vp win: the HUD names the loser as though it won"
+			not (MatchSetup.PLAYER_TWO in status),
+			"vp win: the HUD names the loser as though it won"
 		)
 	)
 	violations.append_array(
@@ -658,8 +661,10 @@ static func _test_a_tiebreaker_win_names_the_winner_and_the_tiebreaker() -> Arra
 	var outcome := session.outcome()
 	violations.append_array(
 		_expect(
-			session.phase() == HotseatSession.Phase.MATCH_COMPLETE
-			and outcome.deciding_rule == MatchOutcome.RULE_ONLY_SURVIVING_SIDE,
+			(
+				session.phase() == HotseatSession.Phase.MATCH_COMPLETE
+				and outcome.deciding_rule == MatchOutcome.RULE_ONLY_SURVIVING_SIDE
+			),
 			(
 				"tiebreaker: the fixture must reach MATCH_COMPLETE decided by tiebreaker 1 to test"
 				+ " anything"
