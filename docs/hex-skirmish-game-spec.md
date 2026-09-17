@@ -362,11 +362,10 @@ react, and only during the Power Step.
 > **Revised 2026-09-17. Owner decision.** This section previously said
 > "Players alternate Turns until each has taken a set number of Turns (e.g. 4
 > each)," and §3.1 modelled that count as an authored `turnsPerPlayer` dial.
-> The code was not diverging from that text — `resources/round/round_profile.tres`
-> authored `turns_per_player = 4` and `GameState.combat_segment_complete()`
-> ended the Segment at `turns_taken >= turns_per_player * _turn_order.size()`,
-> exactly what the sentence above asked for. This is a rules fix, not a code
-> defect.
+> The implementation was not diverging from that text — it authored a fixed
+> count of four Turns per player and ended the Segment once that many had
+> been taken, exactly what the sentence above asked for. This is a rules
+> fix, not a code defect.
 >
 > **A round's Turn allowance is now derived, not authored.** A player takes
 > as many Turns in a round as they have fighters on the board, and each
