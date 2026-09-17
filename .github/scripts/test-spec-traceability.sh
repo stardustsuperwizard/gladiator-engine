@@ -87,6 +87,28 @@ def check_unmapped_sections(spec_text, index):
 
     unmapped = top_level - indexed_sections
     return sorted(unmapped, key=lambda s: int(s))
+
+
+def format_schema_error(error):
+    """Render a `load_index` error dict with the identifying fields it carries.
+
+    `load_index` attaches 'id', 'section' and 'module' unevenly across its
+    error types (and only 'index' for an entry too malformed to have an id).
+    Printing 'message' alone makes two entries failing the same way
+    byte-identical -- an operator reading a red build cannot tell which entry
+    to open -- so whatever identifying fields the error carries are appended.
+    """
+    details = []
+    for key in ('id', 'section', 'module', 'index'):
+        value = error.get(key)
+        if value is None or value == '':
+            continue
+        label = 'path' if key == 'module' else key
+        details.append(f"{label}={value}")
+    message = error.get('message', 'unknown error')
+    if details:
+        return f"{message} ({', '.join(details)})"
+    return message
 PY
 
 # ---------------------------------------------------------------------------
@@ -101,7 +123,11 @@ import os
 sys.path.insert(0, sys.argv[2])
 sys.path.insert(0, sys.argv[3])
 import spec_traceability
-from check_helpers import check_missing_paths, check_unmapped_sections
+from check_helpers import (
+    check_missing_paths,
+    check_unmapped_sections,
+    format_schema_error,
+)
 
 repo_root = sys.argv[1]
 index_path = os.path.join(repo_root, "docs/spec-traceability.json")
@@ -113,9 +139,13 @@ messages = []
 
 if errors:
     # Schema errors leave the index unusable; report them and stop there,
-    # same as the rest of this harness's callers do.
+    # same as the rest of this harness's callers do -- which means one schema
+    # error suppresses the missing-path and unmapped-section checks below, so
+    # each reported line has to be identifiable on its own. Every line carries
+    # the structured id/section/path fields load_index attaches, not just the
+    # generic message, so two entries failing the same way are distinguishable.
     for error in errors:
-        messages.append(f"Index schema error: {error['message']}")
+        messages.append(f"Index schema error: {format_schema_error(error)}")
 else:
     for entry_id, path in check_missing_paths(repo_root, index):
         messages.append(f"Entry {entry_id} cites missing path: {path}")
@@ -331,6 +361,72 @@ PY
     pass "Active entry with no modules correctly detected: $test_4_output"
 else
     fail "Active entry with no modules not detected: $test_4_output"
+fi
+
+# Test 5: Both defects in one index. Tests 3 and 4 each prove a single defect
+# from its own fixture, which leaves co-reporting inferred rather than
+# asserted -- a load that stopped at the first error would still pass both.
+# This fixture carries the duplicate TR-NNNN id and the module-less active
+# entry together, and both must come back from the one load.
+echo "  Test 5: Duplicate ID and module-less active entry in one index should both be reported"
+fixture_combined_errors="$work_dir/fixture_combined_errors.json"
+cat > "$fixture_combined_errors" <<'JSON'
+{
+  "spec": "docs/hex-skirmish-game-spec.md",
+  "entries": [
+    {
+      "id": "TR-0001",
+      "section": "1",
+      "status": "active",
+      "modules": ["rules/board/board.gd"],
+      "tests": [],
+      "note": "First entry"
+    },
+    {
+      "id": "TR-0001",
+      "section": "2",
+      "status": "active",
+      "modules": ["rules/board/hex_coord.gd"],
+      "tests": [],
+      "note": "Duplicate ID"
+    },
+    {
+      "id": "TR-0002",
+      "section": "3",
+      "status": "active",
+      "modules": [],
+      "tests": [],
+      "note": "No modules"
+    }
+  ]
+}
+JSON
+
+if test_5_output=$(python3 - "$fixture_combined_errors" "$scripts" "$work_dir" 2>&1 <<'PY'
+import sys
+sys.path.insert(0, sys.argv[2])
+sys.path.insert(0, sys.argv[3])
+import spec_traceability
+from check_helpers import format_schema_error
+
+index, errors = spec_traceability.load_index(sys.argv[1])
+
+dup_errors = [e for e in errors if e.get('type') == 'duplicate_id']
+empty_errors = [e for e in errors if e.get('type') == 'active_empty_modules']
+
+assert dup_errors, f"no duplicate_id error reported from combined fixture: {errors}"
+assert empty_errors, f"no active_empty_modules error reported from combined fixture: {errors}"
+
+assert dup_errors[0].get('id') == 'TR-0001', f"duplicate error does not name the ID: {dup_errors[0]}"
+assert empty_errors[0].get('id') == 'TR-0002', f"empty-modules error does not name the ID: {empty_errors[0]}"
+assert empty_errors[0].get('section') == '3', f"empty-modules error does not name the section: {empty_errors[0]}"
+
+print("; ".join(format_schema_error(e) for e in dup_errors + empty_errors))
+PY
+); then
+    pass "Both defects reported from one index: $test_5_output"
+else
+    fail "Combined duplicate ID and module-less active entry not both reported: $test_5_output"
 fi
 
 # ---------------------------------------------------------------------------
