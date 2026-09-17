@@ -54,6 +54,8 @@ static func run() -> bool:
 	violations.append_array(_test_a_refusal_is_logged_verbatim_and_recoverable())
 	violations.append_array(_test_the_segment_boundary_is_offered_not_taken())
 	violations.append_array(_test_the_final_round_stops_offering_commands())
+	violations.append_array(_test_an_outright_vp_win_names_the_winner_and_the_rule())
+	violations.append_array(_test_a_tiebreaker_win_names_the_winner_and_the_tiebreaker())
 
 	if violations.is_empty():
 		return true
@@ -504,8 +506,10 @@ static func _test_the_segment_boundary_is_offered_not_taken() -> Array[String]:
 	return violations
 
 
-## The final round's complete Segment stops the scene: no commands offered, the
-## match reported over, no winner named, and #173 pointed at.
+## The final round's complete Segment stops the scene: no commands offered, and
+## the match reported over -- declining every Turn awards no VP and defeats
+## nobody, so this reaches MATCH_COMPLETE level on every measure, and the HUD
+## reports it a draw naming no winner and pointing at no issue.
 static func _test_the_final_round_stops_offering_commands() -> Array[String]:
 	var violations: Array[String] = []
 	var scene := _open_match()
@@ -517,18 +521,33 @@ static func _test_the_final_round_stops_offering_commands() -> Array[String]:
 		_close_match(scene)
 		return violations
 
+	var outcome := session.outcome()
+	violations.append_array(
+		_expect(
+			outcome.deciding_rule == MatchOutcome.RULE_DRAW,
+			"match: declining every Turn must leave both sides level to test a draw"
+		)
+	)
+
 	var status := _label_text(scene, "StatusLabel")
 
 	violations.append_array(
 		_expect(
-			status == HotseatMatch.MATCH_OVER_TEXT, "match: the HUD does not report the match over"
+			status.begins_with(HotseatMatch.MATCH_OVER_TEXT),
+			"match: the HUD does not report the match over"
 		)
 	)
-	violations.append_array(_expect("#173" in status, "match: the HUD does not point at #173"))
+	violations.append_array(_expect(not ("#173" in status), "match: the HUD still points at #173"))
 	violations.append_array(
 		_expect(
 			not (MatchSetup.PLAYER_ONE in status) and not (MatchSetup.PLAYER_TWO in status),
-			"match: the HUD names a winner"
+			"match: the HUD names a winner in a draw"
+		)
+	)
+	violations.append_array(
+		_expect(
+			HotseatMatch.ENDING_LABELS[MatchOutcome.ENDING_ROUND_LIMIT] in status,
+			"match: the HUD does not name how the match ended"
 		)
 	)
 	violations.append_array(
@@ -571,6 +590,109 @@ static func _test_the_final_round_stops_offering_commands() -> Array[String]:
 	return violations
 
 
+## An outright VP win: both sides still stand, but one holds more VP, so
+## tiebreak 1 and 2 are never consulted. Drives the state straight to the
+## round limit with the scores it needs -- exactly what a played-out match
+## would leave behind, without playing one out.
+static func _test_an_outright_vp_win_names_the_winner_and_the_rule() -> Array[String]:
+	var violations: Array[String] = []
+	var scene := _open_match()
+	var session := scene.session()
+	var state := scene.state()
+
+	state.player(MatchSetup.PLAYER_ONE).score = 3
+	state.player(MatchSetup.PLAYER_TWO).score = 1
+	state.round_number = state.rounds_per_match
+	state.turns_taken = state.turns_per_player * state.turn_order().size()
+	_force_render(scene)
+
+	var outcome := session.outcome()
+	violations.append_array(
+		_expect(
+			(
+				session.phase() == HotseatSession.Phase.MATCH_COMPLETE
+				and outcome.deciding_rule == MatchOutcome.RULE_VICTORY_POINTS
+			),
+			"vp win: the fixture must reach MATCH_COMPLETE decided outright on VP to test anything"
+		)
+	)
+
+	var status := _label_text(scene, "StatusLabel")
+	violations.append_array(
+		_expect(MatchSetup.PLAYER_ONE in status, "vp win: the HUD does not name the winner")
+	)
+	violations.append_array(
+		_expect(
+			not (MatchSetup.PLAYER_TWO in status),
+			"vp win: the HUD names the loser as though it won"
+		)
+	)
+	violations.append_array(
+		_expect(
+			HotseatMatch.RULE_LABELS[MatchOutcome.RULE_VICTORY_POINTS] in status,
+			"vp win: the HUD does not name the deciding rule"
+		)
+	)
+	violations.append_array(
+		_expect(
+			HotseatMatch.ENDING_LABELS[MatchOutcome.ENDING_ROUND_LIMIT] in status,
+			"vp win: the HUD does not name how the match ended"
+		)
+	)
+
+	_close_match(scene)
+	return violations
+
+
+## A tiebreaker win: level VP, but only one side still has a fighter on the
+## board, so tiebreaker 1 names it rather than the VP that could not.
+static func _test_a_tiebreaker_win_names_the_winner_and_the_tiebreaker() -> Array[String]:
+	var violations: Array[String] = []
+	var scene := _open_match()
+	var session := scene.session()
+	var state := scene.state()
+
+	state.player(MatchSetup.PLAYER_ONE).score = 2
+	state.player(MatchSetup.PLAYER_TWO).score = 2
+	state.board.remove_occupant(MatchSetup.P2_WARRIOR_START)
+	state.board.remove_occupant(MatchSetup.P2_ARCHER_START)
+	_force_render(scene)
+
+	var outcome := session.outcome()
+	violations.append_array(
+		_expect(
+			(
+				session.phase() == HotseatSession.Phase.MATCH_COMPLETE
+				and outcome.deciding_rule == MatchOutcome.RULE_ONLY_SURVIVING_SIDE
+			),
+			(
+				"tiebreaker: the fixture must reach MATCH_COMPLETE decided by tiebreaker 1 to test"
+				+ " anything"
+			)
+		)
+	)
+
+	var status := _label_text(scene, "StatusLabel")
+	violations.append_array(
+		_expect(MatchSetup.PLAYER_ONE in status, "tiebreaker: the HUD does not name the winner")
+	)
+	violations.append_array(
+		_expect(
+			HotseatMatch.RULE_LABELS[MatchOutcome.RULE_ONLY_SURVIVING_SIDE] in status,
+			"tiebreaker: the HUD does not name the deciding tiebreaker"
+		)
+	)
+	violations.append_array(
+		_expect(
+			HotseatMatch.ENDING_LABELS[MatchOutcome.ENDING_ELIMINATION] in status,
+			"tiebreaker: the HUD does not name how the match ended"
+		)
+	)
+
+	_close_match(scene)
+	return violations
+
+
 # --- Helpers ----------------------------------------------------------------
 
 
@@ -599,3 +721,11 @@ static func _play_until(scene: HotseatMatch, target: HotseatSession.Phase) -> in
 			return -1
 
 	return -1
+
+
+## Redraws the HUD off whatever `scene.state()` now holds, for a fixture that
+## edited the state directly rather than through an intent method. Clearing a
+## selection is the one intent method with no submission and no log entry of
+## its own, so it forces the same re-render a command would without being one.
+static func _force_render(scene: HotseatMatch) -> void:
+	scene.select_fighter("")
