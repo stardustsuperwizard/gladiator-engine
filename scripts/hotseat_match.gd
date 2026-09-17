@@ -51,10 +51,14 @@
 ## the authority object on the match scene, signals travel up from `BoardView`
 ## and direct calls travel down to it.
 ##
-## **At `MATCH_COMPLETE` it stops.** The buttons go dead and the HUD says the
-## match is over and that working out who won is #173. It names no winner and
-## computes no score -- the match-end form (steps 1-2 only) is where
-## this scene's job ends.
+## **At `MATCH_COMPLETE` it stops and reports the outcome.** The buttons go
+## dead and the HUD names the winner -- or reports a draw -- and the rule that
+## decided the match: outright victory points, or one of spec §11.3's two
+## tiebreakers, together with whether elimination or the round limit ended it.
+## Every one of those facts is read off `_session.outcome()`, asked fresh at
+## each render rather than cached; this class still computes no score and
+## resolves no tiebreaker of its own -- the match-end form (steps 1-2 only) is
+## where this scene's job ends.
 class_name HotseatMatch
 extends Node
 
@@ -76,10 +80,28 @@ const PHASE_LABELS := {
 	HotseatSession.Phase.MATCH_COMPLETE: "Match complete",
 }
 
-## What the HUD says once the final round's Combat Segment is complete. It
-## names no winner on purpose: victory determination is #173, and a banner
-## guessing at it would be a rule this scene does not have.
-const MATCH_OVER_TEXT := "The match is over. Working out who won is issue #173."
+## The fixed lead-in the status line carries once the match has ended, before
+## `_match_over_text()` appends who won -- or that nobody did -- and why. The
+## whole sentence is never a single literal: who won and why come off
+## `_session.outcome()` at render time, never guessed at here.
+const MATCH_OVER_TEXT := "The match is over."
+
+## Display text for `MatchOutcome.ended_by`, keyed by the constant -- the shape
+## `PHASE_LABELS` already uses.
+const ENDING_LABELS := {
+	MatchOutcome.ENDING_ELIMINATION: "elimination",
+	MatchOutcome.ENDING_ROUND_LIMIT: "the round limit",
+}
+
+## Display text for `MatchOutcome.deciding_rule`, keyed by the constant -- the
+## shape `PHASE_LABELS` already uses. `MatchOutcome.RULE_DRAW` names no text
+## here: `_match_over_text()` branches on it before this dictionary is
+## consulted, because a draw names no winner for a rule to sit beside.
+const RULE_LABELS := {
+	MatchOutcome.RULE_VICTORY_POINTS: "outright on victory points",
+	MatchOutcome.RULE_ONLY_SURVIVING_SIDE: "on tiebreaker 1 (only surviving side)",
+	MatchOutcome.RULE_MOST_SURVIVING_FIGHTERS: "on tiebreaker 2 (most surviving fighters)",
+}
 
 ## Shown where a player id would be when the rules name nobody.
 const NOBODY := "--"
@@ -383,7 +405,7 @@ func _render() -> void:
 	_pass_button.visible = phase == HotseatSession.Phase.POWER_STEP
 	_pass_button.text = "Pass (%s)" % _named(to_act)
 	_advance_button.visible = phase == HotseatSession.Phase.SEGMENT_COMPLETE
-	_status_label.text = MATCH_OVER_TEXT if match_over else ""
+	_status_label.text = _match_over_text(_session.outcome()) if match_over else ""
 	_log_label.text = "\n".join(_log)
 
 
@@ -440,3 +462,23 @@ func _pending_text() -> String:
 ## `id`, or `NOBODY` when the rules named nobody.
 func _named(id: String) -> String:
 	return NOBODY if id.is_empty() else id
+
+
+## What the status line says at `MATCH_COMPLETE`, built fresh from `outcome`
+## every time this is called -- nothing about it is cached, the same
+## discipline `_render()` keeps for the phase and the players.
+##
+## A draw is `outcome.deciding_rule == MatchOutcome.RULE_DRAW`, checked before
+## `RULE_LABELS` is consulted, because a draw names no winner for a rule to sit
+## beside. Every other rule names the winner through `_named()` and the rule
+## through `RULE_LABELS`; both cases name how the match ended through
+## `ENDING_LABELS`. All three lookups are keyed by the `MatchOutcome` constant
+## itself, never by comparing a player id or re-deriving a condition.
+func _match_over_text(outcome: MatchOutcome) -> String:
+	var ending: String = ENDING_LABELS.get(outcome.ended_by, "")
+
+	if outcome.deciding_rule == MatchOutcome.RULE_DRAW:
+		return "%s It's a draw, decided by %s." % [MATCH_OVER_TEXT, ending]
+
+	var rule: String = RULE_LABELS.get(outcome.deciding_rule, "")
+	return "%s %s wins %s, decided by %s." % [MATCH_OVER_TEXT, _named(outcome.winner_id), rule, ending]
