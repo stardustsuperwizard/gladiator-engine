@@ -446,8 +446,7 @@ static func _test_an_unbounded_match_advances_past_the_mvp_round_limit() -> Arra
 		var advanced := EndSegment.run(state, profile)
 		violations.append_array(
 			_expect(
-				advanced.success,
-				"an unbounded match's Segment must run, got %s" % advanced.reason
+				advanced.success, "an unbounded match's Segment must run, got %s" % advanced.reason
 			)
 		)
 		# Play out the round the Segment just opened, so the next one is complete.
@@ -698,9 +697,9 @@ static func _test_a_charged_fighter_charges_again_next_round() -> Array[String]:
 	var first := ChargeAction.new("a1", H3, "b1", template, template, combat_profile).resolve(state)
 	violations.append_array(_expect(first.success, "the round 1 Charge must resolve"))
 
-	var repeat := ChargeAction.new(
-		"a1", NEAR_H4, "b1", template, template, combat_profile
-	).resolve(state)
+	var repeat := ChargeAction.new("a1", NEAR_H4, "b1", template, template, combat_profile).resolve(
+		state
+	)
 	violations.append_array(
 		_expect(
 			repeat.reason == ChargeAction.FAILURE_ALREADY_ACTED,
@@ -714,9 +713,9 @@ static func _test_a_charged_fighter_charges_again_next_round() -> Array[String]:
 		_expect(_is_clear(state, "a1", template), 'the End Segment must clear the "charged" flag')
 	)
 
-	var second := ChargeAction.new(
-		"a1", NEAR_H4, "b1", template, template, combat_profile
-	).resolve(state)
+	var second := ChargeAction.new("a1", NEAR_H4, "b1", template, template, combat_profile).resolve(
+		state
+	)
 
 	violations.append_array(
 		_expect(
@@ -767,7 +766,12 @@ static func _test_the_charge_lockout_releases() -> Array[String]:
 	violations.append_array(
 		_expect(
 			(
-				AttackAction.new("a1", "b1", template, template, combat_profile).resolve(state).reason
+				(
+					AttackAction
+					. new("a1", "b1", template, template, combat_profile)
+					. resolve(state)
+					. reason
+				)
 				== AttackAction.FAILURE_CHARGE_LOCKOUT
 			),
 			"the locked-out fighter's Attack must be refused before the End Segment"

@@ -611,7 +611,10 @@ static func _test_the_final_round_completes_the_match() -> Array[String]:
 	violations.append_array(
 		_expect(
 			advanced.success,
-			"the final round's Segment must run the match-end form and succeed, got %s" % advanced.reason
+			(
+				"the final round's Segment must run the match-end form and succeed, got %s"
+				% advanced.reason
+			)
 		)
 	)
 	violations.append_array(
@@ -622,15 +625,11 @@ static func _test_the_final_round_completes_the_match() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			state.round_number == before_round,
-			"the match-end form must not advance round_number"
+			state.round_number == before_round, "the match-end form must not advance round_number"
 		)
 	)
 	violations.append_array(
-		_expect(
-			state.turns_taken == before_turns,
-			"the match-end form must not reset turns_taken"
-		)
+		_expect(state.turns_taken == before_turns, "the match-end form must not reset turns_taken")
 	)
 
 	return violations

@@ -93,7 +93,9 @@ var _driver: RoundDriver
 ## same `Authority` hands it in, and a caller that does not gets one built
 ## here.
 func _init(
-	authority: Authority, profile: RoundProfile, templates: FighterTemplates,
+	authority: Authority,
+	profile: RoundProfile,
+	templates: FighterTemplates,
 	driver: RoundDriver = null
 ) -> void:
 	_authority = authority
