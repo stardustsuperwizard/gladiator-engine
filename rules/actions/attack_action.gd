@@ -36,7 +36,10 @@
 ## `Activation`'s own docstring for spec §5.2's once-per-round record this
 ## begins, and for why `ChargeAction`'s own call to the same method -- reached
 ## through this composed `AttackAction` and then directly -- must be
-## idempotent.
+## idempotent. `_refusal()` reads that record back as
+## `FAILURE_ALREADY_ACTIVATED`, so `refusal_from()` reports it too and every
+## affordance query built on that pre-check goes empty for an activated
+## fighter.
 ##
 ## **Draw order is the contract.** The attack pool is drawn *entirely* before
 ## the save pool, both through `state.rng`, and nothing else in `resolve()`
@@ -146,6 +149,10 @@ const FAILURE_TARGET_ALREADY_DEFEATED := &"attack_target_already_defeated"
 ## One of the three injected objects is `null`, or a fighter payload could not
 ## be parsed. Refusing beats crashing, and beats resolving against a guess.
 const FAILURE_MISSING_DATA := &"attack_missing_data"
+
+## Spec §5.2's once-per-round activation: the actor has already been acted with
+## this round. See `Activation`.
+const FAILURE_ALREADY_ACTIVATED := &"attack_already_activated"
 
 ## Spec §6's Charge lockout refuses this actor -- see `ChargeLockout`.
 const FAILURE_CHARGE_LOCKOUT := &"attack_charge_lockout"
@@ -333,9 +340,10 @@ func refusal_from(state: GameState, attacker_position: Vector3i) -> StringName:
 
 ## Why this attack cannot resolve, or `&""` when it can.
 ##
-## The single implementation of the predicate, in three steps and one fixed
-## order: is there an attack to resolve at all, then spec §6's Charge lockout,
-## then is this a legal target. `Authority.refusal()` sets the shape -- one
+## The single implementation of the predicate, in four steps and one fixed
+## order: is there an attack to resolve at all, then spec §5.2's once-per-round
+## activation, then spec §6's Charge lockout, then is this a legal target.
+## `Authority.refusal()` sets the shape -- one
 ## predicate, one order, no second copy -- though the three answer entirely
 ## separate questions in entirely separate vocabularies and none may be
 ## expressed in another's terms.
@@ -347,6 +355,9 @@ func _refusal(state: GameState, attacker: Fighter, target: Fighter) -> StringNam
 	var identity := _identity_refusal(state, attacker, target)
 	if not identity.is_empty():
 		return identity
+
+	if Activation.has_activated(state, actor_id()):
+		return FAILURE_ALREADY_ACTIVATED
 
 	if ChargeLockout.locks_out(state, attacker):
 		return FAILURE_CHARGE_LOCKOUT

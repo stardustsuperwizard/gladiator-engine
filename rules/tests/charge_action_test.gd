@@ -80,6 +80,7 @@ static func run() -> bool:
 	violations.append_array(_test_missing_injected_data_is_refused())
 	violations.append_array(_test_unparseable_payload_is_refused())
 
+	violations.append_array(_test_an_actor_that_has_activated_is_refused())
 	violations.append_array(_test_an_actor_that_has_moved_is_refused())
 	violations.append_array(_test_an_actor_that_has_charged_is_refused())
 
@@ -853,9 +854,42 @@ static func _test_unparseable_payload_is_refused() -> Array[String]:
 	)
 
 
+# --- Spec §5.2's once-per-round activation ----------------------------------
+
+
+## An actor that has already acted this round is refused
+## `FAILURE_ALREADY_ACTIVATED`, and it is refused that **before** §6's
+## `FAILURE_ALREADY_ACTED`: the actor here carries both the activation record
+## and `"moved"`, which is what any real Move leaves behind, and the reported
+## reason must be the same one every time.
+static func _test_an_actor_that_has_activated_is_refused() -> Array[String]:
+	var violations: Array[String] = []
+	var template := _template(4)
+	var state := _baseline_state(template)
+	_flag(state, ACTOR_ID, template, MoveAction.FLAG_MOVED)
+	Activation.record(state, ACTOR_ID)
+
+	var action := _charge(H3, template, _forced(_always(), _never()))
+	violations.append_array(
+		_assert_refused(
+			"an actor that has already acted this round",
+			state,
+			action,
+			ChargeAction.FAILURE_ALREADY_ACTIVATED,
+			template
+		)
+	)
+
+	return violations
+
+
 # --- Spec §6's precondition -------------------------------------------------
 
 
+## The flags below are set by hand and no activation is recorded, which is what
+## keeps this case about §6's own precondition rather than §5.2's allowance --
+## the two are separate rules with separate constants, and the activation one
+## runs first.
 static func _test_an_actor_that_has_moved_is_refused() -> Array[String]:
 	var violations: Array[String] = []
 	var template := _template(4)

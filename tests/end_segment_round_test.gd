@@ -3,7 +3,7 @@
 ##
 ## Each Turn is an action submitted through `ActionRunner`, followed by both
 ## players passing the Power Step -- which is what completes a Turn (spec
-## §5.3) -- until `GameState.combat_segment_complete()` reports the Combat
+## §5.3) -- until `TurnSequence.combat_segment_complete()` reports the Combat
 ## Segment over. **The loop reads that off the state; it never counts Turns
 ## itself.** `MAX_TURNS` bounds a runaway loop and is not the loop's
 ## condition: a run that reaches it is reported as a failure rather than
@@ -40,8 +40,10 @@ const F2_HOME := Vector3i(3, -3, 0)
 
 const BOARD_RADIUS := 3
 
-## Spec §5.2's Turns per player and §5.1's rounds per match, chosen for this
-## case: two players at two Turns each is a four-Turn Combat Segment.
+## §5.1's rounds per match, chosen for this case, and the dead
+## `turns_per_player` dial the state still carries. Spec §5.2's Turn allowance
+## is derived from the board -- one champion a side here, so the round is two
+## Turns -- and neither constant decides it.
 const TURNS_PER_PLAYER := 2
 const ROUNDS_PER_MATCH := 3
 
@@ -184,20 +186,21 @@ static func _test_a_full_round_completes_and_the_end_segment_begins_the_next() -
 
 	violations.append_array(
 		_expect(
-			not state.combat_segment_complete(),
+			not TurnSequence.combat_segment_complete(state),
 			"a round that has not been played must not report a complete Combat Segment"
 		)
 	)
 
 	# The round's first Turn is a Move, so the round has a `"moved"` flag in it
-	# for the End Segment to clear. Every later Turn is a Guard, which any
-	# fighter may take from where it stands however many Turns the round has.
+	# for the End Segment to clear. Every later Turn is a Guard by whichever
+	# champion still has spec §5.2's activation unspent, which any fighter may
+	# take from where it stands however many Turns the round has.
 	violations.append_array(
 		_play_turn(runner, authority, MoveAction.new("f1", F1_ROUND_1, _template()))
 	)
 
 	var played := 1
-	while not state.combat_segment_complete():
+	while not TurnSequence.combat_segment_complete(state):
 		played += 1
 		if played > MAX_TURNS:
 			(
@@ -255,7 +258,7 @@ static func _test_a_full_round_completes_and_the_end_segment_begins_the_next() -
 	)
 	violations.append_array(
 		_expect(
-			not state.combat_segment_complete(),
+			not TurnSequence.combat_segment_complete(state),
 			"round 2's Combat Segment must not already be complete"
 		)
 	)

@@ -46,9 +46,17 @@ var rng: DeterministicRng
 var round_number: int = 1
 var turns_taken: int = 0
 
-## Spec §5.2's Turns per player per round, and §5.1's rounds per match. Both
-## authored: the game side seeds them from an authored RoundProfile, and
-## `rules/` never loads a resource path. Zero means unconfigured.
+## Spec §5.1's rounds per match, and the dial that used to carry §5.2's Turns
+## per player. Both authored: the game side seeds them from an authored
+## RoundProfile, and `rules/` never loads a resource path. Zero means
+## unconfigured.
+##
+## **`turns_per_player` is dead weight and is read by nothing.** Spec §5.2 as
+## revised 2026-09-17 derives a round's Turn allowance from the board --
+## `TurnSequence.remaining_turns()` -- so no rule consults this field any
+## more. It survives here, in `RoundProfile` and in `round_profile.tres` only
+## until the task that removes all three lands; it is still serialized, so
+## deleting it before then would change `digest()` for every stored state.
 var turns_per_player: int = 0
 var rounds_per_match: int = 0
 
@@ -188,20 +196,6 @@ func record_power_step_pass(player_id: String) -> bool:
 ## Empties the consecutive-pass record.
 func clear_power_step_passes() -> void:
 	_power_step_passes.clear()
-
-
-## True when every player has completed their Turns for this round (§5.2), so
-## the Combat Segment is over and the End Segment (§5.4) may run.
-##
-## False for an unconfigured state -- `turns_per_player` at or below zero, or
-## no players -- because a Segment that was never sized has not been
-## completed.
-func combat_segment_complete() -> bool:
-	if turns_per_player <= 0:
-		return false
-	if _turn_order.is_empty():
-		return false
-	return turns_taken >= turns_per_player * _turn_order.size()
 
 
 ## True when `round_number` has reached the last round of the match (§5.1).

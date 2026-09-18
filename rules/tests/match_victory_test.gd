@@ -142,10 +142,35 @@ static func _score(state: GameState, p1_score: int, p2_score: int) -> void:
 
 
 ## Advances the state to the point §11.1's round limit is reached: the final
-## round, with every Turn of its Combat Segment taken.
+## round, with every Turn of its Combat Segment taken -- which spec §5.2 now
+## expresses as every champion on the board having spent its activation.
+## `turns_taken` is moved alongside it for readability; nothing reads it.
 static func _finish_final_round(state: GameState) -> void:
 	state.round_number = ROUNDS_PER_MATCH
 	state.turns_taken = TURNS_PER_PLAYER * state.turn_order().size()
+	_spend_every_activation(state)
+
+
+## Spec §5.2's Combat Segment played out: every champion the board still
+## reports spends its activation. Its inverse -- leaving one unspent -- is what
+## the "mid-Segment" cases below need, and they say so by naming a champion.
+static func _spend_every_activation(state: GameState) -> void:
+	for coord in state.board.coords():
+		var occupant := state.board.occupant_at(coord)
+		if occupant == Board.EMPTY_OCCUPANT:
+			continue
+
+		Activation.record(state, String(occupant))
+
+
+## The inverse of the above for one champion: its activation is cleared the way
+## §10 step 5 clears it, so spec §5.2 still owes its owner a Turn and the
+## Combat Segment is incomplete.
+static func _leave_a_turn_unspent(state: GameState, fighter_id: String) -> void:
+	var cleared := Fighter.without_flags(
+		state.fighter(fighter_id), [Activation.FLAG_ACTIVATED] as Array[String]
+	)
+	state.update_fighter(fighter_id, cleared)
 
 
 ## One row of assertions covering a whole outcome, so each scenario below states
@@ -219,7 +244,7 @@ static func _test_elimination_ends_the_match_mid_round() -> Array[String]:
 
 	violations.append_array(
 		_expect(
-			not state.combat_segment_complete() and not state.is_final_round(),
+			not TurnSequence.combat_segment_complete(state) and not state.is_final_round(),
 			"this scenario must be mid-round and short of the final round to test anything"
 		)
 	)
@@ -264,13 +289,16 @@ static func _test_a_final_round_mid_segment_is_not_over() -> Array[String]:
 	var state := _engaged_state(profile)
 	_score(state, 2, 1)
 	_finish_final_round(state)
-	state.turns_taken -= 1
+	# One champion's Turn left unspent: spec §5.2's Segment is incomplete while
+	# any champion on the board still has one, which is the state this case is
+	# about.
+	_leave_a_turn_unspent(state, "a1")
 
 	var outcome := MatchVictory.evaluate(state, profile)
 
 	violations.append_array(
 		_expect(
-			state.is_final_round() and not state.combat_segment_complete(),
+			state.is_final_round() and not TurnSequence.combat_segment_complete(state),
 			"this scenario must be on the final round with the Segment incomplete"
 		)
 	)
@@ -311,12 +339,13 @@ static func _test_an_unbounded_match_never_reaches_a_round_limit() -> Array[Stri
 	_score(state, 5, 1)
 	state.round_number = FAR_ROUND
 	state.turns_taken = TURNS_PER_PLAYER * state.turn_order().size()
+	_spend_every_activation(state)
 
 	var outcome := MatchVictory.evaluate(state, profile)
 
 	violations.append_array(
 		_expect(
-			state.combat_segment_complete(),
+			TurnSequence.combat_segment_complete(state),
 			"this scenario must have a complete Segment, leaving only the limit in question"
 		)
 	)

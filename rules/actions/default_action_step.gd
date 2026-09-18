@@ -3,15 +3,20 @@
 ## eligible to Guard right now -- or nothing at all when none is.
 ##
 ## **Eligible means exactly what `GuardAction.resolve()` already refuses.**
-## `action_for()` re-derives the same five checks `GuardAction._refusal()`
+## `action_for()` re-derives the same six checks `GuardAction._refusal()`
 ## would run for a given fighter -- a template to parse it with, a payload
 ## that parses, ownership by the deciding player, still the board's occupant
 ## of its own recorded position (spec §9's defeat test, the same one
-## `ChargeLockout.locks_out()` uses), and not held by the Charge lockout -- so
-## that a `GuardAction` this rule hands back never disagrees with the action's
-## own refusal when it is later resolved. Nothing here calls `resolve()` --
-## the caller decides when, and this rule only decides which fighter and
-## whether one qualifies at all.
+## `ChargeLockout.locks_out()` uses), not already activated this round (spec
+## §5.2), and not held by the Charge lockout -- so that a `GuardAction` this
+## rule hands back never disagrees with the action's own refusal when it is
+## later resolved. Nothing here calls `resolve()` -- the caller decides when,
+## and this rule only decides which fighter and whether one qualifies at all.
+##
+## **The activation check is `Activation.has_activated()`, the same call the
+## action itself makes.** This rule mirrors the predicate rather than
+## re-deriving it, and does not become a pre-gate by holding a second copy of
+## §5.2.
 ##
 ## **Walks `state.fighter_ids()`, not `templates.keys()`.** Deployment order is
 ## the order fighters were added to `GameState`, which is exactly what
@@ -27,9 +32,9 @@
 ##
 ## **Returns `null`, not a refused `GuardAction`,** when no fighter qualifies:
 ## when `player_id` names no player in `state.turn_order()`, when `templates`
-## is empty, and when every fighter the player owns is off the board or locked
-## out. A `null` from this rule is "there is nothing to default to", never "a
-## `GuardAction` that would itself be refused".
+## is empty, and when every fighter the player owns is off the board, already
+## activated, or locked out. A `null` from this rule is "there is nothing to
+## default to", never "a `GuardAction` that would itself be refused".
 ##
 ## **Pure.** `action_for()` mutates nothing, commits nothing, resolves
 ## nothing, and draws nothing from `state.rng` -- it only reads `state` and
@@ -49,10 +54,12 @@ extends RefCounted
 ## 3. has `owner_id()` equal to `player_id`,
 ## 4. is still the board's occupant of its own recorded position -- spec §9's
 ##    defeat test, `state.board.occupant_at(fighter.position()) ==
-##    StringName(fighter_id)`, and
-## 5. is not held by `ChargeLockout.locks_out(state, fighter)`.
+##    StringName(fighter_id)`,
+## 5. is not `Activation.has_activated(state, fighter_id)` -- spec §5.2's
+##    once-per-round activation, and
+## 6. is not held by `ChargeLockout.locks_out(state, fighter)`.
 ##
-## Returns `null` when no fighter satisfies all five, when `player_id` names
+## Returns `null` when no fighter satisfies all six, when `player_id` names
 ## no player in `state.turn_order()`, and when `templates` is empty.
 static func action_for(state: GameState, player_id: String, templates: Dictionary) -> GuardAction:
 	if player_id not in state.turn_order():
@@ -74,6 +81,9 @@ static func action_for(state: GameState, player_id: String, templates: Dictionar
 			continue
 
 		if state.board.occupant_at(fighter.position()) != StringName(fighter_id):
+			continue
+
+		if Activation.has_activated(state, fighter_id):
 			continue
 
 		if ChargeLockout.locks_out(state, fighter):

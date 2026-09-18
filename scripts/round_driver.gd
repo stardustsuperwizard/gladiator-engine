@@ -32,7 +32,7 @@
 ## has no way to be cleared -- `set_active_player("")` is refused, because an
 ## empty id is in no turn order. Reading the gate back would therefore report
 ## a stale player for a Turn the round does not have, and a Combat Segment
-## that has run all eight of its Turns would appear to offer a ninth. The rule
+## that has run every Turn it has would appear to offer one more. The rule
 ## is the answer; the gate is kept in step with it so that a submission the
 ## rule permits is one the gate permits too, and `submit()` and `decline()`
 ## refuse on their own -- with `Authority.REFUSED_NO_ACTIVE_PLAYER`, the gate's
@@ -50,7 +50,7 @@
 ## this class reads all three and writes none of them -- the single
 ## `note_action()` call above excepted. A caller that wants to know whether the
 ## round is over asks `active_player_id()` or
-## `GameState.combat_segment_complete()`; neither this class nor its callers
+## `TurnSequence.combat_segment_complete()`; neither this class nor its callers
 ## keep a tally.
 ##
 ## **A pass is a player command, one call per player.** `pass_power_step()`
@@ -134,8 +134,9 @@ func submit(action: TurnAction, requester_id: String) -> TurnResult:
 ## as a chosen action is: a decline by the non-active player comes back
 ## `Authority.REFUSED_NOT_YOUR_TURN` and resolves nothing.
 ##
-## **When the rule names no fighter**, every one defeated or held by the
-## Charge lockout, there is nothing to submit and the Action Step is empty.
+## **When the rule names no fighter** -- every one defeated, already activated
+## this round (§5.2), or held by the Charge lockout -- there is nothing to
+## submit and the Action Step is empty.
 ## The Turn still has a Power Step, so this opens it with
 ## `PowerStep.note_action()` and reports success: an empty Action Step is a
 ## Turn that resolved nothing, not a Turn that was skipped, and its two passes

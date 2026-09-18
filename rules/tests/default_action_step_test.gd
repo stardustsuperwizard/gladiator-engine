@@ -29,6 +29,8 @@ static func run() -> bool:
 
 	violations.append_array(_test_returns_third_fighter_in_deployment_order())
 	violations.append_array(_test_first_eligible_wins_over_better_placed())
+	violations.append_array(_test_an_activated_fighter_is_skipped())
+	violations.append_array(_test_null_when_every_fighter_has_acted())
 	violations.append_array(_test_null_when_every_fighter_off_board_or_locked_out())
 	violations.append_array(_test_null_when_player_owns_no_fighter())
 	violations.append_array(_test_null_when_player_id_names_no_player())
@@ -163,6 +165,72 @@ static func _test_first_eligible_wins_over_better_placed() -> Array[String]:
 			)
 		)
 	)
+
+
+## Spec §5.2's once-per-round activation: the first p1 fighter in deployment
+## order has already acted this round, so the default falls through to the
+## second -- the same skip the defeated and locked-out fighters get, asked of
+## `Activation.has_activated()` rather than re-derived.
+static func _test_an_activated_fighter_is_skipped() -> Array[String]:
+	var template := _template()
+	var state := _build_state()
+
+	_place(state, "acted", "p1", HEX_ORIGIN, template)
+	_place(state, "unacted", "p1", HEX_A, template)
+	Activation.record(state, "acted")
+
+	var templates := {"acted": template, "unacted": template}
+	var action := DefaultActionStep.action_for(state, "p1", templates)
+
+	return _expect(
+		action != null and action.actor_id() == "unacted",
+		(
+			"action_for() must skip the champion that already acted and name the next, got %s"
+			% (action.actor_id() if action != null else "null")
+		)
+	)
+
+
+## Every champion p1 owns has spent spec §5.2's activation, so there is nothing
+## to default to and `action_for()` returns null rather than a `GuardAction`
+## the action itself would refuse.
+static func _test_null_when_every_fighter_has_acted() -> Array[String]:
+	var violations: Array[String] = []
+	var template := _template()
+	var state := _build_state()
+
+	_place(state, "first", "p1", HEX_ORIGIN, template)
+	_place(state, "second", "p1", HEX_A, template)
+	Activation.record(state, "first")
+	Activation.record(state, "second")
+
+	var templates := {"first": template, "second": template}
+
+	violations.append_array(
+		_expect(
+			DefaultActionStep.action_for(state, "p1", templates) == null,
+			"action_for() must return null once every champion the player owns has acted"
+		)
+	)
+
+	# The control: clearing one champion's record brings the default back, so
+	# the null above is the activation and not the fixture.
+	state.update_fighter(
+		"second",
+		Fighter.without_flags(state.fighter("second"), [Activation.FLAG_ACTIVATED] as Array[String])
+	)
+	var restored := DefaultActionStep.action_for(state, "p1", templates)
+	violations.append_array(
+		_expect(
+			restored != null and restored.actor_id() == "second",
+			(
+				"clearing one activation must bring that champion back as the default, got %s"
+				% (restored.actor_id() if restored != null else "null")
+			)
+		)
+	)
+
+	return violations
 
 
 # --- Null paths ----------------------------------------------------------------

@@ -60,7 +60,8 @@
 ## **It calls `Activation.record(state, actor_id())` on its success path**,
 ## immediately before that `PowerStep.note_action(state)` call and after the
 ## payload above is committed. See `Activation`'s own docstring for spec
-## §5.2's once-per-round record this begins.
+## §5.2's once-per-round record this begins, and `FAILURE_ALREADY_ACTIVATED`
+## below for the refusal that reads it back.
 ##
 ## **Draws nothing from `state.rng`.** Move is fully determined by the board
 ## and the `move()` stat; `rules/tests/ambient_rng_contract_test.gd` and
@@ -94,6 +95,10 @@ const FAILURE_DESTINATION_IS_ORIGIN := &"move_destination_is_origin"
 ## longer than `move()`. Every one of those reports this single constant; see
 ## the class docstring.
 const FAILURE_DESTINATION_UNREACHABLE := &"move_destination_unreachable"
+
+## Spec §5.2's once-per-round activation: the actor has already been acted with
+## this round. See `Activation`.
+const FAILURE_ALREADY_ACTIVATED := &"move_already_activated"
 
 ## Spec §6's Charge lockout refuses this actor -- see `ChargeLockout`.
 const FAILURE_CHARGE_LOCKOUT := &"move_charge_lockout"
@@ -146,16 +151,16 @@ func resolve(state: GameState) -> TurnResult:
 ## Why this Move cannot resolve, or `&""` when it can.
 ##
 ## The single implementation of the predicate, in a fixed order: the injected
-## data and the fighter's identity first, then spec §6's Charge lockout, then
-## whether there is anywhere to go at all, then whether the search can
-## actually get there.
+## data and the fighter's identity first, then spec §5.2's once-per-round
+## activation, then spec §6's Charge lockout, then whether there is anywhere to
+## go at all, then whether the search can actually get there.
 func _refusal(state: GameState, fighter: Fighter) -> StringName:
-	if _template == null:
-		return FAILURE_MISSING_DATA
+	var identity := _identity_refusal(state, fighter)
+	if not identity.is_empty():
+		return identity
 
-	if fighter == null:
-		var ids := state.fighter_ids()
-		return FAILURE_NO_SUCH_FIGHTER if actor_id() not in ids else FAILURE_MISSING_DATA
+	if Activation.has_activated(state, actor_id()):
+		return FAILURE_ALREADY_ACTIVATED
 
 	if ChargeLockout.locks_out(state, fighter):
 		return FAILURE_CHARGE_LOCKOUT
@@ -165,6 +170,27 @@ func _refusal(state: GameState, fighter: Fighter) -> StringName:
 
 	if _destination not in state.board.reachable_from(fighter.position(), fighter.move()):
 		return FAILURE_DESTINATION_UNREACHABLE
+
+	return &""
+
+
+## Is there a Move to resolve at all: the injected template, and the actor
+## existing and parsing. Split out of `_refusal()` rather than inlined, the
+## shape `AttackAction._identity_refusal()` already sets -- and what keeps
+## `_refusal()` inside `.gdlintrc`'s `max-returns` now that spec §5.2's
+## activation is one more reason it can give.
+##
+## A `null` parse is two different refusals depending on why. A fighter the
+## state does not hold is `FAILURE_NO_SUCH_FIGHTER`; a fighter it does hold
+## whose payload `Fighter.from_dict()` rejects is `FAILURE_MISSING_DATA`, since
+## something is wrong with the data rather than with the request.
+func _identity_refusal(state: GameState, fighter: Fighter) -> StringName:
+	if _template == null:
+		return FAILURE_MISSING_DATA
+
+	if fighter == null:
+		var ids := state.fighter_ids()
+		return FAILURE_NO_SUCH_FIGHTER if actor_id() not in ids else FAILURE_MISSING_DATA
 
 	return &""
 

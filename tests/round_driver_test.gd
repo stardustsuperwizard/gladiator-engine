@@ -9,10 +9,18 @@
 ## runaway loop and is not a loop condition: reaching it is reported as a
 ## failure rather than quietly stopping at the right answer.
 ##
-## **The round structure is the authored one.** `turns_per_player` and
-## `rounds_per_match` are read off `res://resources/round/round_profile.tres`
-## -- 4 and 3 -- so a full round here is eight Turns, two players alternating.
-## Nothing in this file restates either number as a literal.
+## **The round's length is derived, not authored.** Spec §5.2 as revised
+## 2026-09-17 gives a player as many Turns as they have champions on the board,
+## each acting once, so this suite's fixture -- two champions a side -- is a
+## four-Turn round and `EXPECTED_ORDER` says so. `rounds_per_match` is still
+## read off `res://resources/round/round_profile.tres`; `turns_per_player` is
+## seeded onto the state alongside it and read by nothing.
+##
+## **Every Turn names its own champion.** `_unacted_champion_of()` picks the
+## first of the active player's champions that is still on the board and has
+## not spent its activation -- the same question `DefaultActionStep` asks --
+## because submitting a second action with a champion that already acted is
+## exactly what `FAILURE_ALREADY_ACTIVATED` now refuses.
 ##
 ## **The End Segment is not submitted through the runner, and that is the
 ## point.** `driver.end_segment()` calls `EndSegment.run()` directly: it is not
@@ -40,7 +48,7 @@ const ROUND_PROFILE_PATH := "res://resources/round/round_profile.tres"
 ## The authored combat numbers the Charge and Attack cases resolve against.
 const COMBAT_PROFILE_PATH := "res://resources/combat/combat_profile.tres"
 
-## This suite's one fighter template, shared by both fighters.
+## This suite's one fighter template, shared by all four champions.
 const TEMPLATE_ID := "round-driver-test-fighter"
 
 ## A hexagonal board of this many rings, which is big enough for the Charge
@@ -54,6 +62,14 @@ const ORIGIN := Vector3i(0, 0, 0)
 const F2_HOME := Vector3i(3, -3, 0)
 const CHARGE_HEX_ROUND_1 := Vector3i(2, -2, 0)
 const CHARGE_HEX_ROUND_2 := Vector3i(3, -2, -1)
+
+## The second champion each side fields, which is what makes the round four
+## Turns rather than two. They are adjacent to each other and to nothing else
+## the suite uses -- parked on the far rim, five hexes from `ORIGIN` -- so that
+## `f1b` can Attack `f2b` at the template's Range of 1 without either one
+## flanking, blocking or being charged through on the other side of the board.
+const F1B_HOME := Vector3i(-3, 0, 3)
+const F2B_HOME := Vector3i(-3, 1, 2)
 
 ## The seed the ordinary cases run on. Nothing about this value matters beyond
 ## its being fixed.
@@ -81,11 +97,12 @@ const GOLDEN_SEED := 20260910
 ##
 ## What is **never** the correct response: loosening the assertion, deleting
 ## the case, or comparing the two in-process runs and nothing else.
-const GOLDEN_DIGEST := "7ef1e7238fd238b28351437e70ac0ab10a339cd6a777218410416901a53f065c"
+const GOLDEN_DIGEST := "d22f8312e135b0ed1bb08d3f7534803b4e83a4802931c80c6bde4f22ef8458ef"
 
 ## The order `active_player_id()` must report across a full round: two players,
-## four Turns each, alternating.
-const EXPECTED_ORDER: Array[String] = ["p1", "p2", "p1", "p2", "p1", "p2", "p1", "p2"]
+## two champions each, alternating -- spec §5.2's derived allowance, not an
+## authored count.
+const EXPECTED_ORDER: Array[String] = ["p1", "p2", "p1", "p2"]
 
 ## A bound on every Turn loop in this file, not a count of the Turns one should
 ## take. Reaching it is a failure: a loop is meant to stop because
@@ -96,7 +113,7 @@ const MAX_TURNS := 24
 static func run() -> bool:
 	var violations: Array[String] = []
 
-	violations.append_array(_test_a_full_round_of_eight_turns_runs_through_the_driver())
+	violations.append_array(_test_a_full_round_runs_through_the_driver())
 	violations.append_array(_test_the_end_segment_entry_point_begins_the_next_round())
 	violations.append_array(_test_the_gate_is_synced_from_the_rule_not_seeded_by_construction())
 	violations.append_array(_test_a_charge_in_round_1_charges_again_in_round_2())
@@ -121,7 +138,7 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 
 ## This suite's one template. `move` is 2 so a Charge can cross two hexes,
 ## `range_hexes` 1 so the attack half reaches an adjacent target, and `health`
-## 8 so the golden round's four attacks cannot defeat anybody -- an
+## 8 so the golden round's Charge and Attack cannot defeat anybody -- an
 ## already-defeated target is refused, and this suite is not the place to test
 ## that refusal.
 static func _template() -> FighterTemplate:
@@ -164,10 +181,10 @@ static func _board() -> Board:
 	return board
 
 
-## Two players, one fighter each, and the authored round structure. `p1` is
+## Two players, two champions each, and the authored round length. `p1` is
 ## active by construction -- `Authority` seeds the active player from the front
 ## of the turn order, and `TurnSequence` names the same player at
-## `turns_taken` 0.
+## `turns_taken` 0 because p1 has champions with their activations unspent.
 static func _build_state(state_seed: int) -> GameState:
 	var profile: RoundProfile = load(ROUND_PROFILE_PATH)
 
@@ -179,6 +196,8 @@ static func _build_state(state_seed: int) -> GameState:
 
 	_place(state, "f1", "p1", ORIGIN)
 	_place(state, "f2", "p2", F2_HOME)
+	_place(state, "f1b", "p1", F1B_HOME)
+	_place(state, "f2b", "p2", F2B_HOME)
 	return state
 
 
@@ -197,9 +216,25 @@ static func _opponent(player_id: String) -> String:
 	return "p2" if player_id == "p1" else "p1"
 
 
-## The fighter `player_id` owns in this suite's fixture.
-static func _fighter_of(player_id: String) -> String:
-	return "f1" if player_id == "p1" else "f2"
+## The champion `player_id` should act with next: the first they own, in
+## `state.fighter_ids()` order, that is still the board's occupant of its own
+## recorded position and has not spent spec §5.2's activation. `""` when they
+## have none left, which is also when `active_player_id()` stops naming them.
+static func _unacted_champion_of(state: GameState, player_id: String) -> String:
+	for fighter_id in state.fighter_ids():
+		var fighter := _stored(state, fighter_id)
+		if fighter == null:
+			continue
+		if fighter.owner_id() != player_id:
+			continue
+		if state.board.occupant_at(fighter.position()) != StringName(fighter_id):
+			continue
+		if Activation.has_activated(state, fighter_id):
+			continue
+
+		return fighter_id
+
+	return ""
 
 
 ## True when no fighter still on the board holds any flag in
@@ -247,7 +282,7 @@ static func _play_power_step(driver: RoundDriver, active: String) -> Array[Strin
 ## Every Turn the round still has, each one a Guard by the active player's own
 ## fighter followed by both Power Step passes. Stops when the driver reports
 ## nobody active.
-static func _play_remaining_turns_as_guards(driver: RoundDriver) -> Array[String]:
+static func _play_remaining_turns_as_guards(driver: RoundDriver, state: GameState) -> Array[String]:
 	var violations: Array[String] = []
 	var played := 0
 
@@ -260,7 +295,8 @@ static func _play_remaining_turns_as_guards(driver: RoundDriver) -> Array[String
 			return violations
 
 		var active := driver.active_player_id()
-		var guarded := driver.submit(GuardAction.new(_fighter_of(active), _template()), active)
+		var champion := _unacted_champion_of(state, active)
+		var guarded := driver.submit(GuardAction.new(champion, _template()), active)
 		violations.append_array(
 			_expect(guarded.success, "%s's Guard must resolve, got %s" % [active, guarded.reason])
 		)
@@ -278,7 +314,9 @@ static func _expect_the_non_active_player_is_refused(
 	var opponent := _opponent(active)
 	var before := state.digest()
 
-	var refused := driver.submit(GuardAction.new(_fighter_of(opponent), _template()), opponent)
+	var refused := driver.submit(
+		GuardAction.new(_unacted_champion_of(state, opponent), _template()), opponent
+	)
 
 	var violations: Array[String] = []
 	violations.append_array(
@@ -299,7 +337,7 @@ static func _expect_the_non_active_player_is_refused(
 # --- The full round ---------------------------------------------------------
 
 
-static func _test_a_full_round_of_eight_turns_runs_through_the_driver() -> Array[String]:
+static func _test_a_full_round_runs_through_the_driver() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state(SEED)
 	var authority := Authority.new(state)
@@ -323,7 +361,9 @@ static func _test_a_full_round_of_eight_turns_runs_through_the_driver() -> Array
 
 		violations.append_array(_expect_the_non_active_player_is_refused(driver, state, active))
 
-		var acted := driver.submit(GuardAction.new(_fighter_of(active), _template()), active)
+		var acted := driver.submit(
+			GuardAction.new(_unacted_champion_of(state, active), _template()), active
+		)
 		violations.append_array(
 			_expect(acted.success, "%s's action must resolve, got %s" % [active, acted.reason])
 		)
@@ -347,8 +387,8 @@ static func _test_a_full_round_of_eight_turns_runs_through_the_driver() -> Array
 	)
 	violations.append_array(
 		_expect(
-			state.combat_segment_complete(),
-			"the round's eight Turns must leave the Combat Segment complete"
+			TurnSequence.combat_segment_complete(state),
+			"the round's four Turns must leave the Combat Segment complete"
 		)
 	)
 	violations.append_array(
@@ -360,15 +400,16 @@ static func _test_a_full_round_of_eight_turns_runs_through_the_driver() -> Array
 			)
 		)
 	)
-	violations.append_array(_expect_no_ninth_turn(driver, state))
+	violations.append_array(_expect_no_further_turn(driver, state))
 
 	return violations
 
 
 ## A submission and a decline after the Combat Segment is over are both refused
 ## `REFUSED_NO_ACTIVE_PLAYER`, and neither writes a byte. This is what stops a
-## stale active player on the gate from permitting a ninth Turn.
-static func _expect_no_ninth_turn(driver: RoundDriver, state: GameState) -> Array[String]:
+## stale active player on the gate from permitting one Turn more than the round
+## has.
+static func _expect_no_further_turn(driver: RoundDriver, state: GameState) -> Array[String]:
 	var before := state.digest()
 
 	var submitted := driver.submit(GuardAction.new("f1", _template()), "p1")
@@ -413,7 +454,7 @@ static func _test_the_end_segment_entry_point_begins_the_next_round() -> Array[S
 	var authority := Authority.new(state)
 	var driver := RoundDriver.new(authority, _templates())
 
-	violations.append_array(_play_remaining_turns_as_guards(driver))
+	violations.append_array(_play_remaining_turns_as_guards(driver, state))
 	violations.append_array(
 		_expect(
 			not _board_is_clear_of_round_flags(state),
@@ -527,7 +568,7 @@ static func _test_a_charge_in_round_1_charges_again_in_round_2() -> Array[String
 		)
 	)
 	violations.append_array(_play_power_step(driver, "p1"))
-	violations.append_array(_play_remaining_turns_as_guards(driver))
+	violations.append_array(_play_remaining_turns_as_guards(driver, state))
 
 	var ended := driver.end_segment(profile)
 	violations.append_array(
@@ -593,11 +634,11 @@ static func _test_the_played_round_pins_a_golden_digest() -> Array[String]:
 	return violations
 
 
-## The recorded action sequence `GOLDEN_DIGEST` is pinned to: p1 Charges on its
-## first Turn and Attacks on its other three, p2 Guards on all four of its own,
-## and every Turn ends on both Power Step passes. The Charge and the Attacks
-## are what put draws from `state.rng` into the round, so the digest covers the
-## generator's position as well as the board.
+## The recorded action sequence `GOLDEN_DIGEST` is pinned to: p1 Charges with
+## its first champion and Attacks with its second, p2 Guards with both of its
+## own, and every Turn ends on both Power Step passes. The Charge and the
+## Attack are what put draws from `state.rng` into the round, so the digest
+## covers the generator's position as well as the board.
 static func _play_golden_round(state: GameState) -> Array[String]:
 	var violations: Array[String] = []
 	var authority := Authority.new(state)
@@ -613,7 +654,7 @@ static func _play_golden_round(state: GameState) -> Array[String]:
 			return violations
 
 		var active := driver.active_player_id()
-		var action := _golden_action(active, played)
+		var action := _golden_action(state, active, played)
 		var acted := driver.submit(action, active)
 		violations.append_array(
 			_expect(
@@ -624,18 +665,24 @@ static func _play_golden_round(state: GameState) -> Array[String]:
 		violations.append_array(_play_power_step(driver, active))
 
 	violations.append_array(
-		_expect(played == EXPECTED_ORDER.size(), "the golden round must be eight Turns long")
+		_expect(
+			played == EXPECTED_ORDER.size(),
+			"the golden round must be %d Turns long, got %d" % [EXPECTED_ORDER.size(), played]
+		)
 	)
 	return violations
 
 
-## The golden round's action for the Turn `active` is taking: p2 Guards, p1
-## Charges on the round's first Turn and Attacks on the rest.
-static func _golden_action(active: String, turn_number: int) -> TurnAction:
+## The golden round's action for the Turn `active` is taking: p2 Guards with
+## whichever champion still has its activation, p1 Charges with its first and
+## Attacks with its second.
+static func _golden_action(state: GameState, active: String, turn_number: int) -> TurnAction:
+	var champion := _unacted_champion_of(state, active)
+
 	if active != "p1":
-		return GuardAction.new("f2", _template())
+		return GuardAction.new(champion, _template())
 
 	if turn_number == 1:
 		return _charge(CHARGE_HEX_ROUND_1)
 
-	return AttackAction.new("f1", "f2", _template(), _template(), _combat_profile())
+	return AttackAction.new(champion, "f2b", _template(), _template(), _combat_profile())

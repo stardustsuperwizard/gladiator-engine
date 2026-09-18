@@ -13,22 +13,22 @@
 ## declining player, which is why a decline by the non-active player comes back
 ## `Authority.REFUSED_NOT_YOUR_TURN` and resolves nothing.
 ##
-## **An empty Action Step is not a skipped Turn.** A player whose every fighter
-## is off the board has no default to submit; the Turn still has its Power
-## Step, both passes still land, and `turns_taken` still rises.
+## **An empty Action Step is not a skipped Turn.** A player with a Turn left
+## and no champion the default may name has nothing to submit; the Turn still
+## has its Power Step, both passes still land, and `turns_taken` still rises.
 ##
-## **On the "held by `ChargeLockout`" half of that case.** A player with an
-## on-board fighter always has an *eligible* one, so the empty Action Step is
-## reachable only through spec §9's defeat, and that is what
-## `_test_a_decline_with_no_eligible_fighter_writes_nothing()` builds. The
-## reason is the lockout's own definition: it holds a charged fighter only
-## while a friendly fighter still on the board lacks the flag, and that
-## unflagged friendly is itself eligible. Lockout therefore narrows which
-## fighter the default names and cannot on its own empty the set; that
-## narrowing is `DefaultActionStep`'s own rule and
-## `rules/tests/default_action_step_test.gd`'s to prove.
-## `_test_a_decline_falls_through_to_the_first_eligible_fighter()` here covers
-## the same fall-through through a decline, using defeat as the skip.
+## **Reaching that state is harder than it was, and the construction says so.**
+## Spec §5.2 as revised 2026-09-17 gives a player a Turn *per unactivated
+## champion on the board*, so "every fighter off the board" no longer empties
+## the Action Step -- it removes the Turn outright, and the player is skipped
+## rather than offered an empty one. What is left is a player whose remaining
+## Turn belongs to a champion spec §6's Charge lockout holds, while every other
+## champion they own has already acted: the lockout's unflagged friendly is
+## what keeps it in force, and that friendly having spent its activation is
+## what stops it standing in as the default.
+## `_test_a_decline_with_no_eligible_fighter_writes_nothing()` builds exactly
+## that. `_test_a_decline_falls_through_to_the_first_eligible_fighter()` covers
+## the fall-through separately, using defeat as the skip.
 ##
 ## Lives under `tests/` rather than `rules/tests/` for the reason its sibling's
 ## docstring gives: it names `res://scripts/` code.
@@ -46,6 +46,12 @@ const BOARD_RADIUS := 3
 const F1_HOME := Vector3i(0, 0, 0)
 const F2_FIRST_HOME := Vector3i(3, -3, 0)
 const F2_SECOND_HOME := Vector3i(2, -3, 1)
+
+## `p2`'s champions, in the order they are added -- which is both the order
+## `GameState.fighter_ids()` reports them in and, under spec §5.2, the number
+## of Turns `p2` has in a round. Stated once here rather than as a literal in
+## the cases below.
+const P2_CHAMPIONS: Array[String] = ["f2_first", "f2_second"]
 
 const SEED := 17
 
@@ -140,6 +146,19 @@ static func _take_off_the_board(state: GameState, fighter_id: String) -> void:
 	state.board.remove_occupant(_stored(state, fighter_id).position())
 
 
+## Sets `flag` on the stored fighter through `Fighter.set_status_flag()` and
+## commits it, the seam `rules/tests/end_segment_test.gd` uses.
+##
+## The one case that needs it sets `StatusFlags.CHARGED` by hand rather than by
+## resolving a Charge: this suite's template has Range 0 and Move 1, so no
+## fighter here can reach a legal Charge, and what the case is about is the
+## lockout the flag produces rather than how the flag got there.
+static func _flag(state: GameState, fighter_id: String, flag: String) -> void:
+	var fighter := _stored(state, fighter_id)
+	fighter.set_status_flag(flag)
+	state.update_fighter(fighter_id, fighter.to_dict())
+
+
 ## Every fighter's position and damage counter, keyed by fighter id. Compared
 ## before and after a decline to show what it did and did not touch.
 static func _snapshot(state: GameState) -> Dictionary:
@@ -193,10 +212,9 @@ static func _test_a_round_of_declines_completes() -> Array[String]:
 	var opening := _snapshot(state)
 	var declines := 0
 
-	# The Turns `p2` takes in a round: read back off the state, which
-	# `_build_state()` seeded from the authored profile, rather than restated
-	# here as a literal.
-	var expected_declines := state.turns_per_player
+	# The Turns `p2` takes in a round: spec §5.2's derived allowance, which for
+	# this fixture is one per champion `_build_state()` put on the board.
+	var expected_declines := P2_CHAMPIONS.size()
 
 	var played := 0
 	while not driver.active_player_id().is_empty():
@@ -213,8 +231,13 @@ static func _test_a_round_of_declines_completes() -> Array[String]:
 			continue
 
 		declines += 1
+		# Each Turn's default names the next champion in `fighter_ids()` order
+		# that still has its activation, so the ones after it must be untouched
+		# and the ones before it have already been guarded by an earlier Turn.
 		violations.append_array(
-			_expect_the_decline_touches_only_the_default(driver, authority, state, opening)
+			_expect_the_decline_touches_only_the_default(
+				driver, authority, state, opening, P2_CHAMPIONS.slice(declines - 1)
+			)
 		)
 		violations.append_array(_play_power_step(driver, "p2"))
 
@@ -226,7 +249,7 @@ static func _test_a_round_of_declines_completes() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			state.combat_segment_complete(),
+			TurnSequence.combat_segment_complete(state),
 			"a round in which one player declines every Turn must still complete"
 		)
 	)
@@ -237,8 +260,16 @@ static func _test_a_round_of_declines_completes() -> Array[String]:
 ## One declined Turn, and everything it must leave alone: the board, the
 ## opponent's fighter, the declining player's positions and damage counters,
 ## and every fighter of theirs but the first eligible one.
+##
+## `still_unspent` is `p2`'s champions that have not acted yet, in
+## `fighter_ids()` order; the default must name its first entry and leave the
+## rest alone.
 static func _expect_the_decline_touches_only_the_default(
-	driver: RoundDriver, authority: Authority, state: GameState, opening: Dictionary
+	driver: RoundDriver,
+	authority: Authority,
+	state: GameState,
+	opening: Dictionary,
+	still_unspent: Array[String]
 ) -> Array[String]:
 	var board_before := state.board.to_dict()
 	var f1_before := state.fighter("f1")
@@ -261,16 +292,20 @@ static func _expect_the_decline_touches_only_the_default(
 	)
 	violations.append_array(
 		_expect(
-			_stored(state, "f2_first").has_status_flag(StatusFlags.GUARDED),
-			"a declined Turn must leave the guarded flag on p2's first eligible fighter"
+			_stored(state, still_unspent[0]).has_status_flag(StatusFlags.GUARDED),
+			(
+				"a declined Turn must leave the guarded flag on p2's first eligible fighter (%s)"
+				% still_unspent[0]
+			)
 		)
 	)
-	violations.append_array(
-		_expect(
-			not _stored(state, "f2_second").has_status_flag(StatusFlags.GUARDED),
-			"a declined Turn must not touch p2's other fighters"
+	for untouched in still_unspent.slice(1):
+		violations.append_array(
+			_expect(
+				not _stored(state, untouched).has_status_flag(StatusFlags.GUARDED),
+				"a declined Turn must not touch p2's other fighters, but %s was guarded" % untouched
+			)
 		)
-	)
 	violations.append_array(
 		_expect(state.fighter("f1") == f1_before, "a declined Turn must not touch p1's fighter")
 	)
@@ -345,16 +380,39 @@ static func _test_a_decline_is_incomplete_until_both_passes() -> Array[String]:
 # --- An empty Action Step ---------------------------------------------------
 
 
+## A Turn `p2` is owed and cannot fill: `f2_first` holds spec §6's `"charged"`
+## flag and `f2_second`, the unflagged friendly that keeps the lockout in
+## force, has spent its own activation. `p2` is therefore still the active
+## player -- `f2_first` is on the board with a Turn unspent -- and
+## `DefaultActionStep` names nobody.
 static func _test_a_decline_with_no_eligible_fighter_writes_nothing() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state()
 	var authority := Authority.new(state)
 	var driver := RoundDriver.new(authority, _templates())
 
-	_take_off_the_board(state, "f2_first")
-	_take_off_the_board(state, "f2_second")
+	_flag(state, "f2_first", StatusFlags.CHARGED)
 
 	violations.append_array(_play_p1_turn(driver))
+
+	# p2's first Turn, spent by the champion the lockout does not hold.
+	var spent := driver.submit(GuardAction.new("f2_second", _template()), "p2")
+	violations.append_array(
+		_expect(
+			spent.success, "p2's Guard on its unlocked champion must resolve, got %s" % spent.reason
+		)
+	)
+	violations.append_array(_play_power_step(driver, "p2"))
+
+	violations.append_array(
+		_expect(
+			driver.active_player_id() == "p2",
+			(
+				"p2 must still be owed the locked-out champion's Turn, got %s"
+				% driver.active_player_id()
+			)
+		)
+	)
 
 	var board_before := state.board.to_dict()
 	var first_before := state.fighter("f2_first")

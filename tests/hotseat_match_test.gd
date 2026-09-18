@@ -603,7 +603,7 @@ static func _test_an_outright_vp_win_names_the_winner_and_the_rule() -> Array[St
 	state.player(MatchSetup.PLAYER_ONE).score = 3
 	state.player(MatchSetup.PLAYER_TWO).score = 1
 	state.round_number = state.rounds_per_match
-	state.turns_taken = state.turns_per_player * state.turn_order().size()
+	_finish_the_segment(state)
 	_force_render(scene)
 
 	var outcome := session.outcome()
@@ -721,6 +721,19 @@ static func _play_until(scene: HotseatMatch, target: HotseatSession.Phase) -> in
 			return -1
 
 	return -1
+
+
+## Spec §5.2's Combat Segment played out, for a fixture that drives the state
+## straight to a round boundary rather than playing one: every champion the
+## board still reports spends its activation, which is what the Segment being
+## complete now means. `turns_taken` is left alone -- nothing reads it.
+static func _finish_the_segment(state: GameState) -> void:
+	for coord in state.board.coords():
+		var occupant := state.board.occupant_at(coord)
+		if occupant == Board.EMPTY_OCCUPANT:
+			continue
+
+		Activation.record(state, String(occupant))
 
 
 ## Redraws the HUD off whatever `scene.state()` now holds, for a fixture that

@@ -1,8 +1,10 @@
 ## Spec §10's End Segment: the round ends, its flags clear, the next one
 ## begins.
 ##
-## Runs once §5.2's Combat Segment is over -- every player has taken every Turn
-## of the round -- and refuses otherwise. It walks §10's six-step sequence,
+## Runs once §5.2's Combat Segment is over -- no champion on the board has an
+## unspent activation, which `TurnSequence.combat_segment_complete()` is the
+## one implementation of -- and refuses otherwise. It walks §10's six-step
+## sequence,
 ## clears every flag in `StatusFlags.round_level()` from every fighter still on
 ## the board, resets the Turn counter and advances `round_number`.
 ##
@@ -143,7 +145,7 @@ static func _refusal(state: GameState, match_ended: bool) -> StringName:
 	if match_ended:
 		return &""
 
-	if not state.combat_segment_complete():
+	if not TurnSequence.combat_segment_complete(state):
 		return FAILURE_COMBAT_SEGMENT_INCOMPLETE
 
 	return &""

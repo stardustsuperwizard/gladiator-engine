@@ -40,14 +40,33 @@ extends TurnAction
 ## The state holds no fighter with this action's `actor_id()`.
 const FAILURE_NO_SUCH_FIGHTER := &"pass_no_such_fighter"
 
+## Spec §5.2's once-per-round activation: the actor has already been acted with
+## this round. See `Activation`.
+##
+## Pass is not exempt. `ChargeLockout` calls it "the action a locked-out
+## fighter still has", and that stays true -- nothing here consults the Charge
+## lockout -- but §5.2's allowance is a different rule: a champion gets one
+## Action Step per round whatever it spends it on, and spending it here spends
+## it. An exemption would hand a player an extra Turn for free.
+const FAILURE_ALREADY_ACTIVATED := &"pass_already_activated"
+
 
 ## Returns a successful result, having changed nothing in `state` beyond
-## `Activation.record()` and `PowerStep.note_action()`. Returns
-## `FAILURE_NO_SUCH_FIGHTER`, changing nothing at all, when `actor_id()` names
-## no fighter in `state`.
+## `Activation.record()` and `PowerStep.note_action()`. Refuses, changing
+## nothing at all: `FAILURE_NO_SUCH_FIGHTER` when `actor_id()` names no fighter
+## in `state`, and `FAILURE_ALREADY_ACTIVATED` when that fighter has already
+## been acted with this round.
+##
+## There is no `_refusal()` here, unlike the four actions that have one: this
+## action has no injected data, no geometry and no target, so its two reasons
+## are the whole of its resolution and a separate predicate would be a function
+## wrapping two lines.
 func resolve(state: GameState) -> TurnResult:
 	if actor_id() not in state.fighter_ids():
 		return TurnResult.failure(FAILURE_NO_SUCH_FIGHTER)
+
+	if Activation.has_activated(state, actor_id()):
+		return TurnResult.failure(FAILURE_ALREADY_ACTIVATED)
 
 	Activation.record(state, actor_id())
 	PowerStep.note_action(state)

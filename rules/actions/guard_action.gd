@@ -27,10 +27,13 @@
 ## a clearing step must enumerate every round-level flag at once. See that
 ## class's docstring.
 ##
-## **A Guard by an already-guarded fighter is not a refusal.** It resolves,
-## returns `TurnResult.ok()`, and is a no-op: `Fighter.set_status_flag()`
-## already returns `false` for a flag it holds, and the committed payload is
-## identical. No spec rule forbids repeating it.
+## **The guarded flag is not itself a precondition.** Nothing here reads
+## `FLAG_GUARDED` back to refuse a repeat: `Fighter.set_status_flag()` already
+## returns `false` for a flag it holds, so setting it twice commits an
+## identical payload. What refuses a second Guard by the same fighter in one
+## round is spec §5.2's activation record below, a separate rule keyed on a
+## separate flag -- which is why a fighter that acquired `FLAG_GUARDED` some
+## other way is still free to Guard.
 ##
 ## **The flag must be set before the payload is committed**, for the reason
 ## `MoveAction` documents: `state.update_fighter()` replaces the stored payload
@@ -55,7 +58,8 @@
 ## **It calls `Activation.record(state, actor_id())` on its success path**,
 ## immediately before that `PowerStep.note_action(state)` call and after the
 ## payload above is committed. See `Activation`'s own docstring for spec
-## §5.2's once-per-round record this begins.
+## §5.2's once-per-round record this begins, and `FAILURE_ALREADY_ACTIVATED`
+## below for the refusal that reads it back.
 ##
 ## **Draws nothing from `state.rng`.** Guard is fully determined by the
 ## request; `rules/tests/ambient_rng_contract_test.gd` and
@@ -80,6 +84,10 @@ const FAILURE_MISSING_DATA := &"guard_missing_data"
 
 ## The state holds no fighter with this action's `actor_id()`.
 const FAILURE_NO_SUCH_FIGHTER := &"guard_no_such_fighter"
+
+## Spec §5.2's once-per-round activation: the actor has already been acted with
+## this round. See `Activation`.
+const FAILURE_ALREADY_ACTIVATED := &"guard_already_activated"
 
 ## Spec §6's Charge lockout refuses this actor -- see `ChargeLockout`.
 const FAILURE_CHARGE_LOCKOUT := &"guard_charge_lockout"
@@ -121,7 +129,8 @@ func resolve(state: GameState) -> TurnResult:
 ## Why this Guard cannot resolve, or `&""` when it can.
 ##
 ## The single implementation of the predicate, in a fixed order: the injected
-## data first, then the fighter's identity, then spec §6's Charge lockout.
+## data first, then the fighter's identity, then spec §5.2's once-per-round
+## activation, then spec §6's Charge lockout.
 func _refusal(state: GameState, fighter: Fighter) -> StringName:
 	if _template == null:
 		return FAILURE_MISSING_DATA
@@ -129,6 +138,9 @@ func _refusal(state: GameState, fighter: Fighter) -> StringName:
 	if fighter == null:
 		var ids := state.fighter_ids()
 		return FAILURE_NO_SUCH_FIGHTER if actor_id() not in ids else FAILURE_MISSING_DATA
+
+	if Activation.has_activated(state, actor_id()):
+		return FAILURE_ALREADY_ACTIVATED
 
 	if ChargeLockout.locks_out(state, fighter):
 		return FAILURE_CHARGE_LOCKOUT

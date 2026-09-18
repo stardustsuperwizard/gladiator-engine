@@ -108,20 +108,35 @@ func _init(
 ##
 ## The order of the tests is the meaning of the answer: the match-end check
 ## comes first, because an elimination can end the match mid-round and must be
-## reported immediately; then the complete Combat Segment check; then the
-## Power Step and Action Step. A match that has not ended reports a Segment or
-## Step as it does today.
+## reported immediately; then **the open Power Step**; then the complete Combat
+## Segment; then the Action Step.
+##
+## **The Power Step is asked about before the Segment, and that order is
+## load-bearing.** Spec §5.3: "A Turn is not over until its Power Step has
+## ended." Spec §5.2 as revised 2026-09-17 makes the Segment complete once no
+## champion on the board has an unspent activation -- and an activation is
+## recorded by the *action*, which is also what opens the Turn's Power Step. So
+## for the length of the last Turn of every round, both are true at once: the
+## Segment has no Turn left to hand out and the Turn in flight has not ended.
+## Reporting `SEGMENT_COMPLETE` there would skip that Turn's Power Step
+## entirely, carry `power_step_open` into the next round, and open round 2 in
+## the middle of round 1's last Step. The Turn in flight wins, and the Segment
+## is reported complete only once it has ended.
+##
+## Before that revision the two could not overlap: completeness was counted off
+## `turns_taken`, which `PowerStep.end_on_second_pass()` raises only as the
+## Step closes, so the old order was never wrong -- it was never asked.
 func phase() -> Phase:
 	var state := _state()
 
 	if MatchVictory.has_ended(state, _profile):
 		return Phase.MATCH_COMPLETE
 
-	if state.combat_segment_complete():
-		return Phase.SEGMENT_COMPLETE
-
 	if state.power_step_open:
 		return Phase.POWER_STEP
+
+	if TurnSequence.combat_segment_complete(state):
+		return Phase.SEGMENT_COMPLETE
 
 	return Phase.ACTION_STEP
 
@@ -158,16 +173,26 @@ func active_player_id() -> String:
 ## row by the same player, and this is that rule read forwards instead of
 ## backwards.
 ##
+## **An open Power Step names players even when `TurnSequence` names nobody.**
+## The last Turn of a round is in flight after every champion on the board has
+## activated, so the rule that derives the active player has no Turn left to
+## point at -- but §5.3's Step is both players', not the active player's, and
+## it still has to be passed twice before the Turn ends. `_power_step_players()`
+## already documents what it does with an `active` the turn order does not
+## hold: it leaves the order as authored rather than guessing at a rotation,
+## which is exactly the right answer here. Only `ACTION_STEP` needs a named
+## active player, and it is empty without one.
+##
 ## **A report, not a gate.** Nothing here refuses a command, and a player left
 ## out of this list who submits anyway is answered by `Authority` or by the
 ## action, not by this class.
 func players_to_act() -> Array[String]:
 	var active := active_player_id()
-	if active.is_empty():
-		return [] as Array[String]
 
 	match phase():
 		Phase.ACTION_STEP:
+			if active.is_empty():
+				return [] as Array[String]
 			return [active] as Array[String]
 		Phase.POWER_STEP:
 			return _power_step_players(active)
