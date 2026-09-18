@@ -10,7 +10,8 @@
 ## Architecture Constraints on the Issue this class implements. So every query
 ## below asks the rules module's own predicate and reports what it said:
 ## `Board.reachable_from()`, `AttackAction.refusal_from()`,
-## `ChargeLockout.locks_out()` and `Board.occupant_at()`.
+## `Activation.has_activated()`, `ChargeLockout.locks_out()` and
+## `Board.occupant_at()`.
 ##
 ## **An affordance, not a permission.** A command this class builds still goes
 ## through `Authority` by way of `ActionRunner`, and still may be refused there
@@ -68,9 +69,14 @@ func _init(
 ## `player_id`'s fighters, in `state.fighter_ids()` order, that are still the
 ## board's occupant of their own recorded position -- spec §9's defeat test,
 ## the same one `ChargeLockout.locks_out()` and `DefaultActionStep.action_for()`
-## both read `Board.occupant_at()` for. A fighter whose template cannot be
-## resolved, or whose payload will not parse, is omitted rather than guessed
-## at.
+## both read `Board.occupant_at()` for -- and that have not already been acted
+## with this round, spec §5.2's once-per-round activation. A fighter whose
+## template cannot be resolved, or whose payload will not parse, is omitted
+## rather than guessed at.
+##
+## The activation test is `Activation.has_activated()`, the same call the
+## actions themselves make: this class mirrors the rules predicate and never
+## re-derives it, and omitting a fighter here is an affordance, not a refusal.
 func actable_fighters(state: GameState, player_id: String) -> Array[String]:
 	var result: Array[String] = []
 
@@ -82,6 +88,8 @@ func actable_fighters(state: GameState, player_id: String) -> Array[String]:
 			continue
 		if state.board.occupant_at(fighter.position()) != StringName(fighter_id):
 			continue
+		if Activation.has_activated(state, fighter_id):
+			continue
 
 		result.append(fighter_id)
 
@@ -92,10 +100,20 @@ func actable_fighters(state: GameState, player_id: String) -> Array[String]:
 ## `Board.reachable_from(fighter.position(), fighter.move())` -- which already
 ## excludes the fighter's own hex, per that method's own contract -- or an
 ## empty array when the fighter is unknown, its template cannot be resolved,
-## or `ChargeLockout.locks_out()` refuses it the same way `MoveAction` does.
+## `Activation.has_activated()` says it has already been acted with this round,
+## or `ChargeLockout.locks_out()` refuses it -- the last two being exactly what
+## `MoveAction._refusal()` asks, in that order.
+##
+## **The activation test is this method's own**, unlike `attack_targets()` and
+## `charge_destinations()`, which inherit it for free by routing through
+## `AttackAction.refusal_from()`. Nothing under this method consults
+## `MoveAction`, so without the check here a Move affordance would be offered
+## for a champion whose Turn is spent.
 func move_destinations(state: GameState, fighter_id: String) -> Array[Vector3i]:
 	var fighter := _read_fighter(state, fighter_id)
 	if fighter == null:
+		return []
+	if Activation.has_activated(state, fighter_id):
 		return []
 	if ChargeLockout.locks_out(state, fighter):
 		return []
@@ -108,8 +126,9 @@ func move_destinations(state: GameState, fighter_id: String) -> Array[Vector3i]:
 ## fighter.position())` empty. `refusal_from()` is `AttackAction`'s own
 ## pre-check, so this omits a friendly fighter, one out of range, one with no
 ## line of sight, one already defeated, and -- since `AttackAction._refusal()`
-## consults `ChargeLockout.locks_out()` for every target alike -- reports none
-## at all for a fighter the Charge lockout holds.
+## consults `Activation.has_activated()` and `ChargeLockout.locks_out()` for
+## every target alike -- reports none at all for a fighter that has already
+## been acted with this round or that the Charge lockout holds.
 func attack_targets(state: GameState, fighter_id: String) -> Array[String]:
 	var attacker_template := _templates.template_for(state, fighter_id)
 	if attacker_template == null:
@@ -144,7 +163,8 @@ func attack_targets(state: GameState, fighter_id: String) -> Array[String]:
 
 ## Every hex `fighter_id` could relocate to and then legally Attack `target_id`
 ## from: the fighter's `move_destinations()` -- so this is already empty for a
-## fighter the Charge lockout holds -- filtered to those where a candidate
+## fighter that has already been acted with this round, and for one the Charge
+## lockout holds -- filtered to those where a candidate
 ## attack half's `refusal_from(state, destination)` is empty. That is exactly
 ## the question `ChargeAction._refusal()` asks once it already knows the
 ## destination is reachable: its final step is

@@ -60,7 +60,9 @@
 ## reaches `Activation.record()` twice on a successful Charge for the identical
 ## reason -- once through the composed `AttackAction`, once directly -- and
 ## `record()` is idempotent for the identical reason: see `Activation`'s own
-## docstring.
+## docstring. Neither call happens before `_refusal()` has run, so the composed
+## attack half never sees the record this Charge is about to write and never
+## refuses itself `AttackAction.FAILURE_ALREADY_ACTIVATED`.
 ##
 ## **The templates and the profile are injected, never resolved.** They arrive
 ## through `_init()` and are handed to the composed `AttackAction`: nothing
@@ -78,6 +80,11 @@ const FAILURE_MISSING_DATA := &"charge_missing_data"
 
 ## The state holds no fighter with this action's `actor_id()`.
 const FAILURE_NO_SUCH_FIGHTER := &"charge_no_such_fighter"
+
+## Spec §5.2's once-per-round activation: the actor has already been acted with
+## this round. See `Activation`. Distinct from `FAILURE_ALREADY_ACTED` below,
+## which is spec §6's Move/Charge flag precondition and keeps its own meaning.
+const FAILURE_ALREADY_ACTIVATED := &"charge_already_activated"
 
 ## Spec §6's precondition: the actor has already moved or already charged this
 ## round. Charge is not gated by `ChargeLockout` on top of this -- a charged
@@ -205,10 +212,14 @@ func attack_half() -> AttackAction:
 ## Why this Charge cannot resolve, or `&""` when it can.
 ##
 ## The single implementation of the predicate, in a fixed order: the injected
-## data and the fighter's identity first, then spec §6's precondition, then
-## whether there is anywhere to go at all, then whether the search can actually
-## get there, and finally whether the attack half is legal from the
-## destination.
+## data and the fighter's identity first, then spec §5.2's once-per-round
+## activation, then spec §6's precondition, then whether there is anywhere to
+## go at all, then whether the search can actually get there, and finally
+## whether the attack half is legal from the destination.
+##
+## The activation check precedes `FAILURE_ALREADY_ACTED` so that an actor
+## failing both -- it moved earlier in the round, which both flagged it and
+## activated it -- reports the same reason every time.
 ##
 ## That last step is returned **verbatim, in `AttackAction`'s own vocabulary**
 ## -- `attack_target_out_of_range`, `attack_no_line_of_sight` and the rest.
@@ -221,12 +232,12 @@ func attack_half() -> AttackAction:
 ## type: any fighter may Charge, a Range-8 one included. `range_hexes()` is
 ## consulted nowhere outside the attack half's own reach check.
 func _refusal(state: GameState, fighter: Fighter) -> StringName:
-	if _template == null or _target_template == null or _combat_profile == null:
-		return FAILURE_MISSING_DATA
+	var identity := _identity_refusal(state, fighter)
+	if not identity.is_empty():
+		return identity
 
-	if fighter == null:
-		var ids := state.fighter_ids()
-		return FAILURE_NO_SUCH_FIGHTER if actor_id() not in ids else FAILURE_MISSING_DATA
+	if Activation.has_activated(state, actor_id()):
+		return FAILURE_ALREADY_ACTIVATED
 
 	var already_acted := (
 		fighter.has_status_flag(MoveAction.FLAG_MOVED)
@@ -242,6 +253,27 @@ func _refusal(state: GameState, fighter: Fighter) -> StringName:
 		return FAILURE_DESTINATION_UNREACHABLE
 
 	return _attack.refusal_from(state, _destination)
+
+
+## Is there a Charge to resolve at all: the three injected objects, and the
+## actor existing and parsing. Split out of `_refusal()` rather than inlined,
+## the shape `AttackAction._identity_refusal()` already sets -- and what keeps
+## `_refusal()` inside `.gdlintrc`'s `max-returns` now that spec §5.2's
+## activation is one more reason it can give.
+##
+## A `null` parse is two different refusals depending on why. A fighter the
+## state does not hold is `FAILURE_NO_SUCH_FIGHTER`; a fighter it does hold
+## whose payload `Fighter.from_dict()` rejects is `FAILURE_MISSING_DATA`, since
+## something is wrong with the data rather than with the request.
+func _identity_refusal(state: GameState, fighter: Fighter) -> StringName:
+	if _template == null or _target_template == null or _combat_profile == null:
+		return FAILURE_MISSING_DATA
+
+	if fighter == null:
+		var ids := state.fighter_ids()
+		return FAILURE_NO_SUCH_FIGHTER if actor_id() not in ids else FAILURE_MISSING_DATA
+
+	return &""
 
 
 ## `actor_id()`'s payload as a `Fighter` over `_template`, or `null` when the

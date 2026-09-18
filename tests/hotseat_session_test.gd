@@ -12,11 +12,20 @@
 ## `TurnSequence` by `RoundDriver`, underneath the session, and a test that
 ## rotated the active player itself would be proving something else.
 ##
-## **The round structure is the authored one.** `turns_per_player` and
-## `rounds_per_match` are read off `res://resources/round/round_profile.tres`,
-## and neither is restated as a literal anywhere in this file -- including in
-## the three-round case, whose stopping condition is `Phase.MATCH_COMPLETE` and
-## not a count of rounds.
+## **The round's length is derived and the match's is authored.** Spec §5.2 as
+## revised 2026-09-17 gives a player a Turn per unactivated champion on the
+## board, so this fixture -- two champions for `p1`, one for `p2` -- is a
+## three-Turn round, and no case restates that as a literal: the three-round
+## case stops on `Phase.MATCH_COMPLETE` and reads the Turn count back off the
+## fixture. `rounds_per_match` is read off
+## `res://resources/round/round_profile.tres`; `turns_per_player` is seeded
+## onto the state beside it and read by nothing.
+##
+## **Every Turn names its own champion.** `_unacted_champion_of()` picks the
+## first of the acting player's champions that is still on the board and has
+## not spent its activation -- the question `DefaultActionStep` asks -- because
+## a second action by a champion that already acted is what
+## `FAILURE_ALREADY_ACTIVATED` now refuses.
 ##
 ## **The session is not a second gate, and two cases say so.** A submission by
 ## the non-active player comes back `Authority.REFUSED_NOT_YOUR_TURN` and a
@@ -178,9 +187,25 @@ static func _opponent(player_id: String) -> String:
 	return "p2" if player_id == "p1" else "p1"
 
 
-## The fighter each player Guards with in this suite's loops.
-static func _fighter_of(player_id: String) -> String:
-	return F1_ID if player_id == "p1" else F2_ID
+## The champion `player_id` Guards with next in this suite's loops: the first
+## they own, in `state.fighter_ids()` order, still on the board and with spec
+## §5.2's activation unspent. `""` when they have none left, which is also when
+## the session stops naming them.
+static func _unacted_champion_of(state: GameState, player_id: String) -> String:
+	for fighter_id in state.fighter_ids():
+		var fighter := _stored(state, fighter_id)
+		if fighter == null:
+			continue
+		if fighter.owner_id() != player_id:
+			continue
+		if state.board.occupant_at(fighter.position()) != StringName(fighter_id):
+			continue
+		if Activation.has_activated(state, fighter_id):
+			continue
+
+		return fighter_id
+
+	return ""
 
 
 ## True when no fighter still on the board holds any flag in
@@ -256,7 +281,7 @@ static func _elimination_session() -> Array:
 ## phase is no longer a step of a Turn -- `SEGMENT_COMPLETE` or
 ## `MATCH_COMPLETE`. Every decision comes from `phase()` and `player_to_act()`;
 ## nothing here counts a Turn or names a player itself.
-static func _play_round(session: HotseatSession) -> Array[String]:
+static func _play_round(session: HotseatSession, state: GameState) -> Array[String]:
 	var violations: Array[String] = []
 
 	# Bounded so a session that never reports the round over fails instead of
@@ -267,7 +292,7 @@ static func _play_round(session: HotseatSession) -> Array[String]:
 		if phase != HotseatSession.Phase.ACTION_STEP and phase != HotseatSession.Phase.POWER_STEP:
 			return violations
 
-		violations.append_array(_play_step(session, phase))
+		violations.append_array(_play_step(session, state, phase))
 
 	violations.append_array(
 		_expect(false, "the session never reported the round over in %d steps" % MAX_STEPS)
@@ -277,10 +302,13 @@ static func _play_round(session: HotseatSession) -> Array[String]:
 
 ## The one command the reported phase asks for: a Guard by the player named in
 ## the Action Step, that player's own Power Step pass otherwise.
-static func _play_step(session: HotseatSession, phase: HotseatSession.Phase) -> Array[String]:
+static func _play_step(
+	session: HotseatSession, state: GameState, phase: HotseatSession.Phase
+) -> Array[String]:
 	var actor := session.player_to_act()
 	if phase == HotseatSession.Phase.ACTION_STEP:
-		var acted := session.submit(GuardAction.new(_fighter_of(actor), _template()), actor)
+		var champion := _unacted_champion_of(state, actor)
+		var acted := session.submit(GuardAction.new(champion, _template()), actor)
 		return _expect(acted.success, "%s's Guard must resolve, got %s" % [actor, acted.reason])
 
 	var passed := session.pass_power_step(actor)
@@ -423,8 +451,17 @@ static func _test_the_power_step_hands_over_to_the_opponent() -> Array[String]:
 
 ## The acceptance case: three rounds end to end, driven by nothing but the two
 ## questions a view asks. The stopping condition is `MATCH_COMPLETE`; the round
-## structure is asserted afterwards, from the authored profile, rather than
-## counted on the way through.
+## structure is asserted afterwards, from the fixture and the authored profile,
+## rather than counted on the way through.
+##
+## **The final round stops one completed Turn short, on purpose.** §11.1's
+## round limit is reached the moment the last champion on the board spends its
+## activation, which happens inside that Turn's Action Step -- so `phase()`,
+## which asks §11.3 first and by design, reports `MATCH_COMPLETE` before that
+## Turn's Power Step can end. `turns_taken` rises only when a Power Step ends,
+## so it stops at one less than the round's Turns. That is the same shape as
+## the elimination this class already reports mid-round; see
+## `HotseatSession.active_player_id()`'s own docstring.
 static func _test_a_three_round_match_plays_on_phase_alone() -> Array[String]:
 	var violations: Array[String] = []
 	var parts := _session()
@@ -448,7 +485,7 @@ static func _test_a_three_round_match_plays_on_phase_alone() -> Array[String]:
 			)
 			continue
 
-		violations.append_array(_play_step(session, phase))
+		violations.append_array(_play_step(session, state, phase))
 
 	var profile := _profile()
 	violations.append_array(
@@ -460,12 +497,15 @@ static func _test_a_three_round_match_plays_on_phase_alone() -> Array[String]:
 			)
 		)
 	)
-	violations.append_array(
-		_expect(
-			state.turns_taken == profile.turns_per_player * state.turn_order().size(),
-			(
-				"the final round must have taken every Turn it has (%d), got %d"
-				% [profile.turns_per_player * state.turn_order().size(), state.turns_taken]
+	(
+		violations
+		. append_array(
+			_expect(
+				state.turns_taken == state.fighter_ids().size() - 1,
+				(
+					"the final round must have completed every Turn but the one §11.3 ended (%d), got %d"
+					% [state.fighter_ids().size() - 1, state.turns_taken]
+				)
 			)
 		)
 	)
@@ -489,7 +529,7 @@ static func _test_the_segment_boundary_begins_the_next_round() -> Array[String]:
 	var state: GameState = parts[1]
 	var authority: Authority = parts[2]
 
-	violations.append_array(_play_round(session))
+	violations.append_array(_play_round(session, state))
 
 	violations.append_array(
 		_expect(
@@ -585,7 +625,7 @@ static func _test_the_final_round_completes_the_match() -> Array[String]:
 				_expect(advanced.success, "the Segment must advance, got %s" % advanced.reason)
 			)
 
-		violations.append_array(_play_round(session))
+		violations.append_array(_play_round(session, state))
 
 	violations.append_array(
 		_expect(
@@ -745,6 +785,7 @@ static func _test_the_outcome_reports_the_live_state() -> Array[String]:
 	var violations: Array[String] = []
 	var parts := _session()
 	var session: HotseatSession = parts[0]
+	var state: GameState = parts[1]
 
 	var in_play := session.outcome()
 	violations.append_array(
@@ -780,7 +821,7 @@ static func _test_the_outcome_reports_the_live_state() -> Array[String]:
 			)
 			continue
 
-		violations.append_array(_play_step(session, phase))
+		violations.append_array(_play_step(session, state, phase))
 
 	var ended := session.outcome()
 	violations.append_array(

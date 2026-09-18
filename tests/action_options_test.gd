@@ -26,6 +26,7 @@ static func run() -> bool:
 	violations.append_array(_test_actable_fighters_filters_by_player_and_board_occupancy())
 	violations.append_array(_test_actable_fighters_preserves_fighter_ids_order())
 	violations.append_array(_test_actable_fighters_unknown_player_is_empty())
+	violations.append_array(_test_every_query_is_empty_for_an_activated_fighter())
 
 	violations.append_array(_test_move_destinations_matches_reachable_from())
 	violations.append_array(_test_move_destinations_empty_when_charge_locked_out())
@@ -224,6 +225,88 @@ static func _test_actable_fighters_unknown_player_is_empty() -> Array[String]:
 		options.actable_fighters(state, "no_such_player").is_empty(),
 		"actable_fighters() for a player id the state does not hold must be empty"
 	)
+
+
+# --- Spec §5.2's once-per-round activation ---------------------------------
+
+
+## Spec §5.2's once-per-round activation, across all four affordance queries at
+## once.
+##
+## `actable_fighters()` omits the champion that has acted and still reports the
+## one that has not; `move_destinations()`, `attack_targets()` and
+## `charge_destinations()` are all empty for it. The three per-fighter queries
+## reach that answer by two different routes -- `attack_targets()` and
+## `charge_destinations()` through `AttackAction.refusal_from()`, and
+## `move_destinations()` through its own `Activation.has_activated()` check,
+## because nothing under it consults `MoveAction` -- so all three are asserted
+## rather than one standing in for the others.
+##
+## The unacted champion is asserted on the same state, so the emptiness is the
+## activation and not the geometry. Both champions stand adjacent to the one
+## enemy, so `f1` would report exactly what `f2` reports had it not acted.
+static func _test_every_query_is_empty_for_an_activated_fighter() -> Array[String]:
+	var violations: Array[String] = []
+	var template := _template(2, 2, 5, 1, 3, 1)
+	var templates := FighterTemplates.new()
+	templates.register(template)
+	var options := _options(templates)
+
+	var state := _build_state()
+	_place(state, "f1", "p1", Vector3i(0, 0, 0), template)
+	_place(state, "f2", "p1", Vector3i(1, 0, -1), template)
+	_place(state, "enemy", "p2", Vector3i(1, -1, 0), template)
+	Activation.record(state, "f1")
+
+	var expected: Array[String] = ["f2"]
+	violations.append_array(
+		_expect(
+			options.actable_fighters(state, "p1") == expected,
+			(
+				"actable_fighters() must omit the champion that has acted and keep the one that "
+				+ "has not, got %s" % [options.actable_fighters(state, "p1")]
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			options.move_destinations(state, "f1").is_empty(),
+			"move_destinations() must be empty for a champion that has already acted"
+		)
+	)
+	violations.append_array(
+		_expect(
+			options.attack_targets(state, "f1").is_empty(),
+			"attack_targets() must be empty for a champion that has already acted"
+		)
+	)
+	violations.append_array(
+		_expect(
+			options.charge_destinations(state, "f1", "enemy").is_empty(),
+			"charge_destinations() must be empty for a champion that has already acted"
+		)
+	)
+
+	# The control: the champion that has not acted still has every affordance
+	# the same board offers, so none of the four above is empty by accident.
+	violations.append_array(
+		_expect(
+			not options.move_destinations(state, "f2").is_empty(),
+			"the unacted champion must still be offered somewhere to Move"
+		)
+	)
+	var only_enemy: Array[String] = ["enemy"]
+	violations.append_array(
+		_expect(
+			options.attack_targets(state, "f2") == only_enemy,
+			(
+				"the unacted champion must still be offered its Attack, got %s"
+				% [options.attack_targets(state, "f2")]
+			)
+		)
+	)
+
+	return violations
 
 
 # --- move_destinations() -------------------------------------------------

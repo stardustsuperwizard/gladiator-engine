@@ -117,6 +117,28 @@ static func _flag(
 	ChargeActionTest._flag(state, fighter_id, template, flag)
 
 
+## Clears spec §5.2's activation record from `fighter_id`, the way §10 step 5's
+## round-level clearing does at the end of a round.
+##
+## **Every case in this file that acts twice with one fighter needs it**, and
+## needs it for the same reason: §5.2 spends a champion's activation on its
+## first action, and every action's `_refusal()` asks about that record before
+## anything else it could refuse for. A fixture that did not clear it would
+## report `*_already_activated` for its second action and prove nothing about
+## the rule it was written for -- the composed arithmetic in
+## `_test_charge_equals_move_then_attack()`, and spec §6's Charge lockout in
+## the two cases after it. Clearing this one flag and leaving `"charged"` alone
+## is what isolates them.
+##
+## It is not a claim that the sequences below are legal inside one round. They
+## are not, and §5.2 is why.
+static func _clear_activation(state: GameState, fighter_id: String) -> void:
+	var cleared := Fighter.without_flags(
+		state.fighter(fighter_id), [Activation.FLAG_ACTIVATED] as Array[String]
+	)
+	state.update_fighter(fighter_id, cleared)
+
+
 static func _baseline_state(template: FighterTemplate, target_damage: int = 0) -> GameState:
 	return ChargeActionTest._baseline_state(template, target_damage)
 
@@ -181,6 +203,10 @@ static func _test_charge_equals_move_then_attack() -> Array[String]:
 	var stepwise := _equivalence_state(template)
 	var rng_before := stepwise.rng.get_state()
 	var move_result := MoveAction.new(ACTOR_ID, H3, template).resolve(stepwise)
+	# See `_clear_activation()`: the Move spent §5.2's activation, and the
+	# Attack that follows is a hand-built reference for the arithmetic rather
+	# than a legal second action in the same round.
+	_clear_activation(stepwise, ACTOR_ID)
 	var attack_result := AttackAction.new(ACTOR_ID, TARGET_ID, template, template, profile).resolve(
 		stepwise
 	)
@@ -358,6 +384,10 @@ static func _test_charge_resolves_with_an_unflagged_friendly_present() -> Array[
 static func _charged_state(template: FighterTemplate) -> GameState:
 	var state := _lockout_state(template)
 	ChargeAction.new(ACTOR_ID, H3, TARGET_ID, template, template, _missing_profile()).resolve(state)
+	# The Charge recorded §5.2's activation as well as setting `"charged"`, and
+	# the activation refusal runs before the lockout in all three actions. See
+	# `_clear_activation()`.
+	_clear_activation(state, ACTOR_ID)
 	return state
 
 

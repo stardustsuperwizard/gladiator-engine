@@ -1,6 +1,12 @@
 ## Tests `AttackAction`'s two reads of spec §6's `"guarded"` flag: the
 ## save-chart bonus (spec §7.3) and push immunity (spec §6, §7.6-7.7).
 ##
+## **It also carries `AttackAction`'s spec §5.2 cases** -- the activation a
+## resolved Attack records, and the `FAILURE_ALREADY_ACTIVATED` that reads it
+## back -- for exactly the reason the next paragraph gives about this file's
+## existence: `attack_action_test.gd` is at the cap, and the rule is to split
+## rather than raise it.
+##
 ## **A registered suite of its own**, unlike `attack_action_target_test.gd` and
 ## `attack_action_push_test.gd`. Those two are reached by a call inside
 ## `attack_action_test.gd`, but that file sits at .gdlintrc's 1000-line file
@@ -44,6 +50,7 @@ static func run() -> bool:
 	violations.append_array(_test_guard_blocks_only_the_push())
 	violations.append_array(_test_rng_position_is_unaffected_by_guard())
 	violations.append_array(_test_a_resolved_attack_records_activation())
+	violations.append_array(_test_a_second_attack_in_a_round_is_refused())
 
 	if violations.is_empty():
 		return true
@@ -479,3 +486,67 @@ static func _test_a_resolved_attack_records_activation() -> Array[String]:
 		attacker != null and attacker.has_status_flag(Activation.FLAG_ACTIVATED),
 		"a resolved attack must record spec §5.2's once-per-round activation on the attacker"
 	)
+
+
+## Spec §5.2's once-per-round activation: the attacker's first Attack spends
+## its Turn, and a second one that round is refused
+## `FAILURE_ALREADY_ACTIVATED` changing nothing at all.
+##
+## `refusal_from()` is asserted alongside `resolve()`, because that pre-check
+## is what every affordance query is built on -- `ActionOptions.attack_targets()`
+## and `charge_destinations()` go empty for an activated fighter only because
+## it answers the same way.
+##
+## The profile forces a Miss -- no die meets the attack target and every die
+## meets the save target -- so the first Attack cannot defeat the target and
+## leave the second refused for a different reason.
+static func _test_a_second_attack_in_a_round_is_refused() -> Array[String]:
+	var violations: Array[String] = []
+	var template := _fighter_template(2, 5, 1)
+	var profile := _forced_profile(_never(), _always())
+	var state := _build_state(13)
+	_place(state, "a1", "p1", ATTACKER_HEX, template)
+	_place(state, "b1", "p2", TARGET_HEX, template)
+
+	var first := AttackAction.new("a1", "b1", template, template, profile).resolve(state)
+	violations.append_array(
+		_expect(first.success, "the round's first Attack must resolve, got %s" % first.reason)
+	)
+
+	var before := state.digest()
+	var rng_before := state.rng.get_state()
+	var action := AttackAction.new("a1", "b1", template, template, profile)
+	var result := action.resolve(state)
+
+	violations.append_array(
+		_expect(
+			not result.success and result.reason == AttackAction.FAILURE_ALREADY_ACTIVATED,
+			(
+				"a second Attack in one round must be refused FAILURE_ALREADY_ACTIVATED, got %s"
+				% result.reason
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.digest() == before,
+			"a refused second Attack must leave the state digest byte-identical"
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.rng.get_state() == rng_before,
+			"a refused second Attack must draw nothing from the generator"
+		)
+	)
+	violations.append_array(
+		_expect(
+			action.refusal_from(state, ATTACKER_HEX) == AttackAction.FAILURE_ALREADY_ACTIVATED,
+			(
+				"refusal_from() must report the activation too, got %s"
+				% action.refusal_from(state, ATTACKER_HEX)
+			)
+		)
+	)
+
+	return violations

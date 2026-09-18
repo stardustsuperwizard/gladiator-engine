@@ -12,9 +12,9 @@
 ##    board. Immediate, so a state mid-round reports it: §11.3 says a side's
 ##    last fighter being removed ends the match inside that Turn.
 ## 2. **The round limit** -- `state.is_final_round()` and
-##    `state.combat_segment_complete()`. §11.1's limit is reached when that
-##    round's Combat Segment is complete, so a final round still mid-Segment is
-##    not an ending.
+##    `TurnSequence.combat_segment_complete(state)`. §11.1's limit is reached
+##    when that round's Combat Segment is complete, so a final round still
+##    mid-Segment is not an ending.
 ##
 ## Elimination is tested first, so a final round whose last Segment also
 ## eliminated a side reports elimination. §11.1's unbounded match is
@@ -87,7 +87,7 @@ static func _ending(state: GameState, survivors: Dictionary) -> StringName:
 		if int(survivors[player_id]) == 0:
 			return MatchOutcome.ENDING_ELIMINATION
 
-	if state.is_final_round() and state.combat_segment_complete():
+	if state.is_final_round() and TurnSequence.combat_segment_complete(state):
 		return MatchOutcome.ENDING_ROUND_LIMIT
 
 	return &""

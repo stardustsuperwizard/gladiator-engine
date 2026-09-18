@@ -15,6 +15,7 @@ static func run() -> bool:
 
 	violations.append_array(_test_resolve_leaves_turns_taken_unchanged())
 	violations.append_array(_test_resolve_leaves_turns_taken_unchanged_across_repeats())
+	violations.append_array(_test_a_second_pass_in_a_round_is_refused())
 	violations.append_array(_test_resolve_leaves_the_rest_of_the_state_alone())
 	violations.append_array(_test_missing_actor_fails_with_its_own_constant())
 	violations.append_array(_test_missing_actor_changes_nothing())
@@ -69,7 +70,9 @@ static func _test_resolve_leaves_turns_taken_unchanged() -> Array[String]:
 	return violations
 
 
-## Three resolutions, no change -- the counter is not this action's to write.
+## Three resolutions, no change to the counter -- it is not this action's to
+## write on the one that resolves, and the two that follow are refused spec
+## §5.2's activation, which writes nothing either.
 static func _test_resolve_leaves_turns_taken_unchanged_across_repeats() -> Array[String]:
 	var state := _build_state()
 	var before := state.turns_taken
@@ -79,8 +82,46 @@ static func _test_resolve_leaves_turns_taken_unchanged_across_repeats() -> Array
 
 	return _expect(
 		state.turns_taken == before,
-		"three successful resolve() calls must leave turns_taken exactly as it was"
+		"three resolve() calls must leave turns_taken exactly as it was"
 	)
+
+
+## Spec §5.2's once-per-round activation: a second Pass by the same fighter in
+## one round is refused `FAILURE_ALREADY_ACTIVATED`, changing nothing at all.
+##
+## Pass is not exempt from the allowance. `ChargeLockout` calls it the action a
+## locked-out fighter still has, and that is still true -- nothing in this
+## action consults the lockout -- but a champion gets one Action Step a round
+## whatever it spends it on.
+static func _test_a_second_pass_in_a_round_is_refused() -> Array[String]:
+	var violations: Array[String] = []
+	var state := _build_state()
+
+	var first := PassAction.new("f1").resolve(state)
+	violations.append_array(
+		_expect(first.success, "the round's first Pass must resolve, got %s" % first.reason)
+	)
+
+	var before := state.digest()
+	var result := PassAction.new("f1").resolve(state)
+
+	violations.append_array(
+		_expect(
+			not result.success and result.reason == PassAction.FAILURE_ALREADY_ACTIVATED,
+			(
+				"a second Pass in one round must be refused FAILURE_ALREADY_ACTIVATED, got %s"
+				% result.reason
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.digest() == before,
+			"a refused second Pass must leave the state digest byte-identical"
+		)
+	)
+
+	return violations
 
 
 ## PassAction's only observable effects are the two every command has:

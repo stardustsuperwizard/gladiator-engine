@@ -18,7 +18,8 @@ static func run() -> bool:
 
 	violations.append_array(_test_legal_guard_sets_the_flag_and_persists_through_state())
 	violations.append_array(_test_legal_guard_changes_nothing_else())
-	violations.append_array(_test_repeat_guard_is_idempotent())
+	violations.append_array(_test_a_second_guard_in_a_round_is_refused())
+	violations.append_array(_test_the_guarded_flag_alone_is_not_a_refusal())
 	violations.append_array(_test_no_such_fighter_is_refused())
 	violations.append_array(_test_null_template_is_refused())
 	violations.append_array(_test_unparseable_payload_is_refused())
@@ -185,10 +186,9 @@ static func _test_legal_guard_changes_nothing_else() -> Array[String]:
 	return violations
 
 
-## A second Guard on an already-guarded fighter resolves and leaves the state
-## digest byte-identical -- `Fighter.set_status_flag()` already returns
-## `false` for a flag it holds, and the committed payload is identical.
-static func _test_repeat_guard_is_idempotent() -> Array[String]:
+## Spec §5.2's once-per-round activation: a second Guard by the same fighter in
+## one round is refused `FAILURE_ALREADY_ACTIVATED`, changing nothing at all.
+static func _test_a_second_guard_in_a_round_is_refused() -> Array[String]:
 	var violations: Array[String] = []
 	var origin := Vector3i(0, 0, 0)
 	var template := _fighter_template()
@@ -202,13 +202,51 @@ static func _test_repeat_guard_is_idempotent() -> Array[String]:
 
 	violations.append_array(
 		_expect(
-			result.success, "a repeat Guard on an already-guarded fighter must resolve, not refuse"
+			not result.success and result.reason == GuardAction.FAILURE_ALREADY_ACTIVATED,
+			(
+				"a second Guard in one round must be refused FAILURE_ALREADY_ACTIVATED, got %s"
+				% result.reason
+			)
 		)
 	)
 	violations.append_array(
 		_expect(
 			state.digest() == before,
-			"a repeat Guard on an already-guarded fighter must leave the state digest identical"
+			"a refused second Guard must leave the state digest byte-identical"
+		)
+	)
+
+	return violations
+
+
+## The guarded flag is not itself a precondition. A fighter carrying
+## `FLAG_GUARDED` but not the activation flag -- which is what any future
+## writer of that flag other than this action would produce -- still resolves a
+## Guard, because the rule that refuses a repeat is keyed on the activation
+## record and nothing else.
+static func _test_the_guarded_flag_alone_is_not_a_refusal() -> Array[String]:
+	var violations: Array[String] = []
+	var origin := Vector3i(0, 0, 0)
+	var template := _fighter_template()
+	var state := _build_state()
+	_place(state, "a1", "p1", origin, template)
+
+	state.update_fighter(
+		"a1", Fighter.with_flags(state.fighter("a1"), [GuardAction.FLAG_GUARDED] as Array[String])
+	)
+
+	var result := GuardAction.new("a1", template).resolve(state)
+
+	violations.append_array(
+		_expect(
+			result.success,
+			"a guarded but unactivated fighter must still resolve a Guard, got %s" % result.reason
+		)
+	)
+	violations.append_array(
+		_expect(
+			Activation.has_activated(state, "a1"),
+			"that Guard must record spec §5.2's activation like any other"
 		)
 	)
 

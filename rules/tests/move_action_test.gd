@@ -33,6 +33,7 @@ static func run() -> bool:
 	violations.append_array(_test_occupied_path_within_move_is_refused())
 	violations.append_array(_test_detour_longer_than_move_is_refused())
 	violations.append_array(_test_destination_is_origin_is_refused())
+	violations.append_array(_test_a_second_move_in_a_round_is_refused())
 	violations.append_array(_test_no_such_fighter_is_refused())
 	violations.append_array(_test_null_template_is_refused())
 	violations.append_array(_test_rng_is_untouched_by_a_successful_move())
@@ -401,6 +402,55 @@ static func _test_detour_longer_than_move_is_refused() -> Array[String]:
 
 
 # --- Refusals: identity ----------------------------------------------------
+
+
+## Spec §5.2's once-per-round activation: the actor's first Move spends its
+## Turn, and a second one that round is refused `FAILURE_ALREADY_ACTIVATED`
+## changing nothing at all -- not the position it would have reached, not the
+## board, not a byte of the digest.
+##
+## The second destination is a legal one for a fighter that had not acted, so
+## what is being refused is the activation and not the geometry.
+static func _test_a_second_move_in_a_round_is_refused() -> Array[String]:
+	var violations: Array[String] = []
+	var origin := Vector3i(0, 0, 0)
+	var first := Vector3i(1, -1, 0)
+	var second := Vector3i(2, -2, 0)
+	var template := _fighter_template(1)
+	var state := _build_state(3)
+	_place(state, "a1", "p1", origin, template)
+
+	var moved := MoveAction.new("a1", first, template).resolve(state)
+	violations.append_array(
+		_expect(moved.success, "the round's first Move must resolve, got %s" % moved.reason)
+	)
+
+	var before := state.digest()
+	var result := MoveAction.new("a1", second, template).resolve(state)
+
+	violations.append_array(
+		_expect(
+			not result.success and result.reason == MoveAction.FAILURE_ALREADY_ACTIVATED,
+			(
+				"a second Move in one round must be refused FAILURE_ALREADY_ACTIVATED, got %s"
+				% result.reason
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			state.digest() == before,
+			"a refused second Move must leave the state digest byte-identical"
+		)
+	)
+	violations.append_array(
+		_expect(
+			_stored_fighter(state, "a1", template).position() == first,
+			"a refused second Move must leave the fighter where its first Move left it"
+		)
+	)
+
+	return violations
 
 
 static func _test_destination_is_origin_is_refused() -> Array[String]:

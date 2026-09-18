@@ -96,6 +96,7 @@ static func run() -> bool:
 	violations.append_array(_test_a_runnable_state_runs())
 	violations.append_array(_test_round_level_flags_clear_on_the_board())
 	violations.append_array(_test_the_counters_advance())
+	violations.append_array(_test_the_next_round_owes_every_champion_a_turn())
 	violations.append_array(_test_a_defeated_fighter_is_left_exactly_as_it_is())
 	violations.append_array(_test_a_moved_fighter_moves_again_next_round())
 	violations.append_array(_test_a_charged_fighter_charges_again_next_round())
@@ -135,8 +136,9 @@ static func _template(move: int = 1, save: int = 2, health: int = 5) -> FighterT
 	return template
 
 
-## A state whose Combat Segment is **not** complete: the round structure is
-## configured, one Turn of it remains, and both sides hold a fighter.
+## A state whose Combat Segment is **not** complete: both garrisons are on the
+## board with their activations unspent, which is spec §5.2's "this round still
+## owes somebody a Turn."
 ##
 ## The two garrison fighters are what keep `StandardVictory` from reporting an
 ## elimination nobody in these cases caused -- see the class docstring. They are
@@ -146,17 +148,26 @@ static func _incomplete_state(seed_value: int = 11) -> GameState:
 	var state := AttackActionTest._build_state(seed_value)
 	state.turns_per_player = TURNS_PER_PLAYER
 	state.rounds_per_match = ROUNDS_PER_MATCH
-	state.turns_taken = TURNS_PER_PLAYER * state.turn_order().size() - 1
+	state.turns_taken = TURNS_PER_PLAYER * state.turn_order().size()
 	_place(state, GARRISON_P1, "p1", GARRISON_P1_HOME, _template())
 	_place(state, GARRISON_P2, "p2", GARRISON_P2_HOME, _template())
 	return state
 
 
-## A state whose Combat Segment is complete and which is not on its final
-## round: the shape `run()` does its work against.
+## A state whose garrisons have both spent their activation, and which is not
+## on its final round.
+##
+## **Only the garrisons.** Spec §5.2's Segment is complete when no champion on
+## the board has an unspent activation, so a case that places a champion of its
+## own after this either spends it with `_place_spent()` or spends it by
+## resolving an action with it -- otherwise the Segment it built is incomplete
+## and `EndSegment` is right to refuse. `turns_taken` decides nothing here any
+## more; it is left where `_incomplete_state()` put it so the counter-reset
+## case still has something to reset.
 static func _complete_state(seed_value: int = 11) -> GameState:
 	var state := _incomplete_state(seed_value)
-	state.turns_taken += 1
+	Activation.record(state, GARRISON_P1)
+	Activation.record(state, GARRISON_P2)
 	return state
 
 
@@ -168,6 +179,35 @@ static func _place(
 	template: FighterTemplate
 ) -> void:
 	AttackActionTest._place(state, fighter_id, owner_id, coord, template)
+
+
+## `_place()`, plus spec §5.2's activation record -- for a champion a case puts
+## on the board and never acts with, which would otherwise leave the Segment
+## owing its owner a Turn.
+static func _place_spent(
+	state: GameState,
+	fighter_id: String,
+	owner_id: String,
+	coord: Vector3i,
+	template: FighterTemplate
+) -> void:
+	_place(state, fighter_id, owner_id, coord, template)
+	Activation.record(state, fighter_id)
+
+
+## Clears spec §5.2's activation record from `fighter_id`, the way §10 step 5's
+## clearing does at the end of a round.
+##
+## Used by the lockout case below, and only there: it acts three times with one
+## champion in one round to prove §6's lockout released for all three actions,
+## which §5.2's allowance would otherwise stop after the first. The two are
+## separate rules with separate suites, and this is what keeps that case about
+## the one it was written for.
+static func _clear_activation(state: GameState, fighter_id: String) -> void:
+	var cleared := Fighter.without_flags(
+		state.fighter(fighter_id), [Activation.FLAG_ACTIVATED] as Array[String]
+	)
+	state.update_fighter(fighter_id, cleared)
 
 
 static func _stored(state: GameState, fighter_id: String, template: FighterTemplate) -> Fighter:
@@ -299,9 +339,9 @@ static func _test_round_level_flags_clear_on_the_board() -> Array[String]:
 	var template := _template()
 	var state := _complete_state()
 	var profile := _basic_round_profile()
-	_place(state, "a1", "p1", ORIGIN, template)
-	_place(state, "a2", "p1", NEAR_ORIGIN, template)
-	_place(state, "b1", "p2", H1, template)
+	_place_spent(state, "a1", "p1", ORIGIN, template)
+	_place_spent(state, "a2", "p1", NEAR_ORIGIN, template)
+	_place_spent(state, "b1", "p2", H1, template)
 	_flag(state, "a1", template, [StatusFlags.MOVED, PERSISTENT_FLAG] as Array[String])
 	_flag(state, "a2", template, [StatusFlags.GUARDED] as Array[String])
 	_flag(state, "b1", template, StatusFlags.round_level())
@@ -362,8 +402,61 @@ static func _test_the_counters_advance() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			not state.combat_segment_complete(),
+			not TurnSequence.combat_segment_complete(state),
 			"the new round's Combat Segment must not already be complete"
+		)
+	)
+
+	return violations
+
+
+## Spec §10 step 5 clears the activation record along with every other
+## round-level flag, so the round the Segment opens owes a Turn to every
+## champion on the board again and `TurnSequence` names the front of the turn
+## order for the first of them.
+static func _test_the_next_round_owes_every_champion_a_turn() -> Array[String]:
+	var violations: Array[String] = []
+	var template := _template()
+	var state := _complete_state()
+	var profile := _basic_round_profile()
+	_place_spent(state, "a1", "p1", ORIGIN, template)
+	_place_spent(state, "b1", "p2", H1, template)
+
+	violations.append_array(
+		_expect(
+			TurnSequence.active_player(state) == "",
+			"the spent Segment must name nobody before the boundary runs"
+		)
+	)
+
+	var result := EndSegment.run(state, profile)
+
+	violations.append_array(
+		_expect(result.success, "this scenario must run for it to test anything")
+	)
+	for fighter_id in ["a1", "b1", GARRISON_P1, GARRISON_P2]:
+		violations.append_array(
+			_expect(
+				not Activation.has_activated(state, fighter_id),
+				"%s must be unactivated again once the End Segment has run" % fighter_id
+			)
+		)
+	violations.append_array(
+		_expect(
+			TurnSequence.remaining_turns(state, "p1") == 2,
+			(
+				"p1 must be owed one Turn per champion on the board, got %d"
+				% TurnSequence.remaining_turns(state, "p1")
+			)
+		)
+	)
+	violations.append_array(
+		_expect(
+			TurnSequence.active_player(state) == state.turn_order()[0],
+			(
+				"the new round's first Turn must belong to the front of the turn order, got %s"
+				% TurnSequence.active_player(state)
+			)
 		)
 	)
 
@@ -379,7 +472,7 @@ static func _test_a_defeated_fighter_is_left_exactly_as_it_is() -> Array[String]
 	var template := _template()
 	var state := _complete_state()
 	var profile := _basic_round_profile()
-	_place(state, "a1", "p1", ORIGIN, template)
+	_place_spent(state, "a1", "p1", ORIGIN, template)
 	_place(state, "d1", "p2", H1, template)
 	_flag(state, "d1", template, StatusFlags.round_level())
 	state.board.remove_occupant(H1)
@@ -468,7 +561,7 @@ static func _test_a_charged_fighter_charges_again_next_round() -> Array[String]:
 	var round_profile := _basic_round_profile()
 	var state := _complete_state()
 	_place(state, "a1", "p1", ORIGIN, template)
-	_place(state, "b1", "p2", H4, template)
+	_place_spent(state, "b1", "p2", H4, template)
 
 	var first := ChargeAction.new("a1", H3, "b1", template, template, combat_profile).resolve(state)
 	violations.append_array(_expect(first.success, "the round 1 Charge must resolve"))
@@ -476,10 +569,17 @@ static func _test_a_charged_fighter_charges_again_next_round() -> Array[String]:
 	var repeat := ChargeAction.new("a1", NEAR_H4, "b1", template, template, combat_profile).resolve(
 		state
 	)
+	# Spec §5.2's activation, not §6's `"charged"` precondition: the first Charge
+	# spent a1's Turn, and `ChargeAction._refusal()` asks that first. §6's
+	# `FAILURE_ALREADY_ACTED` is proved on a hand-set flag in
+	# `rules/tests/charge_action_test.gd`, where no activation has been recorded.
 	violations.append_array(
 		_expect(
-			repeat.reason == ChargeAction.FAILURE_ALREADY_ACTED,
-			"a second Charge in the same round must be refused -- the control for the case below"
+			repeat.reason == ChargeAction.FAILURE_ALREADY_ACTIVATED,
+			(
+				"a second Charge in the same round must be refused -- the control for the case "
+				+ "below -- got %s" % repeat.reason
+			)
 		)
 	)
 
@@ -520,8 +620,8 @@ static func _test_the_charge_lockout_releases() -> Array[String]:
 	var round_profile := _basic_round_profile()
 	var state := _complete_state()
 	_place(state, "a1", "p1", ORIGIN, template)
-	_place(state, "a2", "p1", NEAR_ORIGIN, template)
-	_place(state, "b1", "p2", H1, template)
+	_place_spent(state, "a2", "p1", NEAR_ORIGIN, template)
+	_place_spent(state, "b1", "p2", H1, template)
 	_flag(state, "a1", template, [StatusFlags.CHARGED] as Array[String])
 
 	violations.append_array(
@@ -563,6 +663,12 @@ static func _test_the_charge_lockout_releases() -> Array[String]:
 		)
 	)
 
+	# a1 is the last champion on the board with an unspent activation, and the
+	# three refusals above are exactly why it could not spend it by acting.
+	# Recording it by hand is what completes spec §5.2's Segment so the boundary
+	# under test can run at all.
+	Activation.record(state, "a1")
+
 	EndSegment.run(state, round_profile)
 
 	for fighter_id in state.fighter_ids():
@@ -573,18 +679,24 @@ static func _test_the_charge_lockout_releases() -> Array[String]:
 			)
 		)
 
+	# All three of §6's barred actions, one after another, with §5.2's
+	# activation cleared between them -- see `_clear_activation()`. The claim is
+	# that the lockout released for each, not that one champion may act three
+	# times in a round.
 	violations.append_array(
 		_expect(
 			GuardAction.new("a1", template).resolve(state).success,
 			"the released fighter must resolve a Guard in round 2"
 		)
 	)
+	_clear_activation(state, "a1")
 	violations.append_array(
 		_expect(
 			AttackAction.new("a1", "b1", template, template, combat_profile).resolve(state).success,
 			"the released fighter must resolve an Attack in round 2"
 		)
 	)
+	_clear_activation(state, "a1")
 	violations.append_array(
 		_expect(
 			MoveAction.new("a1", AWAY_FROM_ORIGIN, template).resolve(state).success,

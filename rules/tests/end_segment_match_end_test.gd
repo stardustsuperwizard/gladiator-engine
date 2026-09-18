@@ -22,9 +22,16 @@
 ##
 ## **No fixture is redefined.** Every helper below is a one-line forward onto
 ## `EndSegmentTest`'s own, so this file carries no second copy of a fixture the
-## sibling suite already defines and whose tests already exercise it. The one
-## exception is `_unbounded_round_profile()`, which is defined here because
-## nothing outside this file has a use for a match with no round limit.
+## sibling suite already defines and whose tests already exercise it. The two
+## exceptions are `_unbounded_round_profile()` and `_spend_every_activation()`,
+## both defined here because nothing outside this file has a use for a match
+## with no round limit or for playing several of its rounds out in a loop.
+##
+## **Spec §5.2's Segment is complete when no champion on the board has an
+## unspent activation**, so a case here that puts a champion on the board and
+## never acts with it spends its activation itself -- `_place_spent()`, or
+## `_spend_every_activation()` between the rounds of the unbounded case.
+## `turns_taken` settles nothing any more.
 ##
 ## **Every state fixture still puts a fighter on the board for each side**, for
 ## the reason the sibling file's docstring gives at length: `StandardVictory`
@@ -88,6 +95,30 @@ static func _place(
 	EndSegmentTest._place(state, fighter_id, owner_id, coord, template)
 
 
+static func _place_spent(
+	state: GameState,
+	fighter_id: String,
+	owner_id: String,
+	coord: Vector3i,
+	template: FighterTemplate
+) -> void:
+	EndSegmentTest._place_spent(state, fighter_id, owner_id, coord, template)
+
+
+## Spec §5.2's Combat Segment played out, for a case that needs several rounds
+## in a loop: every champion the board still reports spends its activation.
+##
+## Defined here rather than forwarded because only the unbounded case below
+## advances more than one round.
+static func _spend_every_activation(state: GameState) -> void:
+	for coord in state.board.coords():
+		var occupant := state.board.occupant_at(coord)
+		if occupant == Board.EMPTY_OCCUPANT:
+			continue
+
+		Activation.record(state, String(occupant))
+
+
 static func _stored(state: GameState, fighter_id: String, template: FighterTemplate) -> Fighter:
 	return EndSegmentTest._stored(state, fighter_id, template)
 
@@ -132,12 +163,12 @@ static func _test_a_final_round_segment_succeeds_without_mutations() -> Array[St
 	var profile := _basic_round_profile()
 	state.round_number = ROUNDS_PER_MATCH
 	_place(state, "a1", "p1", ORIGIN, template)
-	_place(state, "b1", "p2", H1, template)
+	_place_spent(state, "b1", "p2", H1, template)
 	_flag(state, "a1", template, StatusFlags.round_level())
 
 	violations.append_array(
 		_expect(
-			state.is_final_round() and state.combat_segment_complete(),
+			state.is_final_round() and TurnSequence.combat_segment_complete(state),
 			"this scenario must be a complete Segment on the final round to test anything"
 		)
 	)
@@ -218,7 +249,7 @@ static func _test_a_mid_round_elimination_ends_the_match() -> Array[String]:
 
 	violations.append_array(
 		_expect(
-			not state.combat_segment_complete(),
+			not TurnSequence.combat_segment_complete(state),
 			"this scenario must have a Turn of the round left to test anything"
 		)
 	)
@@ -277,7 +308,7 @@ static func _test_an_unbounded_match_advances_past_the_mvp_round_limit() -> Arra
 	var state := _complete_state()
 	var profile := _unbounded_round_profile()
 	state.rounds_per_match = 0
-	_place(state, "a1", "p1", ORIGIN, template)
+	_place_spent(state, "a1", "p1", ORIGIN, template)
 
 	# One Segment more than the MVP's three rounds, so a pass here cannot mean
 	# the limit was simply never reached.
@@ -294,8 +325,9 @@ static func _test_an_unbounded_match_advances_past_the_mvp_round_limit() -> Arra
 				advanced.success, "an unbounded match's Segment must run, got %s" % advanced.reason
 			)
 		)
-		# Play out the round the Segment just opened, so the next one is complete.
-		state.turns_taken = TURNS_PER_PLAYER * state.turn_order().size()
+		# Play out the round the Segment just opened, so the next one is
+		# complete: the Segment it just ran cleared every activation.
+		_spend_every_activation(state)
 
 	violations.append_array(
 		_expect(
