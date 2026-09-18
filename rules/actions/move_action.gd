@@ -57,6 +57,11 @@
 ## consecutive-pass record. That is not a Turn count: `turns_taken` still rises
 ## only when the Power Step ends, in `PowerStep.end_on_second_pass()`.
 ##
+## **It calls `Activation.record(state, actor_id())` on its success path**,
+## immediately before that `PowerStep.note_action(state)` call and after the
+## payload above is committed. See `Activation`'s own docstring for spec
+## §5.2's once-per-round record this begins.
+##
 ## **Draws nothing from `state.rng`.** Move is fully determined by the board
 ## and the `move()` stat; `rules/tests/ambient_rng_contract_test.gd` and
 ## `rules/tests/ambient_rng_scanner_test.gd` enforce that no generator call
@@ -133,6 +138,7 @@ func resolve(state: GameState) -> TurnResult:
 
 	fighter.set_status_flag(FLAG_MOVED)
 	state.update_fighter(actor_id(), fighter.to_dict())
+	Activation.record(state, actor_id())
 	PowerStep.note_action(state)
 	return TurnResult.ok()
 

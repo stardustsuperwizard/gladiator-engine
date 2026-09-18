@@ -55,6 +55,13 @@
 ## first did. `turns_taken` still rises only when the Power Step ends, in
 ## `PowerStep.end_on_second_pass()`.
 ##
+## **It calls `Activation.record(state, actor_id())` on its success path**,
+## immediately before that direct `PowerStep.note_action(state)` call. It
+## reaches `Activation.record()` twice on a successful Charge for the identical
+## reason -- once through the composed `AttackAction`, once directly -- and
+## `record()` is idempotent for the identical reason: see `Activation`'s own
+## docstring.
+##
 ## **The templates and the profile are injected, never resolved.** They arrive
 ## through `_init()` and are handed to the composed `AttackAction`: nothing
 ## here calls `load()` or `preload()`, consults a registry, or asks `GameState`
@@ -149,8 +156,9 @@ func _init(
 ## 3. resolve the attack half, which re-reads the attacker and so attacks from
 ##    the destination;
 ## 4. re-read the actor, set `ChargeLockout.FLAG_CHARGED`, commit again;
-## 5. note the action against the Power Step, idempotently -- step 3 already
-##    did it once;
+## 5. record activation and note the action against the Power Step, both
+##    idempotently -- step 3 already did both once, through the composed
+##    `AttackAction`;
 ## 6. return `TurnResult.ok()`.
 ##
 ## The actor is re-read at step 4 rather than reusing the local `Fighter` from
@@ -182,6 +190,7 @@ func resolve(state: GameState) -> TurnResult:
 	var charged := _read_fighter(state)
 	charged.set_status_flag(ChargeLockout.FLAG_CHARGED)
 	state.update_fighter(actor_id(), charged.to_dict())
+	Activation.record(state, actor_id())
 	PowerStep.note_action(state)
 	return TurnResult.ok()
 

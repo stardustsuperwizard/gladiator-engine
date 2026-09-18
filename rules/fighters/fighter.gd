@@ -409,6 +409,59 @@ static func without_flags(payload: Dictionary, flags: Array[String]) -> Dictiona
 	return copy
 
 
+## Returns a copy of `payload` with every flag in `flags` added to its
+## `"status_flags"` array, leaving every other key untouched and in place.
+##
+## The mirror image of `without_flags()`, for the identical reason: this is the
+## payload-shaped operation `Activation.record()` needs, for a caller that
+## holds a stored payload and no template to parse it over. It lives here,
+## on the class that owns the serialized shape, rather than in that caller --
+## reaching into `"status_flags"` from outside this file would be a second
+## copy of the serialization contract.
+##
+## A deep copy in, a deep copy out: the argument is never mutated, exactly as
+## `without_flags()`.
+##
+## **Nothing is repaired.** A payload with no `"status_flags"` key, or one
+## whose value is not an `Array`, comes back unchanged and gains no key --
+## matching `without_flags()`'s safe direction exactly.
+##
+## **No duplicate entry.** A flag already present in `"status_flags"` is left
+## alone rather than appended a second time, which is what makes
+## `Activation.record()` idempotent.
+##
+## **Key order is preserved**, for the reason `without_flags()`'s docstring
+## gives: `GameState.digest()` hashes `JSON.stringify(to_dict())`.
+static func with_flags(payload: Dictionary, flags: Array[String]) -> Dictionary:
+	var copy := payload.duplicate(true)
+
+	var flags_field: Variant = copy.get("status_flags")
+	if typeof(flags_field) != TYPE_ARRAY:
+		return copy
+
+	var current: Array = flags_field
+	for flag in flags:
+		if not current.has(flag):
+			current.append(flag)
+
+	copy["status_flags"] = current
+	return copy
+
+
+## True when `payload`'s `"status_flags"` array holds `flag`, by exact string
+## match. `false` when `"status_flags"` is missing or not an `Array`.
+##
+## The payload-shaped mirror of `Fighter.has_status_flag()`, for a caller that
+## holds a stored payload and no template to parse it over -- `Activation
+## .has_activated()` is the one today. Reads only; never mutates `payload`.
+static func has_flag(payload: Dictionary, flag: String) -> bool:
+	var flags_field: Variant = payload.get("status_flags")
+	if typeof(flags_field) != TYPE_ARRAY:
+		return false
+
+	return (flags_field as Array).has(flag)
+
+
 ## `value` as a valid cube coordinate, or `null` when it is not a three-element
 ## array of integers satisfying `HexCoord.is_valid()`.
 ##

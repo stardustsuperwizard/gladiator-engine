@@ -255,18 +255,18 @@ static func _assert_actor_payloads_match_but_for_the_flag(
 		_expect(
 			(
 				JSON.stringify(stepwise_actor.get("status_flags"))
-				== JSON.stringify([MoveAction.FLAG_MOVED])
+				== JSON.stringify([MoveAction.FLAG_MOVED, Activation.FLAG_ACTIVATED])
 			),
-			'the stepwise actor must carry exactly the "moved" flag'
+			'the stepwise actor must carry exactly the "moved" and "activated" flags'
 		)
 	)
 	violations.append_array(
 		_expect(
 			(
 				JSON.stringify(charged_actor.get("status_flags"))
-				== JSON.stringify([ChargeLockout.FLAG_CHARGED])
+				== JSON.stringify([Activation.FLAG_ACTIVATED, ChargeLockout.FLAG_CHARGED])
 			),
-			'the charging actor must carry exactly the "charged" flag'
+			'the charging actor must carry exactly the "activated" and "charged" flags'
 		)
 	)
 
@@ -289,7 +289,7 @@ static func _assert_digests_match_once_normalised(
 	stepwise: GameState, charged: GameState
 ) -> Array[String]:
 	var normalised := charged.fighter(ACTOR_ID)
-	normalised["status_flags"] = [MoveAction.FLAG_MOVED]
+	normalised["status_flags"] = [MoveAction.FLAG_MOVED, Activation.FLAG_ACTIVATED]
 	charged.update_fighter(ACTOR_ID, normalised)
 
 	return _expect(

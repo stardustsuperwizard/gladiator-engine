@@ -31,6 +31,13 @@
 ## ends, in `PowerStep.end_on_second_pass()`. `note_action()` draws nothing
 ## from `state.rng`, so the draw order below is unaffected.
 ##
+## **It calls `Activation.record(state, actor_id())` on its success path**,
+## immediately before that `PowerStep.note_action(state)` call. See
+## `Activation`'s own docstring for spec §5.2's once-per-round record this
+## begins, and for why `ChargeAction`'s own call to the same method -- reached
+## through this composed `AttackAction` and then directly -- must be
+## idempotent.
+##
 ## **Draw order is the contract.** The attack pool is drawn *entirely* before
 ## the save pool, both through `state.rng`, and nothing else in `resolve()`
 ## touches the generator. That ordering is what makes the hand-worked tests in
@@ -231,6 +238,7 @@ func resolve(state: GameState) -> TurnResult:
 		return TurnResult.failure(reason)
 
 	_resolve_attack(state, attacker, target)
+	Activation.record(state, actor_id())
 	PowerStep.note_action(state)
 	return TurnResult.ok()
 
