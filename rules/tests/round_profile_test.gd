@@ -64,6 +64,16 @@ static func _test_round_profile_defaults() -> Array[String]:
 			"a fresh RoundProfile's rounds_per_match must default to 0"
 		)
 	)
+	violations.append_array(
+		_expect(
+			# Object.get() is the dynamic accessor: it returns null for a
+			# property the script does not declare rather than failing to
+			# compile, which is what proves epic #377 removed the dial
+			# rather than merely leaving it unauthored.
+			profile.get(&"turns_per_player") == null,
+			"a fresh RoundProfile must carry no Turns-per-player dial"
+		)
+	)
 
 	return violations
 
@@ -124,6 +134,16 @@ static func _test_fields_round_trip_and_affect_digest() -> Array[String]:
 
 	violations.append_array(
 		_expect(restored.rounds_per_match == 3, "rounds_per_match must survive the round trip")
+	)
+	violations.append_array(
+		_expect(
+			# Object.get() is the dynamic accessor: it returns null for a
+			# property the script does not declare rather than failing to
+			# compile, which is what proves epic #377 removed the dial
+			# rather than merely leaving it unauthored.
+			restored.get(&"turns_per_player") == null,
+			"the round-tripped state must carry no Turns-per-player dial"
+		)
 	)
 
 	var other := _build_state()
