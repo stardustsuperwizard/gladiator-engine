@@ -1,11 +1,21 @@
-## One canonical home for spec §6's three round-level status-flag names, and
-## the enumerated set spec §10 step 5 clears.
+## One canonical home for spec §6's three round-level status-flag names, plus
+## spec §5.2's `activated` flag, and the enumerated set spec §10 step 5 clears.
 ##
 ## `MOVED`, `GUARDED` and `CHARGED` are the single string literals; the three
 ## actions that produce them -- `MoveAction.FLAG_MOVED`,
 ## `GuardAction.FLAG_GUARDED` and `ChargeLockout.FLAG_CHARGED` -- keep their own
 ## names as re-exports of these constants, so every call site keeps reading in
 ## the acting class's own vocabulary and nothing that reads them moves.
+## `ACTIVATED` follows the identical re-export convention: `Activation
+## .FLAG_ACTIVATED` re-exports it, the same way `ChargeLockout.FLAG_CHARGED`
+## already does for `CHARGED`.
+##
+## **`ACTIVATED` marks once-per-round activation, not a §6 action of its
+## own.** Every one of `MoveAction`, `AttackAction`, `GuardAction`,
+## `ChargeAction` and `PassAction` records it on a successful resolve, through
+## `Activation.record()` -- see that class for the payload-level seam. Nothing
+## reads it yet; see `Activation`'s own docstring for what is and is not built
+## on top of it.
 ##
 ## **Why the set is enumerated rather than "clear everything."** Spec §9
 ## hedges -- "*Most* per-round status flags ... clear at end of round" -- and
@@ -52,8 +62,12 @@ const GUARDED := "guarded"
 ## Spec §6's Charge flag.
 const CHARGED := "charged"
 
+## Spec §5.2's once-per-round activation flag. Set by every Action Step
+## command on a successful resolve; see `Activation`.
+const ACTIVATED := "activated"
+
 
 ## The flags spec §10 step 5 clears at end of round, as a fresh copy. See the
 ## class docstring for why this set is enumerated rather than "every flag."
 static func round_level() -> Array[String]:
-	return [MOVED, GUARDED, CHARGED] as Array[String]
+	return [MOVED, GUARDED, CHARGED, ACTIVATED] as Array[String]

@@ -35,13 +35,14 @@ static func _expect(condition: bool, message: String) -> Array[String]:
 	return [] if condition else [message] as Array[String]
 
 
-## A state holding one fighter, "f1". The payload carries an `"owner_id"`
-## because that is the shape `Fighter.to_dict()` produces; nothing in
-## `PassAction` reads it.
+## A state holding one fighter, "f1". The payload carries an `"owner_id"` and
+## a `"status_flags"` array because those are the shape `Fighter.to_dict()`
+## produces -- the latter is what `Activation.record()` now needs to write
+## into on a successful resolve; nothing in `PassAction` itself reads either.
 static func _build_state() -> GameState:
 	var state := GameState.new(Board.new(), DeterministicRng.new(1))
 	state.add_player("p1")
-	state.add_fighter("f1", {"id": "f1", "owner_id": "p1"})
+	state.add_fighter("f1", {"id": "f1", "owner_id": "p1", "status_flags": []})
 	return state
 
 
@@ -82,16 +83,19 @@ static func _test_resolve_leaves_turns_taken_unchanged_across_repeats() -> Array
 	)
 
 
-## PassAction's only observable effect is the one every command has:
-## `PowerStep.note_action()` on the success path, which opens the Turn's Power
-## Step and clears the consecutive-pass record. Nothing else moves.
+## PassAction's only observable effects are the two every command has:
+## `Activation.record(state, actor_id())` and `PowerStep.note_action()`, both
+## on the success path -- the first recording spec §5.2's once-per-round
+## activation on the actor's stored payload, the second opening the Turn's
+## Power Step and clearing the consecutive-pass record. Nothing else moves.
 ##
-## Asserted by digest, in the shape this case has always used and with one
-## addition: take the state's identity before the call, resolve, put back *only*
-## the Power Step this action is allowed to have opened, and require the digest
-## to match again. Anything else the action touched -- `turns_taken`,
-## `round_number`, the board, the generator position, a fighter payload, a
-## score -- would still show up as a differing digest.
+## Asserted by digest, in the shape this case has always used and with two
+## additions: take the state's identity before the call, resolve, put back
+## *only* the Power Step this action is allowed to have opened and the
+## activation flag it is allowed to have recorded, and require the digest to
+## match again. Anything else the action touched -- `turns_taken`,
+## `round_number`, the board, the generator position, any other part of a
+## fighter payload, a score -- would still show up as a differing digest.
 static func _test_resolve_leaves_the_rest_of_the_state_alone() -> Array[String]:
 	var violations: Array[String] = []
 	var state := _build_state()
@@ -106,15 +110,24 @@ static func _test_resolve_leaves_the_rest_of_the_state_alone() -> Array[String]:
 	violations.append_array(
 		_expect(state.power_step_open, "a successful resolve() must open the Turn's Power Step")
 	)
+	violations.append_array(
+		_expect(
+			Activation.has_activated(state, "f1"),
+			"a successful resolve() must record spec §5.2's once-per-round activation"
+		)
+	)
 
 	state.power_step_open = false
+	var f1 := state.fighter("f1")
+	f1["status_flags"] = []
+	state.update_fighter("f1", f1)
 
 	violations.append_array(
 		_expect(
 			state.digest() == before_digest,
 			(
-				"with the Power Step put back, a successful resolve() must leave the state digest "
-				+ "byte-identical -- nothing else restored"
+				"with the Power Step and the activation flag put back, a successful resolve() must "
+				+ "leave the state digest byte-identical -- nothing else restored"
 			)
 		)
 	)

@@ -105,6 +105,12 @@ static func _test_legal_guard_sets_the_flag_and_persists_through_state() -> Arra
 			)
 		)
 	)
+	violations.append_array(
+		_expect(
+			stored != null and stored.has_status_flag(Activation.FLAG_ACTIVATED),
+			"a successful Guard must record spec §5.2's once-per-round activation"
+		)
+	)
 
 	var restored := GameState.from_dict(state.to_dict())
 	violations.append_array(

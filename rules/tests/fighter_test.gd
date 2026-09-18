@@ -48,6 +48,12 @@ static func run() -> bool:
 	violations.append_array(_test_apply_damage_refuses_non_positive_and_accumulates())
 	violations.append_array(_test_move_to_validates_the_coordinate())
 	violations.append_array(_test_status_flags_are_an_insertion_ordered_set())
+	violations.append_array(_test_with_flags_does_not_mutate_its_argument())
+	violations.append_array(_test_with_flags_preserves_key_order_and_every_other_key())
+	violations.append_array(_test_with_flags_adds_no_duplicate_for_a_flag_already_present())
+	violations.append_array(_test_with_flags_leaves_a_payload_it_cannot_read_alone())
+	violations.append_array(_test_has_flag_reports_presence_and_absence())
+	violations.append_array(_test_has_flag_is_false_for_a_payload_it_cannot_read())
 
 	if violations.is_empty():
 		return true
@@ -532,6 +538,149 @@ static func _test_status_flags_are_an_insertion_ordered_set() -> Array[String]:
 		_expect(
 			fighter.status_flags() == (["moved", "charged"] as Array[String]),
 			"clearing a flag must leave the remaining flags in their original order"
+		)
+	)
+
+	return violations
+
+
+# --- Fighter.with_flags() / Fighter.has_flag() -------------------------------
+
+
+static func _flagged_payload() -> Dictionary:
+	var template := make_template(5)
+	var fighter := Fighter.new("fighter-1", template, "player-1", Vector3i.ZERO)
+	fighter.apply_damage(2)
+	fighter.set_status_flag("moved")
+	return fighter.to_dict()
+
+
+static func _test_with_flags_does_not_mutate_its_argument() -> Array[String]:
+	var violations: Array[String] = []
+	var payload := _flagged_payload()
+	var before := JSON.stringify(payload)
+
+	var result := Fighter.with_flags(payload, [StatusFlags.ACTIVATED] as Array[String])
+
+	violations.append_array(
+		_expect(
+			JSON.stringify(payload) == before,
+			"with_flags() must not mutate the payload it is given"
+		)
+	)
+	violations.append_array(
+		_expect(
+			result["status_flags"] == ["moved", StatusFlags.ACTIVATED],
+			"with_flags() must add every listed flag while keeping every other one, in order"
+		)
+	)
+
+	return violations
+
+
+static func _test_with_flags_preserves_key_order_and_every_other_key() -> Array[String]:
+	var violations: Array[String] = []
+	var payload := _flagged_payload()
+
+	var result := Fighter.with_flags(payload, [StatusFlags.ACTIVATED] as Array[String])
+
+	(
+		violations
+		. append_array(
+			_expect(
+				result.keys() == payload.keys(),
+				"with_flags() must return the payload's keys in the identical order -- digest() hashes it"
+			)
+		)
+	)
+	for key in payload.keys():
+		if key == "status_flags":
+			continue
+		violations.append_array(
+			_expect(result[key] == payload[key], 'with_flags() must leave "%s" untouched' % key)
+		)
+
+	return violations
+
+
+static func _test_with_flags_adds_no_duplicate_for_a_flag_already_present() -> Array[String]:
+	var payload := _flagged_payload()
+
+	var result := Fighter.with_flags(payload, ["moved"] as Array[String])
+
+	return _expect(
+		result["status_flags"] == ["moved"],
+		"with_flags() must add no second copy of a flag the payload already carries"
+	)
+
+
+## A payload with no `"status_flags"`, and one whose `"status_flags"` is not an
+## `Array`, both come back unchanged. Nothing is repaired and no key is added.
+static func _test_with_flags_leaves_a_payload_it_cannot_read_alone() -> Array[String]:
+	var violations: Array[String] = []
+	var missing := {"id": "a1", "owner_id": "p1"}
+	var malformed := {"id": "a1", "status_flags": "moved", "owner_id": "p1"}
+
+	var from_missing := Fighter.with_flags(missing, [StatusFlags.ACTIVATED] as Array[String])
+	var from_malformed := Fighter.with_flags(malformed, [StatusFlags.ACTIVATED] as Array[String])
+
+	violations.append_array(
+		_expect(
+			not from_missing.has("status_flags"),
+			'with_flags() must not add a "status_flags" key to a payload that lacks one'
+		)
+	)
+	violations.append_array(
+		_expect(
+			from_missing == missing,
+			"with_flags() must leave a payload with no status_flags key entirely unchanged"
+		)
+	)
+	violations.append_array(
+		_expect(
+			from_malformed["status_flags"] == "moved",
+			'with_flags() must leave a non-Array "status_flags" value unchanged'
+		)
+	)
+
+	return violations
+
+
+static func _test_has_flag_reports_presence_and_absence() -> Array[String]:
+	var violations: Array[String] = []
+	var payload := _flagged_payload()
+
+	violations.append_array(
+		_expect(
+			Fighter.has_flag(payload, "moved"),
+			"has_flag() must report true for a flag that is present"
+		)
+	)
+	violations.append_array(
+		_expect(
+			not Fighter.has_flag(payload, StatusFlags.ACTIVATED),
+			"has_flag() must report false for a flag that is absent"
+		)
+	)
+
+	return violations
+
+
+static func _test_has_flag_is_false_for_a_payload_it_cannot_read() -> Array[String]:
+	var violations: Array[String] = []
+	var missing := {"id": "a1", "owner_id": "p1"}
+	var malformed := {"id": "a1", "status_flags": "moved", "owner_id": "p1"}
+
+	violations.append_array(
+		_expect(
+			not Fighter.has_flag(missing, "moved"),
+			"has_flag() must report false for a payload with no status_flags key"
+		)
+	)
+	violations.append_array(
+		_expect(
+			not Fighter.has_flag(malformed, "moved"),
+			"has_flag() must report false for a non-Array status_flags value"
 		)
 	)
 

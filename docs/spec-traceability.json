@@ -133,12 +133,14 @@
       "section": "5.2",
       "status": "active",
       "modules": [
-        "rules/state/turn_sequence.gd"
+        "rules/state/turn_sequence.gd",
+        "rules/state/activation.gd"
       ],
       "tests": [
-        "rules/tests/turn_sequence_test.gd"
+        "rules/tests/turn_sequence_test.gd",
+        "rules/tests/activation_test.gd"
       ],
-      "note": "Combat Segment alternation and turn order."
+      "note": "Combat Segment alternation and turn order; the once-per-round activation record each Action Step command writes."
     },
     {
       "id": "TR-0011",

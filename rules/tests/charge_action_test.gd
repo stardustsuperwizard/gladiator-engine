@@ -339,6 +339,12 @@ static func _test_legal_charge_relocates_attacks_and_flags() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
+			stored != null and stored.has_status_flag(Activation.FLAG_ACTIVATED),
+			"a successful Charge must record spec §5.2's once-per-round activation"
+		)
+	)
+	violations.append_array(
+		_expect(
 			action.attack_half().outcome() == DicePool.Outcome.HIT,
 			"this scenario's forced profile must resolve the attack half to a HIT"
 		)

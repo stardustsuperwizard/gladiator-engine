@@ -148,6 +148,12 @@ static func _test_legal_move_updates_position_and_board_occupancy() -> Array[Str
 			"the stored payload's position() must be the destination after a legal Move"
 		)
 	)
+	violations.append_array(
+		_expect(
+			stored != null and stored.has_status_flag(Activation.FLAG_ACTIVATED),
+			"a successful Move must record spec §5.2's once-per-round activation"
+		)
+	)
 
 	return violations
 

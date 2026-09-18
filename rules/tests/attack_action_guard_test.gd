@@ -43,6 +43,7 @@ static func run() -> bool:
 	violations.append_array(_test_push_control_unguarded_target_is_still_pushed())
 	violations.append_array(_test_guard_blocks_only_the_push())
 	violations.append_array(_test_rng_position_is_unaffected_by_guard())
+	violations.append_array(_test_a_resolved_attack_records_activation())
 
 	if violations.is_empty():
 		return true
@@ -455,3 +456,26 @@ static func _test_rng_position_is_unaffected_by_guard() -> Array[String]:
 	)
 
 	return violations
+
+
+# --- Activation ----------------------------------------------------------
+
+
+## Spec §5.2's once-per-round activation, pinned here rather than in
+## `attack_action_test.gd`: that file already sits at .gdlintrc's 1000-line
+## cap, per its own comment in `tests/test_bootstrap.gd`, and this suite is
+## already registered independently for exactly that reason -- see the class
+## docstring.
+static func _test_a_resolved_attack_records_activation() -> Array[String]:
+	var template := _fighter_template(2, 5)
+	var state := _build_state(13)
+	_place(state, "a1", "p1", ATTACKER_HEX, template)
+	_place(state, "b1", "p2", TARGET_HEX, template)
+
+	AttackAction.new("a1", "b1", template, template, _standard_profile()).resolve(state)
+
+	var attacker := Fighter.from_dict(state.fighter("a1"), template)
+	return _expect(
+		attacker != null and attacker.has_status_flag(Activation.FLAG_ACTIVATED),
+		"a resolved attack must record spec §5.2's once-per-round activation on the attacker"
+	)

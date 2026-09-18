@@ -1,8 +1,8 @@
-## Tests `StatusFlags`: the three constants' literal values, that the three
-## re-exports on `MoveAction`, `GuardAction` and `ChargeLockout` still equal
-## them, that `round_level()` publishes exactly the three and nothing else as
-## a fresh copy every call, and that a `Fighter` round-trips a flag set by name
-## from this class through serialization.
+## Tests `StatusFlags`: the four constants' literal values, that the four
+## re-exports on `MoveAction`, `GuardAction`, `ChargeLockout` and `Activation`
+## still equal them, that `round_level()` publishes exactly the four and
+## nothing else as a fresh copy every call, and that a `Fighter` round-trips a
+## flag set by name from this class through serialization.
 ##
 ## Every fixture `FighterTemplate` here is built in memory with `.new()` --
 ## this suite lives under `rules/` and `extraction_contract_test.gd` forbids
@@ -15,7 +15,7 @@ static func run() -> bool:
 
 	violations.append_array(_test_constants_hold_expected_literals())
 	violations.append_array(_test_reexports_equal_canonical_constants())
-	violations.append_array(_test_round_level_holds_exactly_the_three())
+	violations.append_array(_test_round_level_holds_exactly_the_four())
 	violations.append_array(_test_round_level_returns_fresh_array_each_call())
 	violations.append_array(_test_round_level_entries_are_plain_strings())
 	violations.append_array(_test_fighter_round_trips_a_status_flags_flag())
@@ -57,6 +57,11 @@ static func _test_constants_hold_expected_literals() -> Array[String]:
 	violations.append_array(
 		_expect(StatusFlags.CHARGED == "charged", 'StatusFlags.CHARGED must equal "charged"')
 	)
+	violations.append_array(
+		_expect(
+			StatusFlags.ACTIVATED == "activated", 'StatusFlags.ACTIVATED must equal "activated"'
+		)
+	)
 	return violations
 
 
@@ -80,17 +85,22 @@ static func _test_reexports_equal_canonical_constants() -> Array[String]:
 			"ChargeLockout.FLAG_CHARGED must equal StatusFlags.CHARGED"
 		)
 	)
+	violations.append_array(
+		_expect(
+			Activation.FLAG_ACTIVATED == StatusFlags.ACTIVATED,
+			"Activation.FLAG_ACTIVATED must equal StatusFlags.ACTIVATED"
+		)
+	)
 	return violations
 
 
-static func _test_round_level_holds_exactly_the_three() -> Array[String]:
+static func _test_round_level_holds_exactly_the_four() -> Array[String]:
 	var violations: Array[String] = []
 	var flags := StatusFlags.round_level()
 
 	violations.append_array(
 		_expect(
-			flags.size() == 3,
-			"round_level() must hold exactly three entries, got %d" % flags.size()
+			flags.size() == 4, "round_level() must hold exactly four entries, got %d" % flags.size()
 		)
 	)
 	violations.append_array(
@@ -101,6 +111,9 @@ static func _test_round_level_holds_exactly_the_three() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(StatusFlags.CHARGED in flags, "round_level() must include StatusFlags.CHARGED")
+	)
+	violations.append_array(
+		_expect(StatusFlags.ACTIVATED in flags, "round_level() must include StatusFlags.ACTIVATED")
 	)
 
 	return violations
@@ -113,7 +126,7 @@ static func _test_round_level_returns_fresh_array_each_call() -> Array[String]:
 
 	var second := StatusFlags.round_level()
 	return _expect(
-		second.size() == 3,
+		second.size() == 4,
 		(
 			"round_level() must return a fresh array each call -- mutating a previous result must "
 			+ "not affect the next call, got size %d" % second.size()
