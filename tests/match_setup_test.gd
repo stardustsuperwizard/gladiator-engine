@@ -57,14 +57,17 @@ static func _test_turn_order_and_round_structure() -> Array[String]:
 			'turn_order() must be ["p1", "p2"], got %s' % [state.turn_order()]
 		)
 	)
-	violations.append_array(
-		_expect(
-			# Object.get() is the dynamic accessor: it returns null for a
-			# property the script does not declare, which is what proves
-			# `build()` copies no Turns-per-player dial onto the state any
-			# more (epic #377).
-			state.get(&"turns_per_player") == null,
-			"the built state must carry no Turns-per-player dial"
+	(
+		violations
+		. append_array(
+			_expect(
+				# Object.get() is the dynamic accessor: it returns null for a
+				# property the script does not declare, which is what proves
+				# `build()` copies no Turns-per-player dial onto the state any
+				# more (epic #377).
+				state.get(&"turns_per_player") == null,
+				"the built state must carry no Turns-per-player dial"
+			)
 		)
 	)
 	violations.append_array(

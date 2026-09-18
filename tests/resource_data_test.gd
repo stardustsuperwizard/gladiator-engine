@@ -508,14 +508,17 @@ static func _test_round_profile_loads_correctly() -> Array[String]:
 		violations.append_array(
 			_expect(profile.profile_id == "standard", "profile_id must be 'standard'")
 		)
-		violations.append_array(
-			_expect(
-				# Object.get() is the dynamic accessor: it returns null for a
-				# property the script does not declare rather than failing to
-				# compile, which is what proves epic #377 removed the dial
-				# rather than merely leaving it unauthored.
-				profile.get(&"turns_per_player") == null,
-				"the authored profile must carry no Turns-per-player dial"
+		(
+			violations
+			. append_array(
+				_expect(
+					# Object.get() is the dynamic accessor: it returns null for a
+					# property the script does not declare rather than failing to
+					# compile, which is what proves epic #377 removed the dial
+					# rather than merely leaving it unauthored.
+					profile.get(&"turns_per_player") == null,
+					"the authored profile must carry no Turns-per-player dial"
+				)
 			)
 		)
 		violations.append_array(
