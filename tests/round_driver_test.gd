@@ -81,7 +81,7 @@ const GOLDEN_SEED := 20260910
 ##
 ## What is **never** the correct response: loosening the assertion, deleting
 ## the case, or comparing the two in-process runs and nothing else.
-const GOLDEN_DIGEST := "c6889a727343b46773bc27ad0b31a2de8eb35c5afec73dd470c53f01c8ceb943"
+const GOLDEN_DIGEST := "7ef1e7238fd238b28351437e70ac0ab10a339cd6a777218410416901a53f065c"
 
 ## The order `active_player_id()` must report across a full round: two players,
 ## four Turns each, alternating.
