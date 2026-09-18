@@ -40,11 +40,9 @@ const F2_HOME := Vector3i(3, -3, 0)
 
 const BOARD_RADIUS := 3
 
-## §5.1's rounds per match, chosen for this case, and the dead
-## `turns_per_player` dial the state still carries. Spec §5.2's Turn allowance
-## is derived from the board -- one champion a side here, so the round is two
-## Turns -- and neither constant decides it.
-const TURNS_PER_PLAYER := 2
+## §5.1's rounds per match, chosen for this case. Spec §5.2's Turn allowance is
+## derived from the board -- one champion a side here, so the round is two
+## Turns -- and this constant does not decide it.
 const ROUNDS_PER_MATCH := 3
 
 ## A bound on the Turn loop, not a count of the Turns it should take. Reaching
@@ -98,7 +96,6 @@ static func _build_state() -> GameState:
 	var state := GameState.new(board, DeterministicRng.new(5))
 	state.add_player("p1")
 	state.add_player("p2")
-	state.turns_per_player = TURNS_PER_PLAYER
 	state.rounds_per_match = ROUNDS_PER_MATCH
 
 	_place(state, "f1", "p1", ORIGIN)
@@ -110,7 +107,6 @@ static func _build_state() -> GameState:
 ## can properly detect match-end conditions.
 static func _round_profile() -> RoundProfile:
 	var profile := RoundProfile.new()
-	profile.turns_per_player = TURNS_PER_PLAYER
 	profile.rounds_per_match = ROUNDS_PER_MATCH
 	profile.victory_condition = "standard"
 	return profile

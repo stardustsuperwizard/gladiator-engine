@@ -5,7 +5,6 @@
 [resource]
 script = ExtResource("1")
 profile_id = "standard"
-turns_per_player = 4
 rounds_per_match = 3
 game_mode = "deathmatch"
 victory_condition = "standard"

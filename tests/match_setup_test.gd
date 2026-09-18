@@ -1,10 +1,10 @@
 ## Tests `MatchSetup`: the dev-authored starting state the hotseat scene is
 ## handed.
 ##
-## **Authored numbers are read, never restated.** `turns_per_player` and
-## `rounds_per_match` are compared against a fresh `load()` of
-## `res://resources/round/round_profile.tres`, not against a literal 4 or 3 --
-## the same discipline `tests/round_driver_test.gd`'s own docstring states for
+## **Authored numbers are read, never restated.** `rounds_per_match` is
+## compared against a fresh `load()` of
+## `res://resources/round/round_profile.tres`, not against a literal 3 -- the
+## same discipline `tests/round_driver_test.gd`'s own docstring states for
 ## itself.
 ##
 ## Lives under `tests/` rather than `rules/tests/` for the reason
@@ -59,11 +59,12 @@ static func _test_turn_order_and_round_structure() -> Array[String]:
 	)
 	violations.append_array(
 		_expect(
-			state.turns_per_player == profile.turns_per_player,
-			(
-				"turns_per_player must equal the authored RoundProfile's, got %d vs %d"
-				% [state.turns_per_player, profile.turns_per_player]
-			)
+			# Object.get() is the dynamic accessor: it returns null for a
+			# property the script does not declare, which is what proves
+			# `build()` copies no Turns-per-player dial onto the state any
+			# more (epic #377).
+			state.get(&"turns_per_player") == null,
+			"the built state must carry no Turns-per-player dial"
 		)
 	)
 	violations.append_array(

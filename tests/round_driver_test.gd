@@ -13,8 +13,7 @@
 ## 2026-09-17 gives a player as many Turns as they have champions on the board,
 ## each acting once, so this suite's fixture -- two champions a side -- is a
 ## four-Turn round and `EXPECTED_ORDER` says so. `rounds_per_match` is still
-## read off `res://resources/round/round_profile.tres`; `turns_per_player` is
-## seeded onto the state alongside it and read by nothing.
+## read off `res://resources/round/round_profile.tres`.
 ##
 ## **Every Turn names its own champion.** `_unacted_champion_of()` picks the
 ## first of the active player's champions that is still on the board and has
@@ -191,7 +190,6 @@ static func _build_state(state_seed: int) -> GameState:
 	var state := GameState.new(_board(), DeterministicRng.new(state_seed))
 	state.add_player("p1")
 	state.add_player("p2")
-	state.turns_per_player = profile.turns_per_player
 	state.rounds_per_match = profile.rounds_per_match
 
 	_place(state, "f1", "p1", ORIGIN)

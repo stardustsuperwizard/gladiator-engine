@@ -103,34 +103,30 @@ Then the card system, which unblocks Focus/Mulligan and §10's card steps.
 > not have. The MVP configuration is 3 rounds, Deathmatch, Standard Victory,
 > no optional modules.
 
-> **§5.2 and §5.3 are not settled. Two open epics will revise them, and neither
-> had been filed when the sections above were last written.** Read both before
-> building anything that reasons about how many Turns a round has, which
-> champion may act, or what a Turn is made of.
+> **§5.3 is not settled. An open epic will revise it.** Read it before building
+> anything that reasons about what a Turn is made of.
 >
-> - **#377 — Turns per round.** §5.2 has been revised (2026-09-17): a player
+> - **#377 — Turns per round.** Built. §5.2 was revised (2026-09-17): a player
 >   now takes as many Turns in a round as they have fighters on the board, and
 >   each fighter may be acted with exactly once per round — derived from the
 >   board as it stands, not snapshotted when the round began, so a fighter
 >   defeated before it acts takes its Turn with it and its owner's remaining
->   Turns for the round drop by one. §3.1's `MatchProfile` no longer lists
->   `turnsPerPlayer`, and §11 does not carry it as a fifth dial. The resolver
->   has not caught up: `resources/round/round_profile.tres` still authors
->   `turns_per_player = 4` and `GameState.combat_segment_complete()` still ends
->   the Segment at `turns_taken >= turns_per_player * _turn_order.size()`, and
->   there is still no activation concept anywhere — `StatusFlags` carries only
->   `MOVED`, `GUARDED` and `CHARGED`. Adding an activation flag, deriving the
->   allowance from the board, and refusing to activate an already-acted fighter
->   is the remainder of the epic (#406, #407, #408).
+>   Turns for the round drop by one. `Activation` records the once-per-round
+>   flag and `TurnSequence.remaining_turns()` derives the allowance from
+>   unactivated champions on the board; a second activation of the same
+>   fighter is refused. §3.1's `MatchProfile` no longer lists `turnsPerPlayer`,
+>   §11 does not carry it as a fifth dial, and the resolver has caught up:
+>   `GameState.turns_per_player` and `RoundProfile.turns_per_player` are gone,
+>   and `resources/round/round_profile.tres` authors no such dial (#406, #407,
+>   #408).
 > - **#374 — a pre-action Power Step.** §5.3 currently makes a Turn an Action
 >   Step followed by a Power Step. That epic would make it **Pre-Action →
 >   Action → Post-Action**, so cards can be played before the action rather
 >   than only after it.
 >
-> Both bear on `turnsPerPlayer`, which §11's 2026-09-16 rewrite had just framed
-> as an authored `MatchProfile` dial — #377 asks whether it survives at all.
-> #173's planning should expect that reconciliation rather than be surprised by
-> it.
+> `turnsPerPlayer` did not survive: #377 removed it, both from the spec and
+> from the resolver. #173's planning should expect that reconciliation rather
+> than be surprised by it.
 >
 > The same uncertainty is why **#352** (which Step a stat-modifying card may be
 > played in) is sequenced after #374: answering it against today's two-Step Turn

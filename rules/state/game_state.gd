@@ -46,18 +46,9 @@ var rng: DeterministicRng
 var round_number: int = 1
 var turns_taken: int = 0
 
-## Spec §5.1's rounds per match, and the dial that used to carry §5.2's Turns
-## per player. Both authored: the game side seeds them from an authored
-## RoundProfile, and `rules/` never loads a resource path. Zero means
+## Spec §5.1's rounds per match. Authored: the game side seeds it from an
+## authored RoundProfile, and `rules/` never loads a resource path. Zero means
 ## unconfigured.
-##
-## **`turns_per_player` is dead weight and is read by nothing.** Spec §5.2 as
-## revised 2026-09-17 derives a round's Turn allowance from the board --
-## `TurnSequence.remaining_turns()` -- so no rule consults this field any
-## more. It survives here, in `RoundProfile` and in `round_profile.tres` only
-## until the task that removes all three lands; it is still serialized, so
-## deleting it before then would change `digest()` for every stored state.
-var turns_per_player: int = 0
 var rounds_per_match: int = 0
 
 ## True while the current Turn's Power Step is open (spec §5.3).
@@ -213,7 +204,6 @@ func is_final_round() -> bool:
 ##     "rng": <DeterministicRng.to_dict()>,
 ##     "round_number": <int>,
 ##     "turns_taken": <int>,
-##     "turns_per_player": <int>,
 ##     "rounds_per_match": <int>,
 ##     "power_step_open": <bool>,
 ##     "power_step_passes": ["<player id>", ...],
@@ -258,7 +248,6 @@ func to_dict() -> Dictionary:
 		"rng": rng.to_dict(),
 		"round_number": round_number,
 		"turns_taken": turns_taken,
-		"turns_per_player": turns_per_player,
 		"rounds_per_match": rounds_per_match,
 		"power_step_open": power_step_open,
 		"power_step_passes": power_step_passes_out,
@@ -277,10 +266,10 @@ func to_dict() -> Dictionary:
 ## Returns `null`, having built nothing usable, on any refusal: a missing or
 ## non-`Dictionary` `"board"` or `"rng"`; a nested `Board.from_dict()` or
 ## `DeterministicRng.from_dict()` that itself refuses; a `round_number` or
-## `turns_taken` that is not an integer; a `turns_per_player` or
-## `rounds_per_match` that is missing, not an integer, or negative; a missing
-## or non-`bool` `power_step_open`; a missing or non-`Array`
-## `power_step_passes`, or one holding a non-`String` entry, an entry naming
+## `turns_taken` that is not an integer; a `rounds_per_match` that is missing,
+## not an integer, or negative; a missing or non-`bool` `power_step_open`; a
+## missing or non-`Array` `power_step_passes`, or one holding a non-`String`
+## entry, an entry naming
 ## no player in `turn_order`, or a repeated entry; a `turn_order` or
 ## `fighter_order` that is not an `Array` of `String`; a `players` or
 ## `fighters` that is not a `Dictionary`; an id in
@@ -308,10 +297,6 @@ static func from_dict(data: Dictionary) -> GameState:
 
 	var turns_value: Variant = PlayerState.as_int(data.get("turns_taken"))
 	if turns_value == null:
-		return null
-
-	var turns_per_player_value: Variant = PlayerState.as_int(data.get("turns_per_player"))
-	if turns_per_player_value == null or turns_per_player_value < 0:
 		return null
 
 	var rounds_per_match_value: Variant = PlayerState.as_int(data.get("rounds_per_match"))
@@ -352,7 +337,6 @@ static func from_dict(data: Dictionary) -> GameState:
 	var state := GameState.new(restored_board, restored_rng)
 	state.round_number = round_value
 	state.turns_taken = turns_value
-	state.turns_per_player = turns_per_player_value
 	state.rounds_per_match = rounds_per_match_value
 	state.power_step_open = power_step_open_field
 

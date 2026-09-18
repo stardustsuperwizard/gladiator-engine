@@ -45,7 +45,6 @@ const ORIGIN := EndSegmentTest.ORIGIN
 const H1 := EndSegmentTest.H1
 const GARRISON_P2_HOME := EndSegmentTest.GARRISON_P2_HOME
 
-const TURNS_PER_PLAYER := EndSegmentTest.TURNS_PER_PLAYER
 const ROUNDS_PER_MATCH := EndSegmentTest.ROUNDS_PER_MATCH
 
 
@@ -138,7 +137,6 @@ static func _basic_round_profile() -> RoundProfile:
 ## Used to test that unbounded matches still end on elimination.
 static func _unbounded_round_profile() -> RoundProfile:
 	var profile := RoundProfile.new()
-	profile.turns_per_player = TURNS_PER_PLAYER
 	profile.rounds_per_match = 0
 	profile.victory_condition = "standard"
 	return profile

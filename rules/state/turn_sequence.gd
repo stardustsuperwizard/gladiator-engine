@@ -9,8 +9,8 @@
 ## time, never snapshotted. That is what makes a champion defeated before it
 ## acted take its Turn with it: it stops being an occupant, so it stops being
 ## counted, and its owner's remaining Turns drop by one without anything
-## decrementing a counter. There is no per-player tally in `GameState`, no
-## `turns_per_player` read here, and no new key in `GameState.to_dict()`.
+## decrementing a counter. There is no per-player tally in `GameState` and no
+## new key in `GameState.to_dict()`.
 ##
 ## **`GameState.turns_taken` is still the rotation's cursor.** It is round-wide
 ## and already serialized (see its own docstring), and `state.turn_order()` is

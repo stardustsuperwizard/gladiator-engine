@@ -121,7 +121,6 @@ static func _build_state() -> GameState:
 	var state := GameState.new(_board(), DeterministicRng.new(SEED))
 	state.add_player("p1")
 	state.add_player("p2")
-	state.turns_per_player = profile.turns_per_player
 	state.rounds_per_match = profile.rounds_per_match
 
 	_place(state, "f1", "p1", F1_HOME)

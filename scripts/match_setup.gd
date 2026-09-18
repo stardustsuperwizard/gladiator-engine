@@ -9,17 +9,17 @@
 ## constructs no `Authority`, no `RoundDriver`, resolves nothing and submits
 ## nothing.
 ##
-## **Authored numbers stay authored.** `turns_per_player` and
-## `rounds_per_match` come off `res://resources/round/round_profile.tres`, and
-## every fighter's stats come off its own authored `.tres` under
-## `res://resources/fighters/`. Nothing here restates a stat or a round number
-## as a literal. The board radius, the seed and the starting hexes are this
-## fixture's own and are named constants below.
+## **Authored numbers stay authored.** `rounds_per_match` comes off
+## `res://resources/round/round_profile.tres`, and every fighter's stats come
+## off its own authored `.tres` under `res://resources/fighters/`. Nothing
+## here restates a stat or a round number as a literal. The board radius, the
+## seed and the starting hexes are this fixture's own and are named constants
+## below.
 ##
 ## **The authored `RoundProfile` is now handed out, not only read.**
 ## `round_profile()` returns it the same way `combat_profile()` already returns
 ## the authored `CombatProfile`, for callers that need §11's match dials
-## rather than only the two `build()` copies onto `GameState`.
+## rather than only the one `build()` copies onto `GameState`.
 ##
 ## **Static methods only, `RefCounted` base** -- the same shape `TurnSequence`,
 ## `PowerStep`, `EndSegment` and `DefaultActionStep` already use. Never
@@ -83,17 +83,15 @@ const P2_ARCHER_START := Vector3i(3, 0, -3)
 
 ## Builds a playable starting `GameState`: a hexagonal board of `BOARD_RADIUS`
 ## rings, every hex `Board.HexType.NORMAL`; `p1` then `p2` added to the turn
-## order; `turns_per_player` and `rounds_per_match` read off the authored
-## `RoundProfile`; and two fighters per player -- one `warrior`, one `archer`
-## -- placed on the starting hexes above and registered as the board's
-## occupant of each.
+## order; `rounds_per_match` read off the authored `RoundProfile`; and two
+## fighters per player -- one `warrior`, one `archer` -- placed on the
+## starting hexes above and registered as the board's occupant of each.
 static func build(match_seed: int = DEFAULT_SEED) -> GameState:
 	var state := GameState.new(_board(), DeterministicRng.new(match_seed))
 	state.add_player(PLAYER_ONE)
 	state.add_player(PLAYER_TWO)
 
 	var profile: RoundProfile = load(ROUND_PROFILE_PATH)
-	state.turns_per_player = profile.turns_per_player
 	state.rounds_per_match = profile.rounds_per_match
 
 	var fighter_templates := templates()

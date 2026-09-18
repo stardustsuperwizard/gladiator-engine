@@ -1,13 +1,12 @@
-## Tests RoundProfile's zero-default shape and GameState's two round-structure
-## fields: is_final_round(), serialization, and purity.
+## Tests RoundProfile's zero-default shape and GameState's round-structure
+## field: is_final_round(), serialization, and purity.
 ##
 ## **The Combat Segment boundary is not here any more.** Spec §5.2 as revised
 ## 2026-09-17 derives a round's Turn allowance from the board, so the predicate
 ## left `GameState` for `TurnSequence` and its cases left this suite for
-## `rules/tests/turn_sequence_test.gd`. `turns_per_player` survives below as a
-## serialized field with no reader, which is all it is until the task that
-## deletes it lands -- the round-trip and refusal cases are what stop it being
-## dropped from `to_dict()` by accident before then.
+## `rules/tests/turn_sequence_test.gd`. Spec §5.2 as further revised 2026-09-18
+## (epic #377) removed the authored Turns-per-player dial altogether: `rounds_per_match`
+## is the only round-structure field left here.
 ##
 ## Every RoundProfile fixture here is built in memory with RoundProfile.new()
 ## -- `rules/` may not reference `res://resources/`, so loading
@@ -50,19 +49,14 @@ static func _build_state(seed_value: int = SEED) -> GameState:
 	return state
 
 
-## 1. A fresh RoundProfile defaults all three exports to their zero values.
+## 1. A fresh RoundProfile defaults its two round-structure exports to their
+## zero values.
 static func _test_round_profile_defaults() -> Array[String]:
 	var violations: Array[String] = []
 	var profile := RoundProfile.new()
 
 	violations.append_array(
 		_expect(profile.profile_id == "", 'a fresh RoundProfile\'s profile_id must default to ""')
-	)
-	violations.append_array(
-		_expect(
-			profile.turns_per_player == 0,
-			"a fresh RoundProfile's turns_per_player must default to 0"
-		)
 	)
 	violations.append_array(
 		_expect(
@@ -113,13 +107,12 @@ static func _test_is_final_round() -> Array[String]:
 	return violations
 
 
-## 3. Both fields survive to_dict()/from_dict(), and two states differing only
-## in turns_per_player have different digest()s.
+## 3. rounds_per_match survives to_dict()/from_dict(), and two states
+## differing only in rounds_per_match have different digest()s.
 static func _test_fields_round_trip_and_affect_digest() -> Array[String]:
 	var violations: Array[String] = []
 
 	var state := _build_state()
-	state.turns_per_player = 4
 	state.rounds_per_match = 3
 
 	var restored := GameState.from_dict(state.to_dict())
@@ -130,20 +123,16 @@ static func _test_fields_round_trip_and_affect_digest() -> Array[String]:
 		return violations
 
 	violations.append_array(
-		_expect(restored.turns_per_player == 4, "turns_per_player must survive the round trip")
-	)
-	violations.append_array(
 		_expect(restored.rounds_per_match == 3, "rounds_per_match must survive the round trip")
 	)
 
 	var other := _build_state()
-	other.turns_per_player = 5
-	other.rounds_per_match = 3
+	other.rounds_per_match = 5
 
 	violations.append_array(
 		_expect(
 			state.digest() != other.digest(),
-			"two states differing only in turns_per_player must have different digest()s"
+			"two states differing only in rounds_per_match must have different digest()s"
 		)
 	)
 
@@ -151,51 +140,51 @@ static func _test_fields_round_trip_and_affect_digest() -> Array[String]:
 
 
 ## 4. from_dict() returns null for each of: a missing key, a String value, a
-## fractional float, and a negative value -- for both keys.
+## fractional float, and a negative value.
 static func _test_from_dict_refusals() -> Array[String]:
 	var violations: Array[String] = []
 
 	var base := _build_state()
-	base.turns_per_player = 4
 	base.rounds_per_match = 3
 	var base_dict := base.to_dict()
 
-	for key in ["turns_per_player", "rounds_per_match"]:
-		var missing := base_dict.duplicate(true)
-		missing.erase(key)
-		violations.append_array(
-			_expect(
-				GameState.from_dict(missing) == null,
-				'from_dict() must refuse a dictionary missing "%s"' % key
-			)
-		)
+	var key := "rounds_per_match"
 
-		var string_valued := base_dict.duplicate(true)
-		string_valued[key] = "4"
-		violations.append_array(
-			_expect(
-				GameState.from_dict(string_valued) == null,
-				'from_dict() must refuse a String value for "%s"' % key
-			)
+	var missing := base_dict.duplicate(true)
+	missing.erase(key)
+	violations.append_array(
+		_expect(
+			GameState.from_dict(missing) == null,
+			'from_dict() must refuse a dictionary missing "%s"' % key
 		)
+	)
 
-		var fractional := base_dict.duplicate(true)
-		fractional[key] = 4.5
-		violations.append_array(
-			_expect(
-				GameState.from_dict(fractional) == null,
-				'from_dict() must refuse a fractional float value for "%s"' % key
-			)
+	var string_valued := base_dict.duplicate(true)
+	string_valued[key] = "4"
+	violations.append_array(
+		_expect(
+			GameState.from_dict(string_valued) == null,
+			'from_dict() must refuse a String value for "%s"' % key
 		)
+	)
 
-		var negative := base_dict.duplicate(true)
-		negative[key] = -1
-		violations.append_array(
-			_expect(
-				GameState.from_dict(negative) == null,
-				'from_dict() must refuse a negative value for "%s"' % key
-			)
+	var fractional := base_dict.duplicate(true)
+	fractional[key] = 4.5
+	violations.append_array(
+		_expect(
+			GameState.from_dict(fractional) == null,
+			'from_dict() must refuse a fractional float value for "%s"' % key
 		)
+	)
+
+	var negative := base_dict.duplicate(true)
+	negative[key] = -1
+	violations.append_array(
+		_expect(
+			GameState.from_dict(negative) == null,
+			'from_dict() must refuse a negative value for "%s"' % key
+		)
+	)
 
 	return violations
 
@@ -206,7 +195,6 @@ static func _test_predicates_are_pure() -> Array[String]:
 	var violations: Array[String] = []
 
 	var state := _build_state()
-	state.turns_per_player = 4
 	state.rounds_per_match = 3
 	state.turns_taken = 8
 	state.round_number = 3

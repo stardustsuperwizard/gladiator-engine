@@ -62,9 +62,9 @@
 ## **It draws nothing from `state.rng`.** Only a resolving action may, and
 ## every resolution here happens inside `ActionRunner`.
 ##
-## **It loads no resource and seeds no counter.** `turns_per_player` and
-## `rounds_per_match` arrive on the state its caller built, from the authored
-## `RoundProfile`; this class reads neither directly and authors no new dial.
+## **It loads no resource and seeds no counter.** `rounds_per_match` arrives
+## on the state its caller built, from the authored `RoundProfile`; this class
+## does not read it directly and authors no new dial.
 class_name RoundDriver
 extends RefCounted
 
