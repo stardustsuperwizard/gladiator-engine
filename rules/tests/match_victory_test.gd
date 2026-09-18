@@ -30,9 +30,10 @@ const P1_SECOND_HEX := Vector3i(0, 1, -1)
 const P2_HEX := Vector3i(1, -1, 0)
 const P2_SECOND_HEX := Vector3i(2, -2, 0)
 
-## Spec §5.2's Turns per player and §11.1's round limit, chosen for this suite.
-## Two players, so a complete Combat Segment is four Turns taken, and 3 is the
-## MVP's authored round count.
+## The `turns_taken` value `_finish_final_round()` advances to, and §11.1's
+## round limit, chosen for this suite. Two players, so `TURNS_PER_PLAYER` worth
+## of Turns each puts `turns_taken` at four for readability; nothing reads it.
+## 3 is the MVP's authored round count.
 const TURNS_PER_PLAYER := 2
 const ROUNDS_PER_MATCH := 3
 
@@ -95,7 +96,6 @@ static func _profile(
 ) -> RoundProfile:
 	var profile := RoundProfile.new()
 	profile.profile_id = "fixture-match"
-	profile.turns_per_player = TURNS_PER_PLAYER
 	profile.rounds_per_match = rounds_per_match
 	profile.game_mode = "deathmatch"
 	profile.victory_condition = victory_condition
@@ -106,7 +106,6 @@ static func _profile(
 ## Turn yet taken and no fighter placed.
 static func _state(profile: RoundProfile) -> GameState:
 	var state := AttackActionTest._build_state(SEED)
-	state.turns_per_player = profile.turns_per_player
 	state.rounds_per_match = profile.rounds_per_match
 	return state
 

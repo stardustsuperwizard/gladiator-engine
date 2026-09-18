@@ -525,7 +525,6 @@ static func _test_to_dict_key_set_is_unchanged() -> Array[String]:
 		"rng",
 		"round_number",
 		"turns_taken",
-		"turns_per_player",
 		"rounds_per_match",
 		"power_step_open",
 		"power_step_passes",

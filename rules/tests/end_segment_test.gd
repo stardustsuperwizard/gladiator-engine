@@ -77,8 +77,11 @@ const GARRISON_P2 := "garrison-p2"
 const GARRISON_P1_HOME := Vector3i(-5, 5, 0)
 const GARRISON_P2_HOME := Vector3i(-5, 3, 2)
 
-## Spec §5.2's Turns per player and §5.1's rounds per match, chosen for this
-## suite. Two players, so a complete Combat Segment is four Turns taken.
+## The `turns_taken` value this suite's incomplete-state fixture starts from,
+## and §5.1's rounds per match. Two players, so `TURNS_PER_PLAYER` worth of
+## Turns each puts `turns_taken` at four -- a value for `_test_the_counters_advance()`
+## to reset, not an authored dial: spec §5.2's allowance is derived from the
+## board, not from a per-player Turn count.
 const TURNS_PER_PLAYER := 2
 const ROUNDS_PER_MATCH := 3
 
@@ -146,7 +149,6 @@ static func _template(move: int = 1, save: int = 2, health: int = 5) -> FighterT
 ## is stable across the suite.
 static func _incomplete_state(seed_value: int = 11) -> GameState:
 	var state := AttackActionTest._build_state(seed_value)
-	state.turns_per_player = TURNS_PER_PLAYER
 	state.rounds_per_match = ROUNDS_PER_MATCH
 	state.turns_taken = TURNS_PER_PLAYER * state.turn_order().size()
 	_place(state, GARRISON_P1, "p1", GARRISON_P1_HOME, _template())
@@ -252,7 +254,6 @@ static func _harmless_profile() -> CombatProfile:
 ## tests use when they need victory determination.
 static func _basic_round_profile() -> RoundProfile:
 	var profile := RoundProfile.new()
-	profile.turns_per_player = TURNS_PER_PLAYER
 	profile.rounds_per_match = ROUNDS_PER_MATCH
 	profile.victory_condition = "standard"
 	return profile

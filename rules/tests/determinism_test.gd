@@ -86,7 +86,7 @@ const PLAYER_IDS: Array[String] = ["north", "south"]
 ## the case, or replacing the equality check with something weaker. A golden
 ## digest that can be edited to match whatever the suite currently produces,
 ## without confirming *why* it changed, proves nothing.
-const GOLDEN_DIGEST := "1113054677999b29aab5dd32b6039c090840456ce916ec165cbdd90b653127a7"
+const GOLDEN_DIGEST := "ac4d7ebd1a7c43fd829db5c15d08cf333c07a8de98e35c9497d2aa2645583dfb"
 
 
 static func run() -> bool:

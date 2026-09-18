@@ -18,8 +18,7 @@
 ## three-Turn round, and no case restates that as a literal: the three-round
 ## case stops on `Phase.MATCH_COMPLETE` and reads the Turn count back off the
 ## fixture. `rounds_per_match` is read off
-## `res://resources/round/round_profile.tres`; `turns_per_player` is seeded
-## onto the state beside it and read by nothing.
+## `res://resources/round/round_profile.tres`.
 ##
 ## **Every Turn names its own champion.** `_unacted_champion_of()` picks the
 ## first of the acting player's champions that is still on the board and has
@@ -163,7 +162,6 @@ static func _build_state() -> GameState:
 	var state := GameState.new(_board(), DeterministicRng.new(SEED))
 	state.add_player("p1")
 	state.add_player("p2")
-	state.turns_per_player = profile.turns_per_player
 	state.rounds_per_match = profile.rounds_per_match
 
 	_place(state, F1_ID, "p1", F1_HOME)

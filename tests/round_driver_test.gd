@@ -13,8 +13,7 @@
 ## 2026-09-17 gives a player as many Turns as they have champions on the board,
 ## each acting once, so this suite's fixture -- two champions a side -- is a
 ## four-Turn round and `EXPECTED_ORDER` says so. `rounds_per_match` is still
-## read off `res://resources/round/round_profile.tres`; `turns_per_player` is
-## seeded onto the state alongside it and read by nothing.
+## read off `res://resources/round/round_profile.tres`.
 ##
 ## **Every Turn names its own champion.** `_unacted_champion_of()` picks the
 ## first of the active player's champions that is still on the board and has
@@ -97,7 +96,7 @@ const GOLDEN_SEED := 20260910
 ##
 ## What is **never** the correct response: loosening the assertion, deleting
 ## the case, or comparing the two in-process runs and nothing else.
-const GOLDEN_DIGEST := "d22f8312e135b0ed1bb08d3f7534803b4e83a4802931c80c6bde4f22ef8458ef"
+const GOLDEN_DIGEST := "72cd2bd02a95477f26ec44288e67aac6c8d5ca2ab342bf18f007b2baa9d1a6ae"
 
 ## The order `active_player_id()` must report across a full round: two players,
 ## two champions each, alternating -- spec §5.2's derived allowance, not an
@@ -191,7 +190,6 @@ static func _build_state(state_seed: int) -> GameState:
 	var state := GameState.new(_board(), DeterministicRng.new(state_seed))
 	state.add_player("p1")
 	state.add_player("p2")
-	state.turns_per_player = profile.turns_per_player
 	state.rounds_per_match = profile.rounds_per_match
 
 	_place(state, "f1", "p1", ORIGIN)
