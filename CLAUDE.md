@@ -14,6 +14,7 @@ pointer to it, not a copy.
 | Working on | Also read |
 | --- | --- |
 | Game rules and mechanics | `docs/hex-skirmish-game-spec.md` |
+| Changing many rules at once, or one that supersedes built code | `docs/RULES_OVERHAUL.md` |
 | Anything in `rules/`, or Godot specifics anywhere | `docs/godot-implementation-guide.md` |
 | Reaching for a Godot API you have not seen in this repo | `docs/engine-reference/godot/` |
 | Build order, scope, what to build next | `docs/moba-to-hex-skirmish-extraction-plan.md` §5–§7 |
