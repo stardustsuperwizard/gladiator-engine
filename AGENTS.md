@@ -372,6 +372,15 @@ into an Implementation Task before further work builds on it — the three
 classifications are `still-valid` (revision notes only), `needs-review` (content
 added), and `likely-superseded` (content altered or removed).
 
+That procedure is written for revising **one section**, which is the size every
+rules change has been so far. A change that touches more than one top-level
+section, supersedes a rule built code implements, or would shrink the test suite
+is an **overhaul**, and needs `docs/RULES_OVERHAUL.md` instead — it covers the
+baseline tag, clearing in-flight epics, triage order, retiring code through the
+index's `superseded` status, and the CI gates such a change trips. Read it
+before starting one; the paragraph above does not scale to that size and says
+nothing about the tasks already open against the sections being rewritten.
+
 The numbers are a different matter. Dice counts, damage values, target numbers,
 modifiers and point costs are all expected to be tuned, which is why they live
 in data files rather than in the resolver — see spec §12.
